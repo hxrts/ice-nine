@@ -1,0 +1,41 @@
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Lean
+/.lake
+/build
+/lake-packages
+lean-toolchain
+
+# Nix
+result
+result-*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Benchmarks
+/benches/results
+
+# Testing
+*.profdata
+*.profraw
+
+# Environment
+.env
+
+# Working
+work/
+
+# LLM
+.claude
+CLAUDE.md
+CODEX.md
