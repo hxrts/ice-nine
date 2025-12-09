@@ -1,6 +1,6 @@
 # Ice Nine
 
-Lattice-based threshold signature scheme with DKG, and signing.
+Lattice-based threshold signature scheme with signing + DKG.
 
 ## What’s here
 - **Lean models**: core scheme, DKG (core + t-of-n with complaints), two-round signing (n-of-n, t-of-n), dealer keygen, refresh, repair, rerandomized signing.
