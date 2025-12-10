@@ -341,4 +341,4 @@ structure SecuritySummary where
   overallSecurityBits : Nat
 ```
 
-For full security analysis, use the lattice estimator tool.
+The implementation uses standard [NIST FIPS 204 (ML-DSA/Dilithium)](https://csrc.nist.gov/pubs/fips/204/final) parameter sets which provide 128, 192, and 256 bits of security.

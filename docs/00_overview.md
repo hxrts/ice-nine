@@ -46,7 +46,7 @@ The security of Ice Nine reduces to standard lattice hardness assumptions:
 
 **Rejection Sampling.** The signing protocol uses rejection sampling to ensure signatures are independent of the secret key. If the response norm exceeds the bound $\gamma_1 - \beta$, the party aborts and retries with a fresh nonce. Expected attempts: ~4 for Dilithium parameters.
 
-**Parameter Validation.** The implementation includes lightweight parameter validation to catch obviously insecure configurations. Full security analysis requires the lattice estimator.
+**Parameter Validation.** The implementation includes lightweight parameter validation to catch obviously insecure configurations. The standard parameter sets follow [NIST FIPS 204 (ML-DSA/Dilithium)](https://csrc.nist.gov/pubs/fips/204/final).
 
 ## Nonce Safety
 

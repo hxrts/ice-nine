@@ -8,6 +8,8 @@ The complaint mechanism identifies misbehaving parties. It activates when protoc
 
 ### Complaint Types
 
+Two complaint variants cover the main failure modes.
+
 ```lean
 inductive Complaint (PartyId : Type) where
   | openingMismatch (accused : PartyId)
@@ -28,6 +30,8 @@ A party files a complaint under the following conditions.
 
 ### Aggregation with Complaints
 
+DKG aggregation returns either the public key or a list of complaints identifying misbehaving parties.
+
 ```lean
 def dkgAggregateWithComplaints
   (S : Scheme) [DecidableEq S.PartyId]
@@ -35,8 +39,6 @@ def dkgAggregateWithComplaints
   (reveals : List (DkgRevealMsg S))
   : Except (List (Complaint S.PartyId)) S.Public
 ```
-
-Returns either the public key or a list of complaints. If aggregation succeeds, the pk equals the sum of revealed public shares.
 
 ### Complaint Resolution
 
@@ -96,6 +98,8 @@ $$\sum_i s'_i = \sum_i (s_i + \delta_i) = \sum_i s_i + \sum_i \delta_i = s + 0 =
 
 ### Refresh Function
 
+Applies a mask to each share and recomputes the corresponding public share.
+
 ```lean
 def refreshShares
   (S : Scheme)
@@ -141,6 +145,8 @@ A full refresh protocol runs as follows.
 
 ### Public Key Invariance Theorem
 
+If the mask sums to zero over the participant list, the global public key is unchanged.
+
 ```lean
 lemma refresh_pk_unchanged
   (S : Scheme)
@@ -152,9 +158,9 @@ lemma refresh_pk_unchanged
   (shares.foldl (fun acc ks => acc + ks.pk_i) (0 : S.Public))
 ```
 
-If the mask sums to zero over the participant list, the global pk is unchanged.
-
 ### Refresh State (CRDT)
+
+Refresh state forms a semilattice for conflict-free replication.
 
 ```lean
 structure RefreshState (S : Scheme) :=
@@ -178,6 +184,8 @@ Share repair allows a party to recover a lost share. The recovering party receiv
 
 ### Repair Request Structure
 
+Messages for initiating and responding to repair requests. Bundles merge via list append.
+
 ```lean
 structure RepairRequest (S : Scheme) :=
   (requester : S.PartyId)
@@ -193,8 +201,6 @@ structure RepairBundle (S : Scheme) :=
 
 instance (S : Scheme) : Join (RepairBundle S) := ⟨fun a b => ⟨a.msgs ++ b.msgs⟩⟩
 ```
-
-Repair bundles merge via list append.
 
 ### Repair Session State
 
@@ -224,6 +230,8 @@ $$\sum_{j \neq i} \Delta_{ji} = s_i$$
 
 ### Repair Function
 
+Sums the deltas from all helper messages to reconstruct the lost share.
+
 ```lean
 def repairShare
   (S : Scheme)
@@ -233,6 +241,8 @@ def repairShare
 ```
 
 ### Correctness
+
+The repaired share equals the original when deltas sum correctly.
 
 ```lean
 lemma repair_correct
@@ -268,7 +278,7 @@ $$\lambda_i^S = \prod_{j \in S, j \neq i} \frac{x_j}{x_j - x_i}$$
 
 These coefficients satisfy the partition of unity property: $\sum_{i \in S} \lambda_i^S = 1$.
 
-The implementation verifies these properties against Mathlib's `Lagrange` module:
+The implementation verifies these properties against Mathlib's `Lagrange` module. These lemmas confirm equivalence with the standard formulation and the partition of unity property.
 
 ```lean
 -- Our formula equals Mathlib's basis polynomial evaluated at 0
@@ -281,12 +291,14 @@ lemma lagrangeCoeffs_sum_one (hs : s.Nonempty) :
 
 -- Weighted sum reconstructs polynomial at 0
 lemma lagrange_interpolation_at_zero :
-  (∑ i ∈ s, λ_i * r i) = p.eval 0
+  (∑ i ∈ s, (Lagrange.basis s v i).eval 0 * r i) = p.eval 0
 ```
 
 For additive shares a simpler approach works. Each helper $P_j$ sends a random share of its own share $s_j$. The recovering party combines these to reconstruct its share through a pre-established linear relation.
 
 ### Helper Contribution Function
+
+Each helper scales its share by a Lagrange coefficient and sends the result.
 
 ```lean
 def helperContribution
@@ -302,6 +314,8 @@ def helperContribution
 
 ### Verification
 
+Checks that the repaired secret maps to the expected public share.
+
 ```lean
 def verifyRepairedShare
   (S : Scheme)
@@ -312,6 +326,8 @@ def verifyRepairedShare
 ```
 
 ### Threshold Completion
+
+Checks whether enough helpers have responded and attempts to complete the repair.
 
 ```lean
 def hasEnoughHelpers
@@ -351,6 +367,8 @@ Rerandomization adds privacy by masking shares and nonces. It prevents linking b
 
 ### Rerandomization Masks Structure
 
+Holds zero-sum masks for both shares and nonces. Masks merge by pointwise addition.
+
 ```lean
 structure RerandMasks (S : Scheme) :=
   (shareMask : S.PartyId → S.Secret)
@@ -361,13 +379,13 @@ structure RerandMasks (S : Scheme) :=
 instance (S : Scheme) : Join (RerandMasks S)
 ```
 
-Masks merge by pointwise addition. Zero-sum is preserved by additivity.
-
 ### Motivation
 
 Without rerandomization the same shares produce related signatures. An observer might link signatures to the same key or signer set. Rerandomization breaks this linkage.
 
 ### State Rerandomization
+
+Applies masks to both the nonce and share within a signing state.
 
 ```lean
 def rerandState
@@ -401,6 +419,8 @@ If $\sum_i \gamma_i = 0$ then the aggregated nonce is unchanged.
 $$w = \sum_i A(y'_i) = \sum_i A(y_i) + A\left(\sum_i \gamma_i\right) = \sum_i A(y_i) + 0$$
 
 ### Signature Preservation Theorem
+
+Zero-sum masks cancel out in the aggregated signature.
 
 ```lean
 lemma rerand_preserves_sig
@@ -470,14 +490,12 @@ Applications must migrate from the old key to the new key. Signatures under the 
 
 ## Composite State (CRDT)
 
-Protocol phase state combines with refresh, repair, and rerandomization state in a product semilattice.
+Protocol phase state combines with refresh, repair, and rerandomization state in a product semilattice. Merge is provided by the product semilattice instances.
 
 ```lean
 abbrev CompositeState (S : Scheme) (p : Phase) :=
   (State S p) × RefreshState S × RepairBundle S × RerandMasks S
 ```
-
-Merge is provided by the product semilattice instances. This allows all extension state to be merged atomically with protocol progress.
 
 ## Threshold-Aware Merge
 
@@ -486,23 +504,20 @@ For threshold protocols, the `ShareWithCtx` structure couples share state with t
 1. Union the active sets: `merged.active = a.active ∪ b.active`
 2. Preserve threshold: `merged.t = max(a.t, b.t)`
 3. Prove validity: `merged.t ≤ |merged.active|`
-4. Recompute coefficients: Lagrange λ_i depend on the signer set
+4. Recompute coefficients: Lagrange $\lambda_i$ depend on the signer set
 
 ### Merge Strategies
 
 Three merge strategies are provided:
 
-**Conservative merge (ones):** Falls back to n-of-n with simple sum.
+**Conservative merge (ones):** Falls back to n-of-n with simple sum. No field required but loses threshold efficiency.
 
 ```lean
 def mergeShareWithCtxOnes (S : Scheme) [DecidableEq S.PartyId]
   (a b : ShareWithCtx S) : ShareWithCtx S
 ```
 
-- Pro: No field required, always safe
-- Con: Loses threshold efficiency (all signers must participate)
-
-**Full merge with recompute:** Recomputes Lagrange coefficients for merged set.
+**Full merge with recompute:** Recomputes Lagrange coefficients for merged set. Preserves t-of-n semantics but requires a Field instance.
 
 ```lean
 def mergeShareWithCtx
@@ -511,10 +526,7 @@ def mergeShareWithCtx
   (a b : ShareWithCtx S) : ShareWithCtx S
 ```
 
-- Pro: Preserves t-of-n semantics
-- Con: Requires Field instance for division
-
-**Auto merge:** Selects strategy based on field availability.
+**Auto merge:** Selects strategy based on field availability. Pass `some inferInstance` for field-backed schemes or `none` for lattice-only builds.
 
 ```lean
 def mergeShareWithCtxAuto
@@ -523,8 +535,6 @@ def mergeShareWithCtxAuto
   (pidToScalar : S.PartyId → S.Scalar)
   (a b : ShareWithCtx S) : ShareWithCtx S
 ```
-
-Pass `some inferInstance` for field-backed schemes, `none` for lattice-only builds.
 
 ### Cardinality Proof Maintenance
 
