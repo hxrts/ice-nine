@@ -48,8 +48,12 @@ def hashCommit {P N} [ToString P] [ToString N] (w : P) (nonce : N) : HashCommitm
 /-!
 ## Fiat–Shamir hash
 
-Modeled as hash of (m, pk, signer set, commitments, w). Replace `hashFS` with a
-real SHAKE-based hash to target specific security levels.
+Modeled as hash of (m, pk, signer set, commitments, w). In production, replace
+with a real SHAKE256 implementation (as specified in Dilithium/ML-DSA).
+
+The hash output is interpreted as a challenge. For Dilithium, challenges are
+sparse polynomials with τ coefficients in {-1, 0, 1}. For simplicity, we model
+challenges as integers here.
 -/
 
 def encodeFS {P M C W PartyId : Type} [ToString P] [ToString M] [ToString C] [ToString W] [ToString PartyId]
@@ -59,6 +63,25 @@ def encodeFS {P M C W PartyId : Type} [ToString P] [ToString M] [ToString C] [To
 def hashFS {P M C W PartyId : Type} [ToString P] [ToString M] [ToString C] [ToString W] [ToString PartyId]
   (m : M) (pk : P) (Sset : List PartyId) (commits : List C) (w : W) : HashOut :=
   hashBytes (encodeFS m pk Sset commits w)
+
+/-- Convert hash output to a challenge integer.
+
+    **Production Note**: In real Dilithium/ML-DSA, the challenge is a polynomial
+    with exactly τ coefficients in {-1, 1} and the rest 0, derived via rejection
+    sampling from SHAKE256 output.
+
+    For our model, we derive an integer by treating the hash as a big-endian
+    encoding. This is sufficient for correctness proofs but not for security -
+    production code must use the proper Dilithium challenge derivation.
+
+    **Reference**: FIPS 204 (ML-DSA) Section 8.3 "Challenge Derivation" -/
+def hashToChallenge (h : HashOut) : Int :=
+  -- Interpret first 8 bytes as little-endian Int64, then take modulo to bound
+  -- This is a simplified model; real Dilithium uses rejection sampling
+  let bytes := h.toList.take 8
+  let asNat := bytes.enum.foldl (fun acc (i, b) => acc + (b.toNat <<< (8 * i))) 0
+  -- Reduce to a reasonable range (Dilithium τ is at most 60)
+  Int.ofNat (asNat % 256) - 128  -- Range [-128, 127] for simple bound
 
 /-!
 ## Dilithium-style norm check
@@ -123,7 +146,7 @@ def latticeScheme (p : LatticeParams := {}) : Scheme :=
         funext i; have := congrArg (fun s => s) this; decide
       have ho : o1 = o2 := by funext i; have := congrArg (fun s => s) this; decide
       simpa [hx, ho]
-  , hash := fun m pk Sset commits w => hashFS m pk Sset commits w |> fun b => Int.ofNat b.size -- placeholder challenge
+  , hash := fun m pk Sset commits w => hashToChallenge (hashFS m pk Sset commits w)
   , hashCollisionResistant := True
   , normOK := fun v => intVecInfLeq p.bound v
   , normOKDecidable := intVecInfLeqDecidable p.bound

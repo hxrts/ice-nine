@@ -208,7 +208,7 @@ def reveal (S : Scheme) (committed : Committed S)
 def sign (S : Scheme) (revealed : Revealed S)
     : Sum (Signed S) (Revealed S × String) :=
   -- Compute partial signature: z_i = y_i + c·sk_i
-  let z_i := revealed.secretNonce + revealed.challenge • revealed.keyShare.sk_i
+  let z_i := revealed.secretNonce + revealed.challenge • revealed.keyShare.secret
   -- Check norm bound
   if S.normOK z_i then
     let signed : Signed S :=

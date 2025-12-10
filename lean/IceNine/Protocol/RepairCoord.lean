@@ -289,7 +289,7 @@ def initHelper (S : Scheme)
     (lagrangeCoeff : S.Scalar)
     (randomness : S.Opening)  -- for commitment
     : HelperLocalState S :=
-  let contrib := lagrangeCoeff • keyShare.sk_i
+  let contrib := lagrangeCoeff • keyShare.secret
   let pubContrib := S.A contrib
   let commitment := S.commit pubContrib randomness
   { helperId := keyShare.pid

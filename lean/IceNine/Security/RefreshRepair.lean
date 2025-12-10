@@ -41,7 +41,7 @@ lemma refresh_pk_unchanged
   simp only [List.map_map, Function.comp]
   -- Split: Σ pk'_i = Σ pk_i + Σ A(mask_i)
   have hsplit :
-    (shares.map (fun ks => S.A (ks.sk_i + m.mask ks.pid))).sum
+    (shares.map (fun ks => S.A (ks.secret + m.mask ks.pid))).sum
     = (shares.map (·.pk_i)).sum + (shares.map (fun ks => S.A (m.mask ks.pid))).sum := by
     simp only [List.map_map, Function.comp]
     induction shares with

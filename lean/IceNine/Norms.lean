@@ -248,22 +248,108 @@ def dilithiumStyleScheme (p : DilithiumParams) : IceNine.Protocol.Core.Scheme :=
 Properties of norm bounds useful for security proofs.
 -/
 
+/-- Helper: vecInfNorm is the max of absolute values -/
+lemma vecInfNorm_nil : vecInfNorm [] = 0 := rfl
+
+lemma vecInfNorm_cons (x : Int) (xs : List Int) :
+    vecInfNorm (x :: xs) = max (Int.natAbs x) (vecInfNorm xs) := by
+  simp only [vecInfNorm, List.foldl]
+  induction xs generalizing x with
+  | nil => simp [vecInfNorm, max_comm]
+  | cons y ys ih =>
+    simp only [List.foldl]
+    rw [max_assoc, max_comm (Int.natAbs x)]
+    congr 1
+    exact ih y
+
+/-- Each element's absolute value is bounded by the ℓ∞ norm -/
+lemma abs_le_vecInfNorm (v : List Int) (x : Int) (hx : x ∈ v) :
+    Int.natAbs x ≤ vecInfNorm v := by
+  induction v with
+  | nil => exact absurd hx (List.not_mem_nil x)
+  | cons y ys ih =>
+    rw [vecInfNorm_cons]
+    cases List.mem_cons.mp hx with
+    | inl heq => rw [heq]; exact le_max_left _ _
+    | inr hmem => exact le_trans (ih hmem) (le_max_right _ _)
+
+/-- Triangle inequality for integers -/
+lemma int_natAbs_add_le (a b : Int) : Int.natAbs (a + b) ≤ Int.natAbs a + Int.natAbs b :=
+  Int.natAbs_add_le a b
+
 /-- Triangle inequality for ℓ∞ norm -/
 lemma vecInfNorm_add_le (v w : List Int) (hlen : v.length = w.length) :
     vecInfNorm (List.zipWith (· + ·) v w) ≤ vecInfNorm v + vecInfNorm w := by
-  sorry  -- Requires detailed list induction
+  induction v generalizing w with
+  | nil =>
+    simp only [List.zipWith_nil_left, vecInfNorm_nil, zero_add]
+    exact Nat.zero_le _
+  | cons x xs ih =>
+    cases w with
+    | nil => simp at hlen
+    | cons y ys =>
+      simp only [List.zipWith_cons_cons, vecInfNorm_cons]
+      simp only [List.length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
+      have ih_applied := ih ys hlen
+      calc max (Int.natAbs (x + y)) (vecInfNorm (List.zipWith (· + ·) xs ys))
+          ≤ max (Int.natAbs x + Int.natAbs y) (vecInfNorm xs + vecInfNorm ys) := by
+            apply max_le_max
+            · exact int_natAbs_add_le x y
+            · exact ih_applied
+        _ ≤ max (Int.natAbs x) (vecInfNorm xs) + max (Int.natAbs y) (vecInfNorm ys) := by
+            apply max_le
+            · calc Int.natAbs x + Int.natAbs y
+                  ≤ max (Int.natAbs x) (vecInfNorm xs) + Int.natAbs y := by
+                    exact Nat.add_le_add_right (le_max_left _ _) _
+                _ ≤ max (Int.natAbs x) (vecInfNorm xs) + max (Int.natAbs y) (vecInfNorm ys) := by
+                    exact Nat.add_le_add_left (le_max_left _ _) _
+            · calc vecInfNorm xs + vecInfNorm ys
+                  ≤ max (Int.natAbs x) (vecInfNorm xs) + vecInfNorm ys := by
+                    exact Nat.add_le_add_right (le_max_right _ _) _
+                _ ≤ max (Int.natAbs x) (vecInfNorm xs) + max (Int.natAbs y) (vecInfNorm ys) := by
+                    exact Nat.add_le_add_left (le_max_right _ _) _
 
 /-- Scaling bound: ||c·v||∞ ≤ |c| · ||v||∞ -/
 lemma vecInfNorm_smul_le (c : Int) (v : List Int) :
     vecInfNorm (v.map (c * ·)) ≤ Int.natAbs c * vecInfNorm v := by
-  sorry  -- Requires detailed list induction
+  induction v with
+  | nil => simp [vecInfNorm_nil]
+  | cons x xs ih =>
+    simp only [List.map_cons, vecInfNorm_cons]
+    calc max (Int.natAbs (c * x)) (vecInfNorm (xs.map (c * ·)))
+        ≤ max (Int.natAbs c * Int.natAbs x) (Int.natAbs c * vecInfNorm xs) := by
+          apply max_le_max
+          · exact Int.natAbs_mul c x ▸ le_refl _
+          · exact ih
+      _ = Int.natAbs c * max (Int.natAbs x) (vecInfNorm xs) := by
+          rw [← Nat.mul_max_mul_left]
 
-/-- Key bound for rejection sampling: ||y + c·s||∞ ≤ ||y||∞ + ||c·s||∞ -/
-lemma response_norm_bound (y s : List Int) (c : Int)
+/-- Key bound for rejection sampling: ||y + c·s||∞ ≤ ||y||∞ + |c| · ||s||∞
+    This is the fundamental bound that enables rejection sampling security. -/
+lemma response_norm_bound_general (y s : List Int) (c : Int)
+    (hlen : y.length = s.length) :
+    vecInfNorm (List.zipWith (· + ·) y (s.map (c * ·))) ≤
+      vecInfNorm y + Int.natAbs c * vecInfNorm s := by
+  have hlen' : y.length = (s.map (c * ·)).length := by simp [hlen]
+  calc vecInfNorm (List.zipWith (· + ·) y (s.map (c * ·)))
+      ≤ vecInfNorm y + vecInfNorm (s.map (c * ·)) := vecInfNorm_add_le y _ hlen'
+    _ ≤ vecInfNorm y + Int.natAbs c * vecInfNorm s := by
+        exact Nat.add_le_add_left (vecInfNorm_smul_le c s) _
+
+/-- Concrete bound for Dilithium-style rejection sampling:
+    If ||y||∞ < γ₁ and ||s||∞ ≤ η and |c| ≤ τ, then ||y + c·s||∞ < γ₁ + τ·η -/
+lemma response_norm_bound (y s : List Int) (c : Int) (γ₁ η τ : Nat)
     (hy : vecInfNorm y < γ₁) (hs : vecInfNorm s ≤ η)
-    (hc : Int.natAbs c ≤ τ) (hlen : y.length = s.length)
-    (γ₁ η τ : Nat) :
+    (hc : Int.natAbs c ≤ τ) (hlen : y.length = s.length) :
     vecInfNorm (List.zipWith (· + ·) y (s.map (c * ·))) < γ₁ + τ * η := by
-  sorry  -- Follows from triangle inequality and scaling bound
+  calc vecInfNorm (List.zipWith (· + ·) y (s.map (c * ·)))
+      ≤ vecInfNorm y + Int.natAbs c * vecInfNorm s := response_norm_bound_general y s c hlen
+    _ < γ₁ + Int.natAbs c * vecInfNorm s := by exact Nat.add_lt_add_right hy _
+    _ ≤ γ₁ + τ * vecInfNorm s := by
+        apply Nat.add_le_add_left
+        exact Nat.mul_le_mul_right _ hc
+    _ ≤ γ₁ + τ * η := by
+        apply Nat.add_le_add_left
+        exact Nat.mul_le_mul_left _ hs
 
 end IceNine.Norms

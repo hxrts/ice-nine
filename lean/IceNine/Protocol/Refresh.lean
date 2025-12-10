@@ -71,9 +71,10 @@ def refreshShares
   (shares : List (KeyShare S)) : List (KeyShare S) :=
   shares.map (fun ks =>
     -- Add mask to secret share
-    let sk' := ks.sk_i + m.mask ks.pid
+    let sk' := ks.secret + m.mask ks.pid
     -- Recompute public share from new secret
     let pk' := S.A sk'
-    { ks with sk_i := sk', pk_i := pk' })
+    -- Create new KeyShare with wrapped secret
+    KeyShare.create S ks.pid sk' pk' ks.pk)
 
 end IceNine.Protocol

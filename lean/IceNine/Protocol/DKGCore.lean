@@ -90,10 +90,7 @@ def finalizeKeyShare
   (st : DkgLocalState S)
   (pk : S.Public)         -- global pk from aggregation
   : KeyShare S :=
-{ pid  := st.pid,
-  sk_i := st.sk_i,
-  pk_i := st.pk_i,
-  pk   := pk }
+  KeyShare.create S st.pid st.sk_i st.pk_i pk
 
 /-!
 ## Error Handling

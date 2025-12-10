@@ -9,9 +9,9 @@ Two-round threshold signing following the Schnorr pattern:
 Supports both n-of-n (all parties) and t-of-n (threshold) signing.
 Security proofs in `Security/Sign`.
 
-## Recommended API
+## API
 
-**For new code, use the session-typed API from `IceNine.Protocol.SignSession`.**
+**Use the session-typed API from `IceNine.Protocol.SignSession`.**
 
 The session-typed API provides compile-time guarantees against nonce reuse:
 - Each `FreshNonce` can only be consumed once
@@ -36,8 +36,9 @@ match sign S revealed with
 | Sum.inr (_, reason) => -- retry with FRESH nonce
 ```
 
-The raw functions below (`signRound1`, `signRound2`) are retained for compatibility
-but the session-typed API is strongly preferred for safety.
+This module provides supporting types, validation, and aggregation functions.
+The raw `signRound1` and `signRound2` functions have been removed to prevent
+accidental nonce misuse.
 -/
 
 import IceNine.Protocol.Core
@@ -383,43 +384,13 @@ def lagrangeCoeffs
 /-!
 ## Round 1: Nonce Commitment
 
-**DEPRECATION NOTICE**: The raw `signRound1` and `signRound2` functions below do
-not enforce nonce safety at the type level. For new code, use the session-typed
-API from `IceNine.Protocol.SignSession` which provides compile-time guarantees
-against nonce reuse.
+**Use the session-typed API from `IceNine.Protocol.SignSession`** which provides
+compile-time guarantees against nonce reuse. The raw round functions have been
+removed to prevent accidental misuse.
 
 Party samples ephemeral nonce y_i, computes w_i = A(y_i), commits to w_i.
 The commitment hides w_i until all parties have committed.
 -/
-
-/-- Round 1: sample nonce, commit to public nonce.
-    Returns local state and commit message for broadcast. -/
-def signRound1
-  (S : Scheme)
-  (ks      : KeyShare S)  -- party's DKG credential
-  (m       : S.Message)   -- message to sign
-  (session : Nat)         -- unique session ID
-  (y_i     : S.Secret)    -- pre-sampled ephemeral nonce
-  (openW   : S.Opening)   -- commitment randomness
-  : SignLocalState S × SignCommitMsg S :=
--- Derive public nonce from secret nonce
-let w_i : S.Public := S.A y_i
--- Commit to hide w_i until reveal phase
-let com : S.Commitment := S.commit w_i openW
--- Bundle local state (includes secret nonce)
-let st  : SignLocalState S :=
-  { share   := ks,
-    msg     := m,
-    session := session,
-    y_i     := y_i,
-    w_i     := w_i,
-    openW   := openW }
--- Bundle broadcast message
-let msg1 : SignCommitMsg S :=
-  { sender  := ks.pid,
-    session := session,
-    commitW := com }
-(st, msg1)
 
 /-!
 ## Challenge Derivation
@@ -446,6 +417,10 @@ def computeChallenge
 
 /-!
 ## Round 2: Partial Signature
+
+**Use the session-typed API from `IceNine.Protocol.SignSession`** which provides
+compile-time guarantees against nonce reuse. The raw round functions have been
+removed to prevent accidental misuse.
 
 Party computes z_i = y_i + c·sk_i. The ephemeral nonce y_i masks the
 secret share so z_i reveals nothing about sk_i alone.
@@ -474,109 +449,6 @@ inductive SignAttemptResult (S : Scheme)
   | retry                           -- need fresh nonce, try again
   | abort                           -- max attempts exceeded
 deriving Repr
-
-/-- State for rejection sampling loop.
-
-    **Security Property (ResponseIndependence)**: Accepted responses z_i must be
-    independent of the secret key sk_i. Rejection sampling achieves this by:
-    1. Sampling y_i from a wide distribution (||y||∞ < γ₁)
-    2. Rejecting z if ||z||∞ ≥ γ₁ - β
-    3. Accepted z values follow a distribution independent of s
-
-    **Nonce Freshness Invariant**: Each retry attempt MUST use a fresh, independent
-    nonce. Reusing nonces across retries would break the independence property and
-    could leak information about the secret key.
-
-    **Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009. -/
-structure SignRetryState (S : Scheme) where
-  /-- Base state (share, message, session) -/
-  base      : SignLocalState S
-  /-- Current attempt number (1-indexed) -/
-  attempt   : Nat
-  /-- Challenge (fixed across retries in single-signer, varies in threshold) -/
-  challenge : S.Challenge
-  /-- Nonces used in previous attempts (for freshness verification) -/
-  usedNonces : List S.Secret := []
-
-/-- Round 2: compute partial signature z_i = y_i + c·sk_i.
-    Returns None if z_i fails norm check (lattice security). -/
-def signRound2
-  (S : Scheme)
-  (st : SignLocalState S)  -- local state from round 1
-  (c  : S.Challenge)       -- challenge from computeChallenge
-  : Option (SignShareMsg S) :=
-  -- z_i = y_i + c·sk_i (nonce masks secret contribution)
-  let z_i : S.Secret := st.y_i + c • st.share.sk_i
-  -- Reject if norm too large (prevents leakage in lattice setting)
-  if h : S.normOK z_i then
-    some { sender  := st.share.pid,
-           session := st.session,
-           z_i     := z_i }
-  else
-    none
-
-/-- Single attempt at signing with norm check.
-    Returns result indicating success, need for retry, or abort. -/
-def signAttempt
-  (S : Scheme)
-  (retryState : SignRetryState S)
-  : SignAttemptResult S :=
-  if retryState.attempt > maxSigningAttempts then
-    .abort
-  else
-    let z_i := retryState.base.y_i + retryState.challenge • retryState.base.share.sk_i
-    if h : S.normOK z_i then
-      .success { sender  := retryState.base.share.pid,
-                 session := retryState.base.session,
-                 z_i     := z_i }
-    else
-      .retry
-
-/-- Initialize retry state for first attempt -/
-def initRetryState
-  (S : Scheme)
-  (st : SignLocalState S)
-  (c : S.Challenge)
-  : SignRetryState S :=
-  { base := st, attempt := 1, challenge := c, usedNonces := [st.y_i] }
-
-/-- Advance retry state with fresh nonce for next attempt.
-    In practice, the fresh nonce would be sampled externally.
-
-    **SECURITY WARNING**: The fresh nonce MUST be independent of all previous nonces.
-    The usedNonces list is maintained to detect accidental nonce reuse. -/
-def advanceRetryState
-  (S : Scheme)
-  (retryState : SignRetryState S)
-  (freshNonce : S.Secret)
-  (freshW : S.Public)
-  (freshOpen : S.Opening)
-  : SignRetryState S :=
-  { retryState with
-    base := { retryState.base with
-              y_i := freshNonce
-              w_i := freshW
-              openW := freshOpen }
-    attempt := retryState.attempt + 1
-    usedNonces := freshNonce :: retryState.usedNonces }
-
-/-- Check if we should abort due to too many retries -/
-def shouldAbort (S : Scheme) (retryState : SignRetryState S) : Bool :=
-  retryState.attempt > maxSigningAttempts
-
-/-- Predicate: all nonces in retry state are distinct.
-    This is a necessary condition for ResponseIndependence. -/
-def noncesDistinct [DecidableEq S.Secret] (retryState : SignRetryState S) : Prop :=
-  retryState.usedNonces.Nodup
-
-/-- Check nonce freshness (decidable version) -/
-def checkNonceFresh [DecidableEq S.Secret]
-  (retryState : SignRetryState S) (newNonce : S.Secret) : Bool :=
-  !retryState.usedNonces.contains newNonce
-
-/-- Predicate: signing eventually succeeds or aborts (no infinite loop) -/
-def signingTerminates (S : Scheme) (retryState : SignRetryState S) : Prop :=
-  retryState.attempt ≤ maxSigningAttempts + 1
 
 /-!
 ## Signature Aggregation

@@ -278,17 +278,17 @@ theorem lagrange_repair_correct
   (hshares : ∀ j ∈ recon.helperPids, (helperShares j).pid = j) :
   let msgs := recon.helperPids.map (fun j =>
     helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))
-  repairShare S msgs = (fun pid => (helperShares pid).sk_i) recon.targetPid := by
+  repairShare S msgs = (fun pid => (helperShares pid).secret) recon.targetPid := by
   intro msgs
   simp only [repairShare, msgs, helperContribution]
   -- Map over helpers extracts λ_j • sk_j for each helper j
   have h : (recon.helperPids.map (fun j =>
       helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))).map (·.delta)
-    = recon.helperPids.map (fun j => recon.coefficients j • (helperShares j).sk_i) := by
+    = recon.helperPids.map (fun j => recon.coefficients j • (helperShares j).secret) := by
     simp only [List.map_map, Function.comp, helperContribution]
   rw [h]
   -- Apply the Lagrange property from the reconstruction setup
-  exact recon.lagrange_property (fun pid => (helperShares pid).sk_i)
+  exact recon.lagrange_property (fun pid => (helperShares pid).secret)
 
 /-!
 ## Security Assumptions

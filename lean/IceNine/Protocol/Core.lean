@@ -169,13 +169,38 @@ After DKG, each party holds a KeyShare. During DKG, parties exchange
 commit and reveal messages to jointly generate the threshold key.
 -/
 
+/-- Wrapper for secret keys to discourage accidental exposure.
+    Unwrap with .val only when computation requires it.
+
+    **Security Note**: This is a lightweight discipline, not true linear types.
+    Code that pattern-matches on SecretBox must explicitly acknowledge it is
+    handling secret material. Never print, log, or serialize SecretBox contents. -/
+structure SecretBox (α : Type*) where
+  private mk ::
+  val : α
+
 /-- A party's credential after DKG completes. Contains the secret share
-    sk_i, public share pk_i = A(sk_i), and global key pk = Σ pk_i. -/
+    sk_i, public share pk_i = A(sk_i), and global key pk = Σ pk_i.
+
+    **Security Note**: The `sk_i` field is wrapped in SecretBox to discourage
+    accidental exposure. Access via `share.sk_i.val` when computation requires it.
+    Never print, log, or serialize the secret share directly. -/
 structure KeyShare (S : Scheme) where
-  pid  : S.PartyId    -- this party's identifier
-  sk_i : S.Secret     -- secret share (never shared)
-  pk_i : S.Public     -- public share = A(sk_i)
-  pk   : S.Public     -- global public key = Σ pk_j
+  pid  : S.PartyId           -- this party's identifier
+  sk_i : SecretBox S.Secret  -- secret share (never shared) - wrapped for safety
+  pk_i : S.Public            -- public share = A(sk_i)
+  pk   : S.Public            -- global public key = Σ pk_j
+
+/-- Create KeyShare from unwrapped secret (convenience function).
+    Use this during DKG when creating shares. -/
+def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.Public)
+    : KeyShare S :=
+  { pid := pid, sk_i := ⟨sk⟩, pk_i := pk_i, pk := pk }
+
+/-- Get the unwrapped secret share for computation.
+    **Security**: Only use when the secret is needed for cryptographic operations. -/
+def KeyShare.secret (share : KeyShare S) : S.Secret :=
+  share.sk_i.val
 
 
 /-- DKG round 1: party broadcasts commitment to its public share.

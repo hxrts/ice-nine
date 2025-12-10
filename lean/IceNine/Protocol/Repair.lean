@@ -95,7 +95,7 @@ def helperContribution
   : RepairMsg S :=
   { sender := helper.pid
   , to     := requester
-  , delta  := coefficient • helper.sk_i }  -- λ_j·sk_j
+  , delta  := coefficient • helper.secret }  -- λ_j·sk_j
 
 /-- Sum deltas to recover the lost share.
     Correctness: Σ_j λ_j·sk_j = sk_i via Lagrange interpolation. -/

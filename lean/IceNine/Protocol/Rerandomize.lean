@@ -79,14 +79,15 @@ def rerandStateRaw
   (S : Scheme)
   (masks : RawRerandMasks S)
   (st : SignLocalState S) : SignLocalState S :=
+let newSk := st.share.secret + masks.shareMask st.share.pid
+let newPk := S.A newSk
 { st with
   -- Rerandomize ephemeral nonce
   y_i := st.y_i + masks.nonceMask st.share.pid,
   -- Recompute public nonce
   w_i := S.A (st.y_i + masks.nonceMask st.share.pid),
   -- Rerandomize long-term share
-  share := { st.share with sk_i := st.share.sk_i + masks.shareMask st.share.pid,
-                           pk_i := S.A (st.share.sk_i + masks.shareMask st.share.pid) } }
+  share := KeyShare.create S st.share.pid newSk newPk st.share.pk }
 
 /-- Apply zero-sum rerandomization masks to signing local state.
     The zero-sum property guarantees the aggregated signature is preserved. -/

@@ -51,9 +51,11 @@ def Polynomial.degree {R : Type*} [Semiring R] (p : Polynomial R) : Nat :=
 def Polynomial.threshold {R : Type*} [Semiring R] (p : Polynomial R) : Nat :=
   p.coeffs.length
 
-/-- The secret (constant term a₀). -/
+/-- The secret (constant term a₀).
+    Safe because `nonEmpty` guarantees at least one coefficient. -/
 def Polynomial.secret {R : Type*} [Semiring R] (p : Polynomial R) : R :=
-  p.coeffs.head!
+  match p.coeffs, p.nonEmpty with
+  | a :: _, _ => a
 
 /-- Evaluate polynomial at point x using Horner's method.
     f(x) = a₀ + x(a₁ + x(a₂ + ... + x·a_{t-1})) -/
