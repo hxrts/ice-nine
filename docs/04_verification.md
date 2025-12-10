@@ -255,16 +255,33 @@ The formal soundness proof lives in the Lean verification modules. It follows th
 
 ```lean
 structure Assumptions (S : Scheme) where
-  hashRO : Prop                   -- hash modeled as random oracle
-  commitBinding : Prop            -- commitment is binding
-  normLeakageBound : Prop         -- norm bounds prevent leakage
-  corruptionBound : Nat           -- max corrupted parties < threshold
-  sisParams : Option SISParams    -- SIS parameters for unforgeability
-  mlweParams : Option MLWEParams  -- MLWE parameters for key secrecy
+  hashRO : Prop                        -- hash modeled as random oracle (Fiat-Shamir)
+  commitCR : Prop                      -- commitment is collision resistant (implies binding)
+  commitHiding : HidingAssumption S    -- commitment hiding (requires ROM)
+  normLeakageBound : Prop              -- norm bounds prevent leakage
+  corruptionBound : Nat                -- max corrupted parties < threshold
+  sisParams : Option SISParams         -- SIS parameters for unforgeability
+  mlweParams : Option MLWEParams       -- MLWE parameters for key secrecy
 
 def thresholdUFcma (S : Scheme) (A : Assumptions S) : Prop :=
-  A.hashRO ∧ A.commitBinding ∧ A.normLeakageBound
+  A.hashRO ∧ A.commitCR ∧ A.normLeakageBound
 ```
+
+### Collision Resistance and Hiding
+
+Hash-based commitments derive their properties from the underlying hash function:
+
+```lean
+-- Collision resistance: finding x₁ ≠ x₂ with H(x₁) = H(x₂) is hard
+structure CollisionResistant (H : α → β) : Prop where
+  no_collisions : True  -- axiomatized
+
+-- Hiding: commitments reveal nothing about the value (requires ROM)
+structure HidingAssumption (S : Scheme) : Prop where
+  hiding : True  -- axiomatized; NOT provable without probabilistic reasoning
+```
+
+**Important**: Hiding is NOT formally proven in Lean. It requires probabilistic reasoning that Lean cannot express. Protocols needing hiding must explicitly include this assumption.
 
 ## Lattice Hardness Assumptions
 

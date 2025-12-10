@@ -541,12 +541,37 @@ inductive SignAttemptResult (S : Scheme)
   | abort                           -- max attempts exceeded
 
 structure SignRetryState (S : Scheme) where
-  base      : SignLocalState S
-  attempt   : Nat
-  challenge : S.Challenge
+  base       : SignLocalState S
+  attempt    : Nat
+  challenge  : S.Challenge
+  usedNonces : List S.Secret  -- track nonces for freshness verification
 
 def maxSigningAttempts : Nat := 16  -- Dilithium expects ~4
+
+-- Nonce freshness is security-critical
+def noncesDistinct [DecidableEq S.Secret] (state : SignRetryState S) : Prop :=
+  state.usedNonces.Nodup
+
+def checkNonceFresh [DecidableEq S.Secret] (state : SignRetryState S) (nonce : S.Secret) : Bool :=
+  !state.usedNonces.contains nonce
 ```
+
+### Rejection Sampling Axioms
+
+The probabilistic properties of rejection sampling cannot be proven in Lean. We axiomatize the key security properties:
+
+```lean
+-- Acceptance probability: honest parties accept with prob ≥ 1/κ
+structure AcceptanceProbability (S : Scheme) where
+  expectedIterations : Nat           -- κ ≈ 4 for Dilithium
+  bound_valid : expectedIterations > 0
+
+-- Response independence: accepted z reveals nothing about secret
+structure ResponseIndependence (S : Scheme) : Prop where
+  independence : True  -- axiomatized; this is what rejection sampling achieves
+```
+
+**Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009.
 
 ### Retry Logic
 

@@ -28,7 +28,8 @@ structure Scheme where
   Commitment : Type
   Opening    : Type
   commit     : Public → Opening → Commitment
-  commitBinding : ...
+  commitBinding : ∀ {x₁ x₂ o₁ o₂}, commit x₁ o₁ = commit x₂ o₂ → x₁ = x₂
+  hashCollisionResistant : Prop
   hash       : Message → Public → List PartyId → List Commitment → Public → Challenge
   normOK     : Secret → Prop
 ```
