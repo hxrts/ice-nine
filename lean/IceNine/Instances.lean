@@ -73,6 +73,10 @@ def intVecInfNorm {n : Nat} (v : Fin n → Int) : Int :=
 def intVecInfLeq (B : Int) {n : Nat} (v : Fin n → Int) : Prop :=
   intVecInfNorm v ≤ B
 
+/-- Decidability instance for intVecInfLeq (needed for normOKDecidable). -/
+instance intVecInfLeqDecidable (B : Int) {n : Nat} : DecidablePred (intVecInfLeq B (n := n)) :=
+  fun v => inferInstanceAs (Decidable (intVecInfNorm v ≤ B))
+
 /-!
 ## Concrete lattice-friendly scheme
 -/
@@ -122,6 +126,7 @@ def latticeScheme (p : LatticeParams := {}) : Scheme :=
   , hash := fun m pk Sset commits w => hashFS m pk Sset commits w |> fun b => Int.ofNat b.size -- placeholder challenge
   , hashCollisionResistant := True
   , normOK := fun v => intVecInfLeq p.bound v
+  , normOKDecidable := intVecInfLeqDecidable p.bound
 }
 
 abbrev LatticePartyId   := latticeScheme ().PartyId

@@ -108,23 +108,33 @@ inductive DkgError (PartyId : Type*) where
   | duplicatePids  : DkgError PartyId           -- same party appears twice
   | commitMismatch : PartyId → DkgError PartyId -- party's reveal doesn't match commit
 
+/-- Check a single commit-reveal pair. -/
+def checkPair
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
+  (c : DkgCommitMsg S) (r : DkgRevealMsg S) :
+  Except (DkgError S.PartyId) Unit :=
+  -- Check party IDs match
+  if c.sender = r.sender then
+    -- Check commitment opens to revealed value
+    if S.commit r.pk_i r.opening = c.commitPk then
+      pure ()
+    else throw (.commitMismatch r.sender)
+  else throw (.commitMismatch r.sender)
+
 /-- Walk through commit-reveal pairs, checking each opens correctly.
-    Requires DecidableEq on all relevant types for runtime checking. -/
-partial def checkPairs
+    Requires DecidableEq on all relevant types for runtime checking.
+    Terminates because we iterate over the zipped list (structurally decreasing). -/
+def checkPairs
   (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
   (commits : List (DkgCommitMsg S)) (reveals : List (DkgRevealMsg S)) :
   Except (DkgError S.PartyId) Unit :=
-  match commits, reveals with
-  | [], [] => pure ()
-  | c::cs, r::rs =>
-      -- Check party IDs match
-      if c.sender = r.sender then
-        -- Check commitment opens to revealed value
-        if S.commit r.pk_i r.opening = c.commitPk then
-          checkPairs S cs rs
-        else throw (.commitMismatch r.sender)
-      else throw (.commitMismatch r.sender)
-  | _, _ => throw (.lengthMismatch)
+  -- First check lengths match
+  if commits.length ≠ reveals.length then
+    throw .lengthMismatch
+  else
+    -- Iterate over zipped pairs (terminates: structural recursion on list)
+    let pairs := List.zip commits reveals
+    pairs.forM (fun (c, r) => checkPair S c r)
 
 /-- Full checked aggregation: validates then computes pk.
     Returns either the global public key or a specific error. -/

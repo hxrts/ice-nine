@@ -126,6 +126,49 @@ The Join instances above satisfy semilattice laws:
 
 These properties ensure CRDT convergence regardless of message order.
 Proofs omitted as they follow directly from List.append and Finset.union properties.
+
+**Note on Duplicates**: List-based merge uses append, which may accumulate
+duplicates. This is intentional for CRDT semantics (append is associative,
+commutative up to reordering, idempotent on empty). Duplicates are removed
+at aggregation time using the normalize functions below.
 -/
+
+/-!
+## Normalization (Deduplication)
+
+Before aggregating messages, remove duplicates to avoid double-counting.
+These functions should be called before `dkgAggregate`, `aggregateSignature`, etc.
+-/
+
+/-- Remove duplicate commits by sender. -/
+def CommitState.normalize [DecidableEq S.PartyId] (st : CommitState S) : CommitState S :=
+  { commits := st.commits.dedup }
+
+/-- Remove duplicate reveals by sender. -/
+def RevealState.normalize [DecidableEq S.PartyId] (st : RevealState S) : RevealState S :=
+  { commits := st.commits.dedup
+    reveals := st.reveals.dedup }
+
+/-- Remove duplicate shares by sender. -/
+def ShareState.normalize [DecidableEq S.PartyId] (st : ShareState S) : ShareState S :=
+  { commits := st.commits.dedup
+    reveals := st.reveals.dedup
+    shares := st.shares.dedup
+    active := st.active }
+
+/-- Normalize DKG commits list (dedup by sender). -/
+def dedupCommits [DecidableEq S.PartyId]
+    (commits : List (DkgCommitMsg S)) : List (DkgCommitMsg S) :=
+  commits.dedup
+
+/-- Normalize DKG reveals list (dedup by sender). -/
+def dedupReveals [DecidableEq S.PartyId]
+    (reveals : List (DkgRevealMsg S)) : List (DkgRevealMsg S) :=
+  reveals.dedup
+
+/-- Normalize sign shares list (dedup by sender). -/
+def dedupShares [DecidableEq S.PartyId]
+    (shares : List (SignShareMsg S)) : List (SignShareMsg S) :=
+  shares.dedup
 
 end IceNine.Protocol

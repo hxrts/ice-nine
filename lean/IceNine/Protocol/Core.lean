@@ -153,9 +153,14 @@ structure Scheme where
   -- Rejects signatures with large z to prevent leakage.
   normOK : Secret → Prop
 
+  -- Decidability of normOK for runtime checking.
+  -- Default: trivially decidable (True or compute-based).
+  [normOKDecidable : DecidablePred normOK]
+
 attribute [instance] Scheme.scalarSemiring Scheme.secretAdd Scheme.publicAdd
 attribute [instance] Scheme.secretModule Scheme.publicModule
 attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
+attribute [instance] Scheme.normOKDecidable
 
 /-!
 ## Key and Message Types

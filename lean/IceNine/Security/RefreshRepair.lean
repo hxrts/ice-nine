@@ -67,11 +67,11 @@ Rerandomization masks preserve the final signature.
 Zero-sum masks on z_i values cancel in aggregate.
 -/
 
-/-- Rerandomization preserves signature: masked shares aggregate to same sig.
-    Delegates to Sign.aggregateSignature_masks_zero. -/
-lemma rerand_preserves_sig
+/-- Rerandomization preserves signature using raw masks.
+    Requires explicit proof that masks sum to zero. -/
+lemma rerand_preserves_sig_raw
   (S : Scheme)
-  (masks : RerandMasks S)
+  (masks : RawRerandMasks S)
   (Sset : List S.PartyId)
   (c : S.Challenge)
   (commits : List S.Commitment)
@@ -82,5 +82,23 @@ lemma rerand_preserves_sig
   intro hzero
   apply IceNine.Security.Sign.aggregateSignature_masks_zero
   · exact hzero
+
+/-- Rerandomization preserves signature using zero-sum masks.
+    Zero-sum property is carried in the RerandMasks structure. -/
+lemma rerand_preserves_sig
+  (S : Scheme)
+  (Sset : List S.PartyId)
+  (masks : RerandMasks S Sset)
+  (c : S.Challenge)
+  (commits : List S.Commitment)
+  (shares : List (SignShareMsg S))
+  (hpids : shares.map (·.sender) = Sset) :
+  aggregateSignature S c Sset commits (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.sender }))
+    = aggregateSignature S c Sset commits shares := by
+  apply rerand_preserves_sig_raw
+  -- Use zero-sum property from masks structure
+  rw [← hpids]
+  simp only [List.map_map, Function.comp]
+  exact masks.shareSumZero
 
 end IceNine.Security.RefreshRepair

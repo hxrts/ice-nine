@@ -35,6 +35,28 @@ If the same nonce y is used with two different challenges c₁, c₂:
 Then: sk = (z₁ - z₂) / (c₁ - c₂)  -- secret key recovered!
 
 We track used sessions to prevent this attack vector.
+
+### Session ID Generation
+
+Session IDs must be unique across all signing sessions for a given party.
+Recommended strategies (in order of preference):
+
+1. **Cryptographic random**: Generate 128+ bit random session ID using CSPRNG.
+   Collision probability negligible. Best for distributed systems.
+
+2. **Monotonic counter + party ID**: `(partyId, counter)` tuple where counter
+   increments locally. Requires persistent storage but deterministic.
+
+3. **Timestamp + random**: `(timestamp_ns, random_64bit)`. Good balance of
+   uniqueness and debuggability.
+
+**WARNING**: Do NOT use:
+- Sequential counters without party ID (collisions across parties)
+- Predictable values (may enable targeted attacks)
+- Message hash alone (same message = same session = nonce reuse!)
+
+The `SessionTracker` below provides runtime detection of session reuse,
+but proper generation is the primary defense.
 -/
 
 /-- Tracks used session IDs to prevent nonce reuse.
@@ -582,10 +604,16 @@ def validateSigning
   let pids := commits.map (·.sender)
   -- Check no duplicate signers
   if pids.Nodup then pure () else
-    throw (.duplicateParticipants (pids.head?.getD (commits.head?.map (·.sender)).getD (by sorry)))
+    -- Find first duplicate: safe to use head since non-Nodup implies non-empty
+    let firstPid := pids.head!
+    throw (.duplicateParticipants firstPid)
   -- Check signers match expected set
   if pids = Sset then pure () else
-    throw (.participantMismatch (pids.head?.getD (commits.head?.map (·.sender)).getD (by sorry)))
+    -- Find first mismatched party
+    let mismatch := pids.find? (· ∉ Sset) |>.orElse (fun _ => Sset.find? (· ∉ pids))
+    match mismatch with
+    | some pid => throw (.participantMismatch pid)
+    | none => throw .lengthMismatch  -- shouldn't happen if pids ≠ Sset
   -- Verify each commitment opens correctly
   for (c,r) in List.zip commits reveals do
     if c.sender = r.sender then
