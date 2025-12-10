@@ -62,8 +62,7 @@
             gawk
             gnused
 
-            # Lean 4 for formal verification
-            lean4
+            # Lean 4 for formal verification (elan manages version per lean-toolchain)
             elan
             aeneas.packages.${system}.aeneas
 

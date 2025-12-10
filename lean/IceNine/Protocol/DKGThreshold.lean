@@ -1,24 +1,21 @@
 /-
-# Threshold DKG (t-of-n) with complaints (lattice, additive shares)
+# Threshold DKG
+
+Complaint-based DKG aggregation for t-of-n. Proofs live in `Security/DKG`.
 -/
 
 import IceNine.Protocol.DKGCore
-import IceNine.Protocol.Sign
 import Mathlib
 
 namespace IceNine.Protocol
 
 open List
 
-/-- Complaint reasons during DKG. -/
 inductive Complaint (PartyId : Type u) where
   | openingMismatch (accused : PartyId)
   | missingReveal (accused : PartyId)
   deriving Repr, DecidableEq
 
-/--
-  Verify reveals against commits; return list of complaints (empty = happy path).
--/
 def dkgCheckComplaints
   (S : Scheme) [DecidableEq S.PartyId]
   (commits : List (DkgCommitMsg S))
@@ -33,9 +30,6 @@ def dkgCheckComplaints
       else Complaint.openingMismatch r.from :: acc)
     []
 
-/--
-  Attempt aggregation with complaints; returns pk on success, or list of complaints.
--/
 def dkgAggregateWithComplaints
   (S : Scheme) [DecidableEq S.PartyId]
   (commits : List (DkgCommitMsg S))
@@ -50,22 +44,5 @@ def dkgAggregateWithComplaints
       Except.error cs
   else
     Except.error [Complaint.missingReveal (commits.head?.map (·.from)).getD (reveals.head?.map (·.from)).getD (default)]
-
-/--
-  Correctness: if no complaints are returned, pk equals the sum of pk_i.
--/
-lemma dkgAggregateWithComplaints_correct
-  (S : Scheme) [DecidableEq S.PartyId]
-  (commits : List (DkgCommitMsg S))
-  (reveals : List (DkgRevealMsg S))
-  (pk : S.Public)
-  (h : dkgAggregateWithComplaints S commits reveals = Except.ok pk) :
-  pk = reveals.foldl (fun acc r => acc + r.pk_i) (0 : S.Public) := by
-  unfold dkgAggregateWithComplaints at h
-  by_cases hlen : commits.length = reveals.length <;> simp [hlen] at h
-  · by_cases hcompl : dkgCheckComplaints S commits reveals = [] <;> simp [hcompl] at h
-    · simpa using h
-    · cases h
-  · cases h
 
 end IceNine.Protocol

@@ -14,6 +14,10 @@ open List
 
 universe u
 
+-- Scheme bundles the algebraic setting (modules + linear map) and the
+-- cryptographic oracles (commitment, hash, norm predicate) that every
+-- protocol component relies on. It keeps things abstract so proofs and
+-- implementations can swap in concrete rings and primitives later.
 structure Scheme where
   PartyId   : Type u
   Message   : Type u
@@ -62,6 +66,9 @@ attribute [instance] Scheme.secretModule Scheme.publicModule
 attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
 
 /-- State of a party after DKG. -/
+-- Local view of a party after DKG: its secret share, its public contribution,
+-- and the agreed global public key. This is what a signer carries forward
+-- into the signing protocol.
 structure KeyShare (S : Scheme) :=
   (pid  : S.PartyId)
   (sk_i : S.Secret)

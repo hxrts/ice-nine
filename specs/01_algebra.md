@@ -2,6 +2,37 @@
 
 The protocol is parameterized by an abstract scheme structure. This structure defines the algebraic objects and operations. Concrete instantiations choose specific rings and modules.
 
+## Scheme Record
+
+The `Scheme` structure bundles the algebraic setting with cryptographic oracles. It keeps types abstract so proofs and implementations can swap in concrete rings and primitives.
+
+```lean
+structure Scheme where
+  PartyId   : Type
+  Message   : Type
+  Secret    : Type
+  Public    : Type
+  Challenge : Type
+  Scalar    : Type
+
+  [scalarSemiring : Semiring Scalar]
+  [secretAdd      : AddCommGroup Secret]
+  [publicAdd      : AddCommGroup Public]
+  [secretModule   : Module Scalar Secret]
+  [publicModule   : Module Scalar Public]
+  [challengeSMulSecret : SMul Challenge Secret]
+  [challengeSMulPublic : SMul Challenge Public]
+
+  A : Secret →ₗ[Scalar] Public
+
+  Commitment : Type
+  Opening    : Type
+  commit     : Public → Opening → Commitment
+  commitBinding : ...
+  hash       : Message → Public → List PartyId → List Commitment → Public → Challenge
+  normOK     : Secret → Prop
+```
+
 ## Modules and Scalars
 
 Let $R$ denote a commutative semiring with unity. This serves as the scalar ring. Common choices include $\mathbb{Z}_q$ for a prime $q$.
@@ -63,6 +94,60 @@ A norm predicate $\mathsf{normOK} : \mathcal{S} \to \mathsf{Prop}$ gates accepta
 The predicate captures a bound on the norm of the response. For lattice signatures this prevents leakage through the response distribution. Rejection sampling or abort strategies ensure the bound holds.
 
 In the abstract model the predicate is a parameter. Concrete instantiations define it based on the lattice parameters.
+
+## Semilattice Structure
+
+Protocol state at each phase forms a join-semilattice. A semilattice is an algebraic structure with a binary join operation $\sqcup$ that is commutative, associative, and idempotent.
+
+$$a \sqcup b = b \sqcup a$$
+$$a \sqcup (b \sqcup c) = (a \sqcup b) \sqcup c$$
+$$a \sqcup a = a$$
+
+The join induces a partial order: $a \leq b$ iff $a \sqcup b = b$.
+
+### List Semilattice
+
+Lists form a semilattice under append. The join of two lists is their concatenation. The order is subset inclusion (all elements of $a$ appear in $b$).
+
+```lean
+instance : Join (List α) := ⟨List.append⟩
+instance : LE (List α) := ⟨fun a b => ∀ x, x ∈ a → x ∈ b⟩
+```
+
+This provides the foundation for merging commit lists, reveal lists, and share lists.
+
+### Product Semilattice
+
+If $\alpha$ and $\beta$ are semilattices, their product $\alpha \times \beta$ is a semilattice under componentwise join.
+
+```lean
+instance prodJoin (α β) [Join α] [Join β] : Join (α × β) :=
+  ⟨fun a b => (a.1 ⊔ b.1, a.2 ⊔ b.2)⟩
+```
+
+This allows combining protocol state with auxiliary data (refresh masks, repair bundles, rerandomization masks).
+
+### CRDT Semantics
+
+Semilattice merge ensures conflict-free replicated data type (CRDT) semantics. Replicas can merge states in any order and converge to the same result. This is essential for handling:
+
+- Out-of-order message delivery
+- Network partitions and rejoins
+- Concurrent protocol executions
+
+## Secret Wrappers
+
+Secrets and nonces are wrapped in opaque structures to discourage accidental duplication or exposure.
+
+```lean
+structure SecretBox (α : Type) where
+  val : α
+
+structure NonceBox (α : Type) where
+  val : α
+```
+
+This lightweight discipline signals intent. Code that pattern-matches on these wrappers must explicitly acknowledge it is handling secret material.
 
 ## Single-Signer Schnorr Relation
 

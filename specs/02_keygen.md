@@ -4,9 +4,40 @@ Key generation produces the master secret and distributes shares among parties. 
 
 Both modes produce additive shares. Each party $P_i$ holds a secret share $s_i \in \mathcal{S}$. The shares sum to the master secret $s = \sum_i s_i$. The corresponding public key is $\mathsf{pk} = A(s)$.
 
+## Key Share Structure
+
+After key generation each party holds a `KeyShare` containing its local view.
+
+```lean
+structure KeyShare (S : Scheme) :=
+  (pid  : S.PartyId)   -- party identifier
+  (sk_i : S.Secret)    -- secret share
+  (pk_i : S.Public)    -- public share = A(sk_i)
+  (pk   : S.Public)    -- global public key
+```
+
+The key share is the persistent credential a signer carries into the signing protocol.
+
 ## Trusted Dealer Mode
 
 In trusted dealer mode a single entity generates and distributes all shares. This mode is simpler but requires trust in the dealer.
+
+### Dealer Output Structure
+
+The dealer produces a `DealerShare` for each party and a `DealerTranscript` bundling the complete key material.
+
+```lean
+structure DealerShare (S : Scheme) :=
+  (pid      : S.PartyId)
+  (sk_i     : S.Secret)
+  (pk_i     : S.Public)
+  (opening  : S.Opening)
+  (commitPk : S.Commitment)
+
+structure DealerTranscript (S : Scheme) :=
+  (shares : List (DealerShare S))
+  (pk     : S.Public)
+```
 
 ### Dealer Procedure
 
@@ -20,6 +51,8 @@ The dealer proceeds as follows.
 6. Commit to each public share as $\mathsf{Com}_i = \mathsf{Com}(\mathsf{pk}_i, r_i)$ for random openings $r_i$.
 7. Publish the global public key and all commitments.
 8. Send each party $P_i$ its secret share $s_i$ over a secure channel.
+
+The pure implementation `dealerKeygen` takes pre-sampled secrets and openings to keep IO/randomness out of the core logic.
 
 ### Dealer Correctness
 
@@ -35,12 +68,36 @@ The dealer learns the master secret $s$. This mode is appropriate when a trusted
 
 ## Distributed Key Generation
 
-Distributed key generation removes the need for a trusted dealer. Parties jointly generate shares such that no single party learns the master secret. The protocol runs in two rounds.
+Distributed key generation removes the need for a trusted dealer. Parties jointly generate shares such that no single party learns the master secret. The protocol runs in two rounds with CRDT-mergeable state at each phase.
+
+### Message Types
+
+The DKG protocol uses commit and reveal messages.
+
+```lean
+structure DkgCommitMsg (S : Scheme) :=
+  (from     : S.PartyId)
+  (commitPk : S.Commitment)
+
+structure DkgRevealMsg (S : Scheme) :=
+  (from    : S.PartyId)
+  (pk_i    : S.Public)
+  (opening : S.Opening)
+```
 
 ### Party State
 
 Each party $P_i$ maintains local state during the protocol.
 
+```lean
+structure DkgLocalState (S : Scheme) :=
+  (pid    : S.PartyId)
+  (sk_i   : S.Secret)
+  (pk_i   : S.Public)
+  (openPk : S.Opening)
+```
+
+The local state contains:
 - A secret share $s_i \in \mathcal{S}$ sampled locally.
 - An opening value $r_i \in \mathcal{O}$ for the commitment.
 - The commitment $\mathsf{Com}_i = \mathsf{Com}(\mathsf{pk}_i, r_i)$ where $\mathsf{pk}_i = A(s_i)$.
@@ -78,13 +135,56 @@ Each party stores the set of all public shares $\{\mathsf{pk}_i\}$ and the globa
 
 ### Error Handling
 
-Several error conditions may arise during DKG.
+Several error conditions may arise during DKG. The implementation provides structured error types.
 
-**Missing commitment.** If a party does not receive a commitment from $P_j$ within a timeout it marks $P_j$ as absent. The protocol can proceed with the remaining parties if enough are present.
+```lean
+inductive DkgError (PartyId : Type) where
+  | lengthMismatch : DkgError PartyId
+  | duplicatePids  : DkgError PartyId
+  | commitMismatch : PartyId → DkgError PartyId
+```
 
-**Invalid opening.** If $\mathsf{Com}(\mathsf{pk}_j, r_j) \neq \mathsf{Com}_j$ then party $P_j$ is marked as malicious. The protocol aborts or excludes $P_j$ depending on the threshold.
+**Missing commitment.** If a party does not receive a commitment from $P_j$ within a timeout it marks $P_j$ as absent. The protocol can proceed with the remaining parties if enough are present. Detected via `lengthMismatch`.
+
+**Invalid opening.** If $\mathsf{Com}(\mathsf{pk}_j, r_j) \neq \mathsf{Com}_j$ then party $P_j$ is marked as malicious. Detected via `commitMismatch`.
+
+**Duplicate participants.** If the same party identifier appears twice, detected via `duplicatePids`.
 
 **Inconsistent views.** If parties disagree about which commitments were received they must run a consensus or abort. The protocol assumes a broadcast channel or equivalent.
+
+### Checked Aggregation
+
+The `dkgAggregateChecked` function validates the transcript before computing the global public key.
+
+```lean
+def dkgAggregateChecked
+  (S : Scheme) [DecidableEq S.PartyId]
+  (commits : List (DkgCommitMsg S))
+  (reveals : List (DkgRevealMsg S))
+  : Except (DkgError S.PartyId) S.Public
+```
+
+It returns either the public key or a structured error identifying the failure mode. The totality theorem ensures this function always returns a result:
+
+```lean
+lemma dkgAggregateChecked_total : (result).isOk ∨ (result).isError
+```
+
+### Validity Predicate
+
+A transcript is valid when commits and reveals align by party identifier and each opening matches its commitment.
+
+```lean
+def dkgValid
+  (S : Scheme)
+  (commits : List (DkgCommitMsg S))
+  (reveals : List (DkgRevealMsg S)) : Prop :=
+  List.Forall2
+    (fun c r => c.from = r.from ∧ S.commit r.pk_i r.opening = c.commitPk)
+    commits reveals
+```
+
+If `dkgAggregateChecked` succeeds, then `dkgValid` holds.
 
 ## Threshold Considerations
 
@@ -115,6 +215,44 @@ Any external verifier can check the consistency of published data.
 
 These checks do not require knowledge of secret shares. They ensure that the published public key corresponds to the committed shares.
 
+## DKG with Complaints
+
+The threshold DKG variant collects complaints when verification fails rather than immediately aborting.
+
+```lean
+inductive Complaint (PartyId : Type) where
+  | openingMismatch (accused : PartyId)
+  | missingReveal (accused : PartyId)
+```
+
+The `dkgAggregateWithComplaints` function returns either the public key or a list of complaints.
+
+```lean
+def dkgAggregateWithComplaints
+  (S : Scheme) [DecidableEq S.PartyId]
+  (commits : List (DkgCommitMsg S))
+  (reveals : List (DkgRevealMsg S))
+  : Except (List (Complaint S.PartyId)) S.Public
+```
+
+This enables exclusion of misbehaving parties while continuing with the honest subset.
+
+## Finalizing Key Shares
+
+After DKG completes successfully, each party converts its local state into a persistent key share.
+
+```lean
+def finalizeKeyShare
+  (S : Scheme)
+  (st : DkgLocalState S)
+  (pk : S.Public)
+  : KeyShare S :=
+{ pid  := st.pid,
+  sk_i := st.sk_i,
+  pk_i := st.pk_i,
+  pk   := pk }
+```
+
 ## Security Properties
 
 **Secrecy.** No coalition of fewer than $t$ parties learns the master secret $s$.
@@ -122,3 +260,5 @@ These checks do not require knowledge of secret shares. They ensure that the pub
 **Correctness.** Honest execution produces shares that satisfy $A(\sum_i s_i) = \mathsf{pk}$.
 
 **Robustness.** If all parties are honest the protocol terminates successfully. If a party misbehaves it is detected through commitment verification.
+
+**Totality.** The checked aggregation functions always return either success or a structured error.

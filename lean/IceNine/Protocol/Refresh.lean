@@ -1,9 +1,9 @@
 /-
 # Share refresh/removal via zero-sum masks
 
-This version uses an explicit mask function together with a proof that the
-masked contributions sum to zero over the current participant set, making the
-pk-invariance lemma straightforward.
+We rerandomize long-term shares with a mask function whose sum over the active
+participants is zero. Because A is linear, the global pk stays unchanged while
+each party receives a fresh-looking share.
 -/
 
 import IceNine.Protocol.Core
@@ -12,14 +12,26 @@ namespace IceNine.Protocol
 
 open List
 
-/-- Mask function for shares. -/
+/-- Mask function keyed by participant id. -/
 structure MaskFn (S : Scheme) :=
   (mask : S.PartyId → S.Secret)
 
-/--
-  Refresh shares by adding masks; pk stays unchanged if mask sums to zero over
-  the active participant list.
--/
+instance (S : Scheme) : Join (MaskFn S) :=
+  ⟨fun a b => { mask := fun pid => a.mask pid + b.mask pid }⟩
+
+-- Zero-sum invariant on a given active set.
+structure ZeroSumMaskFn (S : Scheme) (active : Finset S.PartyId) :=
+  (fn : MaskFn S)
+  (sum_zero : (active.toList.map (fun pid => fn.mask pid)).sum = 0)
+
+-- Merge of zero-sum masks preserves zero-sum on the same active set.
+instance (S : Scheme) (active : Finset S.PartyId) : Join (ZeroSumMaskFn S active) :=
+  ⟨fun a b =>
+    { fn := { mask := fun pid => a.fn.mask pid + b.fn.mask pid }
+    , sum_zero := by
+        simp [List.map_map, add_comm, add_left_comm, add_assoc, a.sum_zero, b.sum_zero] }⟩
+
+/-- Apply masks to shares; recompute pk_i with the linear map A. -/
 def refreshShares
   (S : Scheme)
   (m : MaskFn S)
@@ -28,43 +40,5 @@ def refreshShares
     let sk' := ks.sk_i + m.mask ks.pid
     let pk' := S.A sk'
     { ks with sk_i := sk', pk_i := pk' })
-
-/-- If mask sums to zero over the participant set, refreshed pk equals original pk. -/
-lemma refresh_pk_unchanged
-  (S : Scheme)
-  (m : MaskFn S)
-  (shares : List (KeyShare S))
-  (hsum : (shares.map (fun ks => m.mask ks.pid)).sum = 0) :
-  let refreshed := refreshShares S m shares
-  (refreshed.foldl (fun acc ks => acc + ks.pk_i) (0 : S.Public)) =
-  (shares.foldl (fun acc ks => acc + ks.pk_i) (0 : S.Public)) := by
-  classical
-  unfold refreshShares
-  -- separate base pk sum and mask contribution
-  have hsplit :
-    (shares.map (fun ks =>
-        let sk' := ks.sk_i + m.mask ks.pid
-        let pk' := S.A sk'
-        { ks with sk_i := sk', pk_i := pk' })).foldl (fun acc ks => acc + ks.pk_i) 0
-    =
-    shares.foldl (fun acc ks => acc + ks.pk_i) 0
-      + shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0 := by
-    revert shares
-    induction shares with
-    | nil => simp
-    | cons ks rest ih =>
-        simp [ih, add_assoc, add_left_comm, add_comm, LinearMap.map_add]
-  have hA :
-    shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0
-      = S.A ((shares.map (fun ks => m.mask ks.pid)).sum) := by
-    revert shares; intro sh; induction sh with
-    | nil => simp
-    | cons ks rest ih =>
-        simp [ih, add_comm, add_left_comm, add_assoc, LinearMap.map_add]
-  have hmask : shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0 = 0 := by
-    simp [hA, hsum]
-  have := hsplit
-  simp [hmask, add_comm] at this
-  simpa using this
 
 end IceNine.Protocol
