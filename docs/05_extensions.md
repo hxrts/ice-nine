@@ -143,6 +143,76 @@ A full refresh protocol runs as follows.
 6. Parties publish new commitments to their public shares.
 7. External verifiers can check the consistency of the new public shares.
 
+### Refresh Coordination Protocol
+
+The `Protocol/RefreshCoord.lean` module provides a distributed protocol for generating zero-sum masks without a trusted coordinator.
+
+**Phases:**
+1. **Commit**: Each party commits to their random mask
+2. **Reveal**: Parties reveal masks after all commits received
+3. **Adjust**: Coordinator computes adjustment to achieve zero-sum
+4. **Apply**: All parties apply masks to their shares
+
+**CRDT Design:** Uses `MsgMap` for commits and reveals to ensure at most one message per party. This makes conflicting messages un-expressable at the type level.
+
+```lean
+abbrev MaskCommitMap (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] :=
+  MsgMap S (MaskCommitMsg S)
+
+abbrev MaskRevealMap (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] :=
+  MsgMap S (MaskRevealMsg S)
+
+structure RefreshRoundState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] where
+  phase : RefreshPhase
+  parties : List S.PartyId
+  roundNum : Nat
+  coordStrategy : CoordinatorStrategy S.PartyId
+  maskCommits : MaskCommitMap S    -- at most one per party
+  maskReveals : MaskRevealMap S    -- at most one per party
+  adjustment : Option (AdjustmentMsg S)
+```
+
+**Commitment Design:** The protocol commits to `A(mask)` (the public image) rather than the mask itself. This enables:
+- Public verifiability without revealing the secret mask
+- Consistency with DKG (which commits to public shares)
+- Simple zero-sum verification via `A(Σ m_i)`
+
+**Processing Variants:**
+```lean
+-- Strict mode: returns conflict indicator
+def processCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : CommitProcessResult S  -- success | conflict | wrongPhase
+
+-- CRDT mode: ignores duplicates
+def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : RefreshRoundState S
+```
+
+**Coordinator Selection:**
+```lean
+inductive CoordinatorStrategy (PartyId : Type*)
+  | fixed (pid : PartyId)      -- always same coordinator
+  | roundRobin (round : Nat)   -- rotate based on round number
+  | random (seed : Nat)        -- pseudo-random selection
+```
+
+**Zero-Sum Verification:**
+The coordinator computes adjustment $m_n = -\sum_{i \neq n} m_i$ ensuring $\sum_i m_i = 0$:
+
+```lean
+def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    [DecidableEq S.PartyId] [Inhabited S.PartyId]
+    (st : RefreshRoundState S) : Option S.Secret :=
+  if st.phase = .adjust then
+    let coord := st.coordinator
+    let otherMasks := st.maskReveals.toList.filter (fun r => r.sender ≠ coord)
+    let sumOthers := (otherMasks.map (·.mask)).sum
+    some (-sumOthers)
+  else none
+```
+
 ### Public Key Invariance Theorem
 
 If the mask sums to zero over the participant list, the global public key is unchanged.
@@ -361,6 +431,102 @@ def tryCompleteRepair
 5. When `hasEnoughHelpers` returns true, party $P_i$ calls `tryCompleteRepair`.
 6. Party $P_i$ verifies $A(s_i) = \mathsf{pk}_i$ via `verifyRepairedShare`.
 
+### Repair Coordination Protocol
+
+The `Protocol/RepairCoord.lean` module provides a commit-reveal protocol for coordinating repair contributions.
+
+**Phases:**
+1. **Request**: Requester broadcasts repair request with known $pk_i$
+2. **Commit**: Helpers commit to their Lagrange-weighted contributions
+3. **Reveal**: Helpers reveal contributions after all commits received
+4. **Verify**: Requester verifies $A(sk_i) = pk_i$
+
+**CRDT Design:** Uses `MsgMap` for commits and reveals to ensure at most one message per helper. This makes conflicting messages un-expressable at the type level.
+
+```lean
+abbrev ContribCommitMap (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] :=
+  MsgMap S (ContribCommitMsg S)
+
+abbrev ContribRevealMap (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] :=
+  MsgMap S (ContribRevealMsg S)
+
+inductive RepairPhase
+  | request | commit | reveal | verify | done
+
+structure RepairCoordState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] where
+  phase : RepairPhase
+  request : RepairRequest S
+  helpers : List S.PartyId
+  threshold : Nat
+  commits : ContribCommitMap S    -- at most one per helper
+  reveals : ContribRevealMap S    -- at most one per helper
+  repairedShare : Option S.Secret
+```
+
+**Processing Variants:**
+```lean
+-- Strict mode: returns conflict indicator
+def processContribCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : ContribCommitProcessResult S  -- success | conflict | wrongPhase
+
+-- CRDT mode: ignores duplicates
+def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : RepairCoordState S
+```
+
+**Helper State:**
+Each helper maintains local state for participation:
+
+```lean
+structure HelperLocalState (S : Scheme) where
+  helperId : S.PartyId
+  keyShare : KeyShare S
+  lagrangeCoeff : S.Scalar
+  contribution : S.Secret        -- λ_j · sk_j
+  commitment : S.Commitment
+  opening : S.Opening
+```
+
+**Lagrange Coefficient Computation:**
+Uses the unified `Protocol/Lagrange.lean` module:
+```lean
+def lagrangeCoefficient [Field F] [DecidableEq F]
+    (partyScalar : F) (otherScalars : List F) : F :=
+  otherScalars.foldl (fun acc m =>
+    if m = partyScalar then acc
+    else acc * (m / (m - partyScalar))) 1
+```
+
+**Transcript Creation:**
+The `createTranscript` function extracts ordered lists from MsgMap for verification:
+
+```lean
+def createTranscript (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) : Option (RepairTranscript S) :=
+  if st.phase = .done then
+    some { commits := st.commits.toList.map (·.2)
+           reveals := st.reveals.toList.map (·.2)
+           repairedShare := st.repairedShare.getD default }
+  else none
+```
+
+**Verification:**
+The repaired share is verified against the known public share:
+
+```lean
+def completeRepair (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    [DecidableEq S.Public]
+    (st : RepairCoordState S) : RepairCoordState S :=
+  if st.phase = .verify then
+    let repairedSk := aggregateContributions S st.reveals.toList
+    if S.A repairedSk = st.request.knownPk_i then
+      { st with repairedShare := some repairedSk, phase := .done }
+    else st
+  else st
+```
+
 ## Rerandomization
 
 Rerandomization adds privacy by masking shares and nonces. It prevents linking between signing sessions.
@@ -543,3 +709,91 @@ The merge must prove that `max(t_a, t_b) ≤ |a.active ∪ b.active|`. This foll
 - `a.ctx.t ≤ |a.active| ≤ |a.active ∪ b.active|` (subset monotonicity)
 - `b.ctx.t ≤ |b.active| ≤ |a.active ∪ b.active|` (subset monotonicity)
 - Therefore `max(t_a, t_b) ≤ |merged.active|`
+
+## Type-Indexed Phase Transitions
+
+The `Protocol/PhaseIndexed.lean` module encodes protocol phases at the type level. Invalid phase transitions become compile-time errors rather than runtime failures.
+
+### Phase-Indexed State
+
+State is indexed by the current phase, ensuring only valid operations are available:
+
+```lean
+inductive PhaseState (S : Scheme) : Phase → Type where
+  | commit  : CommitPhaseData S → PhaseState S .commit
+  | reveal  : RevealPhaseData S → PhaseState S .reveal
+  | shares  : SharePhaseData S → PhaseState S .shares
+  | done    : DonePhaseData S → PhaseState S .done
+```
+
+Each phase carries phase-specific data. The runtime phase state (`Protocol/Phase.lean`) uses `MsgMap` for conflict-free message storage, while the type-indexed version uses lists for simpler type signatures:
+
+```lean
+-- Type-indexed version (PhaseIndexed.lean) - simpler types
+structure CommitPhaseData (S : Scheme) where
+  commits : List (DkgCommitMsg S)
+  expectedParties : Nat
+
+structure RevealPhaseData (S : Scheme) where
+  commits : List (DkgCommitMsg S)
+  reveals : List (DkgRevealMsg S)
+  commitsComplete : commits.length = expectedParties
+  expectedParties : Nat
+
+-- Runtime version (Phase.lean) - conflict-free by construction
+structure CommitState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] where
+  commits : CommitMap S   -- MsgMap: at most one per sender
+
+structure RevealState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] where
+  commits : CommitMap S
+  reveals : RevealMap S   -- MsgMap: at most one per sender
+```
+
+### Type-Safe Transitions
+
+Transitions are functions between specific phase types:
+
+```lean
+-- Can only be called when in commit phase
+def transitionToReveal (S : Scheme)
+    (st : PhaseState S .commit)
+    (hready : match st with | .commit data => data.commits.length = data.expectedParties)
+    : PhaseState S .reveal
+
+-- Can only be called when in reveal phase
+def transitionToShares (S : Scheme)
+    (st : PhaseState S .reveal)
+    (activeSigners : Finset S.PartyId)
+    (message : S.Message)
+    (threshold : Nat)
+    (hready : match st with | .reveal data => data.reveals.length = data.expectedParties)
+    : PhaseState S .shares
+```
+
+### Phase Monotonicity
+
+Phase ordering is proven at the type level:
+
+```lean
+def Phase.toNat : Phase → Nat
+  | .commit => 0 | .reveal => 1 | .shares => 2 | .done => 3
+
+theorem reveal_advances : Phase.commit < Phase.reveal
+theorem shares_advances : Phase.reveal < Phase.shares
+theorem done_advances : Phase.shares < Phase.done
+```
+
+### Benefits
+
+1. **Compile-time safety**: Cannot call `addReveal` in commit phase
+2. **Self-documenting**: Type signatures show valid transitions
+3. **Proof automation**: Phase ordering proofs are trivial
+4. **Extraction functions**: Data access is phase-aware
+
+```lean
+def getCommits (S : Scheme) : {p : Phase} → PhaseState S p → List (DkgCommitMsg S)
+  | .commit, .commit data => data.commits
+  | .reveal, .reveal data => data.commits
+  | .shares, .shares data => data.commits
+  | .done, .done _ => []
+```

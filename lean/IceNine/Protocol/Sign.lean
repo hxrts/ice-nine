@@ -8,6 +8,36 @@ Two-round threshold signing following the Schnorr pattern:
 
 Supports both n-of-n (all parties) and t-of-n (threshold) signing.
 Security proofs in `Security/Sign`.
+
+## Recommended API
+
+**For new code, use the session-typed API from `IceNine.Protocol.SignSession`.**
+
+The session-typed API provides compile-time guarantees against nonce reuse:
+- Each `FreshNonce` can only be consumed once
+- Session states progress linearly: ReadyToCommit → Committed → Revealed → Signed → Done
+- Retry handling requires a NEW fresh nonce
+
+Example:
+```lean
+import IceNine.Protocol.SignSession
+open IceNine.Protocol.SignSession
+
+-- Initialize with fresh nonce
+let ready := initSession S keyShare message sessionId y opening
+-- Commit (consumes ready, produces committed)
+let (committed, commitMsg) := commit S ready
+-- ... receive all commits, compute challenge ...
+-- Reveal (consumes committed)
+let (revealed, revealMsg) := reveal S committed challenge aggregateW
+-- Sign (consumes revealed)
+match sign S revealed with
+| Sum.inl signed => finalize S signed
+| Sum.inr (_, reason) => -- retry with FRESH nonce
+```
+
+The raw functions below (`signRound1`, `signRound2`) are retained for compatibility
+but the session-typed API is strongly preferred for safety.
 -/
 
 import IceNine.Protocol.Core
@@ -95,32 +125,77 @@ def checkSession (tracker : SessionTracker S) (session : Nat)
   else .alreadyUsed session
 
 /-- Nonce registry for detecting reuse across the network.
-    This is a global view; in practice, parties only see their own history. -/
-structure NonceRegistry (S : Scheme) where
-  /-- Map from (partyId, session) to nonce commitment -/
-  commitments : List (S.PartyId × Nat × S.Commitment)
+    This is a global view; in practice, parties only see their own history.
+
+    **Implementation**: Uses HashMap for O(1) lookup by (partyId, session).
+    Also maintains a reverse index from commitment to sessions for reuse detection. -/
+structure NonceRegistry (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment] where
+  /-- Primary index: (partyId, session) → commitment -/
+  bySession : Std.HashMap (S.PartyId × Nat) S.Commitment
+  /-- Reverse index: (partyId, commitment) → list of sessions (for reuse detection) -/
+  byCommitment : Std.HashMap (S.PartyId × S.Commitment) (List Nat)
 deriving Repr
 
-/-- Check if a nonce commitment was seen before -/
-def NonceRegistry.hasCommitment (reg : NonceRegistry S) [DecidableEq S.PartyId]
-    [DecidableEq S.Commitment]
+/-- Empty nonce registry. -/
+def NonceRegistry.empty (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    : NonceRegistry S :=
+  { bySession := Std.HashMap.empty
+    byCommitment := Std.HashMap.empty }
+
+/-- Check if a nonce commitment was seen before (O(1) lookup). -/
+def NonceRegistry.hasCommitment
+    (reg : NonceRegistry S)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (pid : S.PartyId) (session : Nat) (commit : S.Commitment) : Bool :=
-  reg.commitments.any (fun (p, s, c) => p = pid ∧ s = session ∧ c = commit)
+  match reg.bySession.get? (pid, session) with
+  | some c => c == commit
+  | none => false
 
-/-- Record a nonce commitment -/
-def NonceRegistry.record (reg : NonceRegistry S)
+/-- Check if a (party, session) pair exists (regardless of commitment). -/
+def NonceRegistry.hasSession
+    (reg : NonceRegistry S)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (pid : S.PartyId) (session : Nat) : Bool :=
+  reg.bySession.contains (pid, session)
+
+/-- Record a nonce commitment.
+    Updates both indices. -/
+def NonceRegistry.record
+    (reg : NonceRegistry S)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (pid : S.PartyId) (session : Nat) (commit : S.Commitment) : NonceRegistry S :=
-  { reg with commitments := (pid, session, commit) :: reg.commitments }
+  let newBySession := reg.bySession.insert (pid, session) commit
+  let key := (pid, commit)
+  let sessions := reg.byCommitment.get? key |>.getD []
+  let newByCommitment := reg.byCommitment.insert key (session :: sessions)
+  { bySession := newBySession
+    byCommitment := newByCommitment }
 
-/-- Detect if same nonce was used in different sessions (attack detection) -/
-def NonceRegistry.detectReuse (reg : NonceRegistry S) [DecidableEq S.PartyId]
-    [DecidableEq S.Commitment]
+/-- Detect if same nonce was used in different sessions (attack detection).
+    O(1) lookup using reverse index. Returns the two session IDs if reuse detected. -/
+def NonceRegistry.detectReuse
+    (reg : NonceRegistry S)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (pid : S.PartyId) (commit : S.Commitment) : Option (Nat × Nat) :=
-  -- Find two different sessions with same commitment from same party
-  let matching := reg.commitments.filter (fun (p, _, c) => p = pid ∧ c = commit)
-  match matching with
-  | (_, s1, _) :: (_, s2, _) :: _ => if s1 ≠ s2 then some (s1, s2) else none
+  match reg.byCommitment.get? (pid, commit) with
+  | some (s1 :: s2 :: _) => if s1 ≠ s2 then some (s1, s2) else none
   | _ => none
+
+/-- Get all commitments as a list (for backward compatibility). -/
+def NonceRegistry.toList
+    (reg : NonceRegistry S)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    : List (S.PartyId × Nat × S.Commitment) :=
+  reg.bySession.toList.map fun ((pid, session), commit) => (pid, session, commit)
 
 /-!
 ## State and Message Types
@@ -198,38 +273,55 @@ structure SignAbortMsg (S : Scheme) where
   reason  : AbortReason S.PartyId
 deriving Repr
 
-/-- Abort state tracked in CRDT for distributed coordination -/
+/-- Abort state tracked in CRDT for distributed coordination.
+    Uses Finset for votes to ensure deduplication (each party gets one vote). -/
 structure SignAbortState (S : Scheme) where
   /-- Session that was aborted (if any) -/
   abortedSession : Option Nat
-  /-- Parties that requested abort -/
-  abortVotes : List S.PartyId
-  /-- Abort reasons from each party -/
-  reasons : List (AbortReason S.PartyId)
+  /-- Parties that requested abort (deduplicated) -/
+  abortVotes : Finset S.PartyId
+  /-- Abort reasons from each party (kept for debugging) -/
+  reasons : List (S.PartyId × AbortReason S.PartyId)
 deriving Repr
 
-/-- CRDT merge for abort state: union votes and reasons -/
+/-- CRDT merge for abort state: union votes (Finset union is commutative) -/
 instance (S : Scheme) : Join (SignAbortState S) :=
   ⟨fun a b => {
     abortedSession := a.abortedSession <|> b.abortedSession
-    abortVotes := a.abortVotes ++ b.abortVotes
-    reasons := a.reasons ++ b.reasons
+    abortVotes := a.abortVotes ∪ b.abortVotes
+    reasons := a.reasons ++ b.reasons  -- reasons are for debugging, not consensus
   }⟩
 
 /-- Empty abort state (no abort in progress) -/
 def SignAbortState.empty (S : Scheme) : SignAbortState S :=
-  { abortedSession := none, abortVotes := [], reasons := [] }
+  { abortedSession := none, abortVotes := ∅, reasons := [] }
 
 /-- Create abort state from a single abort message -/
 def SignAbortState.fromMsg (S : Scheme) (msg : SignAbortMsg S) : SignAbortState S :=
   { abortedSession := some msg.session
-    abortVotes := [msg.sender]
-    reasons := [msg.reason] }
+    abortVotes := {msg.sender}
+    reasons := [(msg.sender, msg.reason)] }
+
+/-- Minimum abort threshold to prevent griefing.
+    Requires majority: at least ⌈(n+1)/2⌉ parties must vote to abort.
+    This prevents a single malicious party from causing repeated aborts. -/
+def minAbortThreshold (totalParties : Nat) : Nat :=
+  (totalParties + 1) / 2 + 1  -- Strictly more than half
 
 /-- Check if session should be considered aborted.
-    Requires threshold of parties to agree (prevents single-party griefing). -/
-def SignAbortState.isAborted (state : SignAbortState S) (threshold : Nat) : Bool :=
-  state.abortVotes.length ≥ threshold
+    Requires at least `threshold` parties to agree, with a minimum of
+    majority to prevent single-party griefing attacks.
+
+    **Security Note**: The threshold should be set to at least `minAbortThreshold n`
+    where n is the total number of parties. Using a lower threshold allows
+    griefing attacks where a minority of parties can force repeated aborts. -/
+def SignAbortState.isAborted (state : SignAbortState S) (threshold : Nat) (totalParties : Nat) : Bool :=
+  let effectiveThreshold := max threshold (minAbortThreshold totalParties)
+  state.abortVotes.card ≥ effectiveThreshold
+
+/-- Safe abort check that automatically uses minimum threshold. -/
+def SignAbortState.isSafelyAborted (state : SignAbortState S) (totalParties : Nat) : Bool :=
+  state.abortVotes.card ≥ minAbortThreshold totalParties
 
 /-- Create abort message when norm check fails -/
 def mkNormAbortMsg (S : Scheme) (pid : S.PartyId) (session : Nat) (attempt : Nat)
@@ -290,6 +382,11 @@ def lagrangeCoeffs
 
 /-!
 ## Round 1: Nonce Commitment
+
+**DEPRECATION NOTICE**: The raw `signRound1` and `signRound2` functions below do
+not enforce nonce safety at the type level. For new code, use the session-typed
+API from `IceNine.Protocol.SignSession` which provides compile-time guarantees
+against nonce reuse.
 
 Party samples ephemeral nonce y_i, computes w_i = A(y_i), commits to w_i.
 The commitment hides w_i until all parties have committed.

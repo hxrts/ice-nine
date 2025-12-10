@@ -20,19 +20,17 @@ Each share includes the secret, public share, and commitment data.
 
 /-- Everything a party receives from the dealer.
     Includes commitment so others can verify consistency. -/
-structure DealerShare (S : Scheme) :=
-  (pid      : S.PartyId)     -- recipient party ID
-  (sk_i     : S.Secret)      -- secret share (sent privately)
-  (pk_i     : S.Public)      -- public share = A(sk_i)
-  (opening  : S.Opening)     -- commitment randomness
-  (commitPk : S.Commitment)  -- commitment to pk_i
-deriving Repr
+structure DealerShare (S : Scheme) where
+  pid      : S.PartyId     -- recipient party ID
+  sk_i     : S.Secret      -- secret share (sent privately)
+  pk_i     : S.Public      -- public share = A(sk_i)
+  opening  : S.Opening     -- commitment randomness
+  commitPk : S.Commitment  -- commitment to pk_i
 
 /-- Complete dealer output: all shares plus global public key. -/
-structure DealerTranscript (S : Scheme) :=
-  (shares : List (DealerShare S))  -- one per party
-  (pk     : S.Public)              -- global key = Σ pk_i
-deriving Repr
+structure DealerTranscript (S : Scheme) where
+  shares : List (DealerShare S)  -- one per party
+  pk     : S.Public              -- global key = Σ pk_i
 
 /-!
 ## Dealer Key Generation

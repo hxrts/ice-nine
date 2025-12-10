@@ -190,16 +190,26 @@ $$a \sqcup a = a$$
 
 The join induces a partial order: $a \leq b$ iff $a \sqcup b = b$.
 
-### List Semilattice
+### Message Map Semilattice
 
-Lists form a semilattice under append. The join of two lists is their concatenation. The order is subset inclusion (all elements of $a$ appear in $b$).
+Protocol messages are stored in `MsgMap` structures—hash maps keyed by sender ID. This design makes conflicting messages from the same sender **un-expressable** at the type level.
 
 ```lean
-instance : Join (List α) := ⟨List.append⟩
-instance : LE (List α) := ⟨fun a b => ∀ x, x ∈ a → x ∈ b⟩
+structure MsgMap (S : Scheme) (M : Type*) [BEq S.PartyId] [Hashable S.PartyId] where
+  map : Std.HashMap S.PartyId M
+
+instance : Join (MsgMap S M) := ⟨MsgMap.merge⟩
+instance : LE (MsgMap S M) := ⟨fun a b => a.map.toList.all (fun (k, _) => b.map.contains k)⟩
 ```
 
-This provides the foundation for merging commit lists, reveal lists, and share lists.
+The merge operation takes the union of keys, keeping the first value on conflict. This provides:
+
+- **Conflict-freedom by construction**: At most one message per sender
+- **Commutativity**: Merge order doesn't affect the set of senders
+- **Idempotence**: Merging a map with itself is identity
+- **Strict mode**: `tryInsert` returns conflict indicators for misbehavior detection
+
+This provides the foundation for merging commit maps, reveal maps, and share maps while preventing Byzantine parties from injecting multiple conflicting messages.
 
 ### Product Semilattice
 
@@ -219,6 +229,57 @@ Semilattice merge ensures conflict-free replicated data type (CRDT) semantics. R
 - Out-of-order message delivery
 - Network partitions and rejoins
 - Concurrent protocol executions
+
+### Instance Constraint Patterns
+
+The protocol modules use consistent instance requirements:
+
+**For HashMap-based structures (MsgMap, NonceRegistry):**
+- `[BEq S.PartyId]` - Boolean equality
+- `[Hashable S.PartyId]` - Hash function for HashMap
+
+**For decidable equality (if-then-else, match guards):**
+- `[DecidableEq S.PartyId]` - Prop-valued equality with decision procedure
+
+**For field arithmetic (Lagrange coefficients):**
+- `[Field S.Scalar]` - Division required for λ_i = Π x_j / (x_j - x_i)
+- `[DecidableEq S.Scalar]` - For checking degeneracy
+
+## Lagrange Interpolation
+
+The `Protocol/Lagrange.lean` module provides a unified API for computing Lagrange interpolation coefficients used across threshold protocols.
+
+### Core Function
+
+```lean
+def coeffAtZero [Field F] [DecidableEq F]
+    (partyScalar : F)
+    (allScalars : List F)
+    : F :=
+  let others := allScalars.filter (· ≠ partyScalar)
+  others.foldl (fun acc xj => acc * (xj / (xj - partyScalar))) 1
+```
+
+This computes $\lambda_i = \prod_{j \neq i} \frac{x_j}{x_j - x_i}$ for evaluating at 0.
+
+### Scheme-Aware API
+
+```lean
+def schemeCoeffAtZero (S : Scheme)
+    [Field S.Scalar] [DecidableEq S.Scalar] [DecidableEq S.PartyId]
+    (pidToScalar : S.PartyId → S.Scalar)
+    (allParties : List S.PartyId)
+    (party : S.PartyId)
+    : S.Scalar
+
+def buildPartyCoeffs (S : Scheme)
+    [Field S.Scalar] [DecidableEq S.Scalar] [DecidableEq S.PartyId]
+    (pidToScalar : S.PartyId → S.Scalar)
+    (parties : List S.PartyId)
+    : List (PartyCoeff S)
+```
+
+These functions integrate with the Scheme type for protocol use, including batch computation and precomputed coefficient storage.
 
 ## Secret Wrappers
 

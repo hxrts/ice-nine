@@ -154,7 +154,7 @@ inductive DkgError (PartyId : Type) where
 
 ### Checked Aggregation
 
-The `dkgAggregateChecked` function validates the transcript before computing the global public key.
+The `dkgAggregateChecked` function validates the transcript before computing the global public key. It accepts lists extracted from the CRDT state (via `CommitState.commitList`, etc.):
 
 ```lean
 def dkgAggregateChecked
@@ -163,6 +163,8 @@ def dkgAggregateChecked
   (reveals : List (DkgRevealMsg S))
   : Except (DkgError S.PartyId) S.Public
 ```
+
+Note: The internal CRDT state uses `MsgMap` (hash maps keyed by sender) which guarantees at most one message per party. The aggregation functions receive lists extracted from these maps, so duplicates are already eliminated.
 
 It returns either the public key or a structured error identifying the failure mode. The totality theorem ensures this function always returns a result:
 
@@ -202,9 +204,109 @@ These coefficients satisfy $\sum_{i \in S} \lambda_i^S \cdot s_i = s$ when the s
 
 The base protocol uses additive shares where $\sum_i s_i = s$. For $n$-of-$n$ signing this is sufficient. For $t$-of-$n$ signing the shares must encode polynomial structure.
 
-One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials.
+One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials. The implementation provides Feldman VSS in `Protocol/VSSCore.lean` and `Protocol/VSS.lean`.
 
 An alternative approach uses additive shares with Lagrange adjustment at signing time. The Lagrange coefficients are computed over the active signer set $S$.
+
+## Verifiable Secret Sharing (VSS)
+
+Feldman VSS provides malicious security by allowing recipients to verify their shares against polynomial commitments. This detects cheating dealers before shares are used.
+
+### Polynomial Commitment
+
+A dealer commits to polynomial $f(x) = a_0 + a_1 x + \cdots + a_{t-1} x^{t-1}$ by publishing $C_i = A(a_i)$ for each coefficient.
+
+```lean
+structure PolyCommitment (S : Scheme) where
+  commitments : List S.Public  -- [A(a₀), A(a₁), ..., A(a_{t-1})]
+  threshold : Nat
+  consistent : commitments.length = threshold
+```
+
+### Share Verification
+
+Party $j$ verifies share $s_j = f(j)$ by checking:
+
+$$A(s_j) = \sum_{i=0}^{t-1} j^i \cdot C_i$$
+
+This works because $A$ is linear:
+$$A(f(j)) = A\left(\sum_i a_i \cdot j^i\right) = \sum_i j^i \cdot A(a_i) = \sum_i j^i \cdot C_i$$
+
+```lean
+def verifyShare (S : Scheme) [Module S.Scalar S.Public]
+    (comm : PolyCommitment S) (share : VSSShare S) : Prop :=
+  S.A share.value = expectedPublicValue S comm share.evalPoint
+```
+
+### VSS Transcript
+
+A complete VSS dealing is captured in a transcript structure with proof obligations:
+
+```lean
+def evalPointsDistinct {S : Scheme} [DecidableEq S.Scalar]
+    (shares : List (VSSShare S)) : Prop :=
+  (shares.map (·.evalPoint)).Nodup
+
+structure VSSTranscript (S : Scheme) [DecidableEq S.Scalar] where
+  commitment : PolyCommitment S
+  shares : List (VSSShare S)
+  evalPointsNodup : evalPointsDistinct shares  -- required for Lagrange interpolation
+```
+
+The `evalPointsNodup` proof ensures all shares have distinct evaluation points, which is essential for Lagrange interpolation to work correctly. The `tryCreateVSSTranscript` function provides runtime-checked construction:
+
+```lean
+def tryCreateVSSTranscript (S : Scheme) [DecidableEq S.Scalar]
+    (p : Polynomial S.Secret)
+    (parties : List (S.PartyId × S.Scalar))
+    : Option (VSSTranscript S) :=
+  if h : (parties.map Prod.snd).Nodup then
+    some (createVSSTranscript S p parties h)
+  else
+    none
+```
+
+### Complaint Mechanism
+
+If verification fails, a party files a complaint with evidence:
+
+```lean
+structure VSSComplaint (S : Scheme) where
+  complainant : S.PartyId
+  accused : S.PartyId
+  badShare : VSSShare S
+  commitment : PolyCommitment S
+```
+
+Complaints are publicly verifiable—anyone can check that the share does not verify against the commitment.
+
+### VSS-DKG Integration
+
+In VSS-DKG, each party acts as a dealer for their own contribution:
+
+1. Party $P_i$ samples polynomial $f_i(x)$ with $f_i(0) = sk_i$
+2. Party $P_i$ broadcasts commitment to $f_i$
+3. Party $P_i$ sends share $f_i(j)$ privately to each party $P_j$
+4. Each party verifies received shares against commitments
+5. Invalid shares generate complaints; valid complaints identify faulty dealers
+6. Aggregate: $sk_j = \sum_i f_i(j)$ and $pk = \sum_i A(f_i(0))$
+
+```lean
+def vssFinalize (S : Scheme)
+    (st : VSSLocalState S)
+    (allCommitments : List (VSSCommitMsg S))
+    : Option (KeyShare S)
+```
+
+### Security Properties
+
+**Correctness.** Honest shares verify: if $s_j = f(j)$ and $C_i = A(a_i)$, verification succeeds.
+
+**Soundness.** Invalid shares are detected. A complaint is valid iff the share fails verification.
+
+**Binding.** Commitment determines the polynomial (up to kernel of $A$). Dealer cannot equivocate.
+
+**Hiding.** Fewer than $t$ shares reveal nothing about the secret (information-theoretic).
 
 ## Public Key Verification
 

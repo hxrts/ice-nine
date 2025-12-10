@@ -8,17 +8,19 @@ The design supports both $n$-of-$n$ and $t$-of-$n$ threshold configurations. In 
 
 The implementation uses a semilattice/CRDT architecture for protocol state. Each protocol phase (commit, reveal, shares, done) carries state that forms a join-semilattice. The join operation (⊔) merges states from different replicas or out-of-order message arrivals.
 
-**Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join.
+**Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
+
+**Conflict-free message maps.** Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender **un-expressable** in the type system—each party can contribute at most one message per phase. The `tryInsert` operation returns a conflict indicator for strict validation, while `insert` silently ignores duplicates for CRDT merge semantics.
 
 **Monotonic handlers.** Step functions that advance state are monotone with respect to the semilattice order. This ensures that merging divergent traces preserves safety properties. If $a \leq b$ then $\mathsf{step}(a) \leq \mathsf{step}(b)$.
 
 **Composite state.** Protocol state combines with auxiliary CRDT data for refresh masks, repair bundles, and rerandomization masks. The product of semilattices is itself a semilattice.
 
-## Linear Typing Discipline
+## Session Types
 
-The implementation uses wrapper types to enforce disciplined handling of secret material.
+The implementation uses session types to enforce disciplined handling of secret material, making certain classes of errors impossible to express.
 
-**SecretBox and NonceBox.** Secrets and nonces are wrapped in opaque structures that discourage pattern matching in public code. This signals intent and reduces accidental leakage, even without full linear types.
+**Session-typed signing.** The signing protocol (`Protocol/SignSession.lean`) uses linear session types where each state transition consumes the previous state. Nonces are wrapped in `FreshNonce` structures that can only be consumed once—nonce reuse is a compile-time error, not a runtime check.
 
 **Threshold context.** Signature extraction requires a `ThresholdCtx` that pairs the active signer set with a proof that $|S| \geq t$. This prevents signatures from being produced without sufficient participation.
 
@@ -26,13 +28,13 @@ The implementation uses wrapper types to enforce disciplined handling of secret 
 
 **Algebraic Setting.** Secrets live in a module $\mathcal{S}$ over a scalar ring. Public keys live in a module $\mathcal{P}$. A linear map $A : \mathcal{S} \to \mathcal{P}$ connects them. Commitments bind public values. A hash function produces challenges.
 
-**Key Generation.** Two modes exist. A trusted dealer can sample the master secret and distribute shares. Alternatively parties can run a distributed key generation protocol. Both modes produce additive shares $s_i$ with $\sum_i s_i = s$. The DKG protocol uses the commit-reveal pattern with CRDT-mergeable state.
+**Key Generation.** Two modes exist. A trusted dealer can sample the master secret and distribute shares. Alternatively parties can run a distributed key generation protocol. Both modes produce additive shares $s_i$ with $\sum_i s_i = s$. The DKG protocol uses the commit-reveal pattern with CRDT-mergeable state. For malicious security, Verifiable Secret Sharing (VSS) allows parties to verify shares against polynomial commitments.
 
 **Signing.** Signing proceeds in two rounds with phase-indexed state. In round one each party commits to a nonce. After all commits arrive parties reveal their nonces and compute a shared challenge. In round two each party produces a partial signature. An aggregator combines the partials into the final signature. State at each phase is mergeable.
 
 **Verification.** A verifier checks the aggregated signature against the public key. The check uses the linear map $A$ and the hash function. The signature is valid if the recomputed challenge matches and the norm bound is satisfied.
 
-**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join. Share repair combines helper deltas via append-based bundles. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
+**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join; a coordination protocol (`Protocol/RefreshCoord.lean`) ensures distributed zero-sum mask generation via commit-reveal. Share repair combines helper deltas via append-based bundles; a coordination protocol (`Protocol/RepairCoord.lean`) handles Lagrange coefficient computation and contribution verification. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
 
 **Security.** The protocol assumes binding commitments and models the hash as a random oracle. Under these assumptions it achieves threshold unforgeability. Formal proofs reside in the Lean verification modules. Totality theorems ensure that validation functions always return either success or a structured error.
 
@@ -55,12 +57,12 @@ The security of Ice Nine reduces to standard lattice hardness assumptions:
 - $z_2 = y + c_2 \cdot sk$
 - Then $sk = (z_1 - z_2) / (c_1 - c_2)$
 
-The protocol tracks used session IDs via `SessionTracker` to prevent this catastrophic failure mode.
+The session-typed signing protocol makes nonce reuse a compile-time error. Each `FreshNonce` can only be consumed once, and the type system enforces that signing sessions progress linearly through states without backtracking.
 
 ## Docs Index
 
-1. `01_algebra.md`: Algebraic primitives, module structure, lattice instantiations, and semilattice definitions
-2. `02_keygen.md`: Dealer and distributed key generation with CRDT state, party exclusion
-3. `03_signing.md`: Two-round signing protocol with phase-indexed state, rejection sampling
-4. `04_verification.md`: Signature verification and threshold context
-5. `05_extensions.md`: Complaints, refresh, repair, rerandomization with merge semantics
+1. [Algebraic Setting](01_algebra.md): Algebraic primitives, module structure, lattice instantiations, and semilattice definitions
+2. [Key Generation](02_keygen.md): Dealer and distributed key generation with CRDT state, VSS, party exclusion
+3. [Signing Protocol](03_signing.md): Two-round signing protocol with session types, rejection sampling
+4. [Verification](04_verification.md): Signature verification and threshold context
+5. [Extensions](05_extensions.md): Complaints, refresh/repair coordination, rerandomization, type-indexed phases

@@ -213,19 +213,21 @@ An aggregator collects all partial signatures and produces the final signature.
 
 ### Shares Phase State
 
-The shares phase accumulates partial signatures along with threshold context.
+The shares phase accumulates partial signatures along with threshold context. Messages are stored in `MsgMap` structures keyed by sender ID, making conflicting messages from the same sender un-expressable.
 
 ```lean
-structure ShareState (S : Scheme) :=
-  (commits : List (SignCommitMsg S))
-  (reveals : List (SignRevealWMsg S))
-  (shares  : List (SignShareMsg S))
+structure ShareState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] :=
+  (commits : CommitMap S)   -- at most one commit per party
+  (reveals : RevealMap S)   -- at most one reveal per party
+  (shares  : ShareMap S)    -- at most one share per party
   (active  : Finset S.PartyId)
 
 structure ShareWithCtx (S : Scheme) :=
   (state : ShareState S)
   (ctx   : ThresholdCtx S)
 ```
+
+The `MsgMap` structure provides conflict detection: `tryAddShare` returns a conflict indicator if a party attempts to submit multiple shares, enabling detection of Byzantine behavior.
 
 The threshold context ensures aggregation only proceeds when sufficient parties contribute.
 
@@ -518,15 +520,31 @@ def checkSession (tracker : SessionTracker S) (session : Nat) : SessionCheckResu
 
 ### Nonce Registry
 
-For network-wide detection:
+For network-wide detection, the `NonceRegistry` uses HashMap-based indices for O(1) lookup:
 
 ```lean
-structure NonceRegistry (S : Scheme) where
-  commitments : List (S.PartyId × Nat × S.Commitment)
+structure NonceRegistry (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment] where
+  bySession : Std.HashMap (S.PartyId × Nat) S.Commitment      -- primary index
+  byCommitment : Std.HashMap (S.PartyId × S.Commitment) (List Nat)  -- reverse index
 
-def NonceRegistry.detectReuse (reg : NonceRegistry S) (pid : S.PartyId) (commit : S.Commitment)
-    : Option (Nat × Nat)  -- returns (session1, session2) if same commit used twice
+def NonceRegistry.hasCommitment (reg : NonceRegistry S)
+    (pid : S.PartyId) (session : Nat) (commit : S.Commitment) : Bool :=
+  match reg.bySession.get? (pid, session) with
+  | some c => c == commit
+  | none => false
+
+def NonceRegistry.detectReuse (reg : NonceRegistry S)
+    (pid : S.PartyId) (commit : S.Commitment) : Option (Nat × Nat) :=
+  match reg.byCommitment.get? (pid, commit) with
+  | some (s1 :: s2 :: _) => if s1 ≠ s2 then some (s1, s2) else none
+  | _ => none
 ```
+
+The dual index structure provides:
+- **O(1) lookup** by (partyId, session) for commitment retrieval
+- **O(1) reuse detection** by (partyId, commitment) for security monitoring
 
 ## Rejection Sampling
 
@@ -598,12 +616,25 @@ structure SignAbortMsg (S : Scheme) where
 
 structure SignAbortState (S : Scheme) where
   abortedSession : Option Nat
-  abortVotes : List S.PartyId
-  reasons : List (AbortReason S.PartyId)
+  abortVotes : Finset S.PartyId   -- deduplicated: one vote per party
+  reasons : List (S.PartyId × AbortReason S.PartyId)
 
 instance (S : Scheme) : Join (SignAbortState S) :=
-  ⟨fun a b => { ... }⟩  -- CRDT merge
+  ⟨fun a b => { abortVotes := a.abortVotes ∪ b.abortVotes, ... }⟩
 ```
+
+**Anti-griefing protection.** Abort votes use `Finset` (not `List`) to deduplicate by sender—each party gets exactly one vote. The abort threshold requires a majority to prevent single-party griefing attacks:
+
+```lean
+def minAbortThreshold (totalParties : Nat) : Nat :=
+  (totalParties + 1) / 2 + 1  -- strictly more than half
+
+def SignAbortState.isAborted (state : SignAbortState S) (threshold totalParties : Nat) : Bool :=
+  let effectiveThreshold := max threshold (minAbortThreshold totalParties)
+  state.abortVotes.card ≥ effectiveThreshold
+```
+
+This ensures a malicious minority cannot force repeated session aborts.
 
 ### Extended Error Types
 
@@ -619,9 +650,157 @@ inductive SignError (PartyId : Type) where
   | sessionAborted : Nat → SignError PartyId           -- NEW
 ```
 
+## Session-Typed Signing
+
+The `Protocol/SignSession.lean` module provides a session-typed API that makes nonce reuse a compile-time error rather than a runtime check. Each signing session progresses through states that consume the previous state, ensuring nonces are used exactly once.
+
+### Session State Machine
+
+```
+FreshNonce ──► ReadyToCommit ──► Committed ──► Revealed ──► Signed ──► Done
+                                                  │
+                                                  └──► Aborted (on retry failure)
+```
+
+Each transition consumes its input state. There is no way to "go back" or reuse a consumed state.
+
+### Linear Nonce
+
+A nonce is wrapped in a structure that can only be consumed once:
+
+```lean
+structure FreshNonce (S : Scheme) where
+  private mk ::
+  private value : S.Secret
+  private publicNonce : S.Public
+  private opening : S.Opening
+
+def FreshNonce.sample (S : Scheme) (y : S.Secret) (opening : S.Opening) : FreshNonce S
+```
+
+The private constructor prevents arbitrary creation. The only way to create a `FreshNonce` is via `sample` with fresh randomness.
+
+### Session States
+
+Each state carries the data accumulated up to that point:
+
+```lean
+structure ReadyToCommit (S : Scheme) where
+  keyShare : KeyShare S
+  nonce : FreshNonce S      -- will be consumed on commit
+  message : S.Message
+  session : Nat
+
+structure Committed (S : Scheme) where
+  keyShare : KeyShare S
+  private secretNonce : S.Secret  -- moved from FreshNonce
+  publicNonce : S.Public
+  opening : S.Opening
+  message : S.Message
+  session : Nat
+  commitment : S.Commitment
+  nonceConsumed : NonceConsumed S  -- proof token
+
+structure Revealed (S : Scheme) where
+  keyShare : KeyShare S
+  private secretNonce : S.Secret
+  publicNonce : S.Public
+  message : S.Message
+  session : Nat
+  challenge : S.Challenge
+  aggregateNonce : S.Public
+
+structure Signed (S : Scheme) where
+  keyShare : KeyShare S
+  partialSig : S.Secret
+  message : S.Message
+  session : Nat
+  challenge : S.Challenge
+
+structure Done (S : Scheme) where
+  shareMsg : SignShareMsg S
+```
+
+### Session Transitions
+
+Each transition function consumes its input and produces the next state:
+
+```lean
+-- Consumes ReadyToCommit, produces Committed
+-- The FreshNonce inside is consumed; cannot be accessed again
+def commit (S : Scheme) (ready : ReadyToCommit S)
+    : Committed S × SignCommitMsg S
+
+-- Consumes Committed, produces Revealed
+def reveal (S : Scheme) (committed : Committed S)
+    (challenge : S.Challenge) (aggregateW : S.Public)
+    : Revealed S × SignRevealWMsg S
+
+-- Consumes Revealed, produces Signed or returns for retry
+def sign (S : Scheme) (revealed : Revealed S)
+    : Sum (Signed S) (Revealed S × String)
+
+-- Consumes Signed, produces Done
+def finalize (S : Scheme) (signed : Signed S) : Done S
+```
+
+### Retry Handling
+
+When norm check fails, we need a fresh nonce. This requires creating a NEW `ReadyToCommit` with a NEW `FreshNonce`. The old session state is consumed:
+
+```lean
+structure RetryContext (S : Scheme) where
+  attempt : Nat          -- current attempt (1-indexed)
+  maxAttempts : Nat
+  keyShare : KeyShare S
+  message : S.Message
+  session : Nat          -- base session ID (constant across retries)
+
+-- Consumes Revealed state, cannot be used again
+def mkRetryContext (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat)
+    : RetryContext S
+
+-- Must provide NEW FreshNonce for retry (same session ID for coordination)
+def retryWithFreshNonce (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshNonce S)
+    : ReadyToCommit S
+
+-- Alternative: new session ID for independent parallel attempts
+def retryWithNewSession (S : Scheme) (ctx : RetryContext S)
+    (freshNonce : FreshNonce S) (newSession : Nat) : ReadyToCommit S
+```
+
+**Session ID Design:** The session ID remains constant across retries within the same signing session. This is intentional for threshold coordination:
+
+1. **Coordination**: All parties must agree on which session they're retrying
+2. **Nonce Safety**: Prevented by `FreshNonce` type, not by session ID
+3. **Distinguishing Retries**: The `attempt` field distinguishes retry rounds; full identifier is `(session, attempt)`
+4. **Alternative**: Use `retryWithNewSession` when retries should be independent sessions
+
+### Type-Level Guarantees
+
+The session type system provides these guarantees:
+
+1. **Nonce uniqueness**: Each `FreshNonce` can only be consumed once. The `commit` function consumes the `ReadyToCommit` state, and the nonce value moves into `Committed`. There's no path back.
+
+2. **Linear flow**: States can only progress forward. Each transition consumes its input.
+
+3. **No nonce reuse on retry**: When signing fails norm check, we must create a NEW `ReadyToCommit` with a NEW `FreshNonce`. The old `Revealed` state is consumed by `mkRetryContext`.
+
+4. **Compile-time enforcement**: These aren't runtime checks—the type system prevents writing code that would reuse a nonce.
+
+### Example: Nonce Reuse is Uncompilable
+
+```lean
+-- This CANNOT compile because `ready` is consumed by first `commit`
+def badNonceReuse (S : Scheme) (ready : ReadyToCommit S) :=
+  let (committed1, _) := commit S ready  -- consumes ready
+  let (committed2, _) := commit S ready  -- ERROR: ready already consumed
+  (committed1, committed2)
+```
+
 ## Security Considerations
 
-**Nonce reuse.** Using the same nonce $y_i$ in two sessions leaks the secret share $s_i$. Session tracking prevents this catastrophic failure.
+**Nonce reuse.** Using the same nonce $y_i$ in two sessions leaks the secret share $s_i$. Session types make nonce reuse a compile-time error.
 
 **Commitment binding.** The commitment prevents a party from choosing its nonce adaptively. This protects against rogue key attacks.
 

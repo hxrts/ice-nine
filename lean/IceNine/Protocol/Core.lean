@@ -214,7 +214,6 @@ structure SignShareMsg (S : Scheme) where
   sender  : S.PartyId
   session : Nat
   z_i     : S.Secret
-deriving Repr
 
 
 end IceNine.Protocol
