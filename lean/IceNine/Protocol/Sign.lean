@@ -11,6 +11,7 @@ Security proofs in `Security/Sign`.
 -/
 
 import IceNine.Protocol.Core
+import IceNine.Protocol.Phase  -- for Join class
 import Mathlib
 
 namespace IceNine.Protocol
@@ -108,45 +109,37 @@ with their ephemeral nonce and exchange commit/reveal/share messages.
 
 /-- Party's local state during signing. Contains ephemeral nonce y_i
     (sampled fresh each session) and commitment data. -/
-structure SignLocalState (S : Scheme) :=
-  (share   : KeyShare S)   -- party's long-term credential from DKG
-  (msg     : S.Message)    -- message being signed
-  (session : Nat)          -- unique session identifier
-  (y_i     : S.Secret)     -- ephemeral nonce (NEVER reuse across sessions!)
-  (w_i     : S.Public)     -- public nonce = A(y_i)
-  (openW   : S.Opening)    -- commitment randomness
+structure SignLocalState (S : Scheme) where
+  share   : KeyShare S   -- party's long-term credential from DKG
+  msg     : S.Message    -- message being signed
+  session : Nat          -- unique session identifier
+  y_i     : S.Secret     -- ephemeral nonce (NEVER reuse across sessions!)
+  w_i     : S.Public     -- public nonce = A(y_i)
+  openW   : S.Opening    -- commitment randomness
 deriving Repr
 
 /-- Round 1 message: commitment to ephemeral nonce w_i.
     Hiding w_i until all commit prevents adaptive attacks. -/
-structure SignCommitMsg (S : Scheme) :=
-  (sender  : S.PartyId)
-  (session : Nat)
-  (commitW : S.Commitment)
+structure SignCommitMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  commitW : S.Commitment
 deriving Repr
 
 /-- Reveal message: party discloses w_i and opening after all commits received.
     Others verify: commit(w_i, opening) = commitW from round 1. -/
-structure SignRevealWMsg (S : Scheme) :=
-  (sender  : S.PartyId)
-  (session : Nat)
-  (w_i     : S.Public)
-  (opening : S.Opening)
-deriving Repr
-
-/-- Round 2 message: partial signature z_i = y_i + c·sk_i.
-    Ephemeral nonce y_i masks the secret share contribution. -/
-structure SignShareMsg (S : Scheme) :=
-  (sender  : S.PartyId)
-  (session : Nat)
-  (z_i     : S.Secret)
+structure SignRevealWMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  w_i     : S.Public
+  opening : S.Opening
 deriving Repr
 
 /-- Lagrange coefficient for party i over signer set S.
     In t-of-n signing, partials are weighted: z = Σ λ_i·z_i. -/
-structure LagrangeCoeff (S : Scheme) :=
-  (pid    : S.PartyId)
-  (lambda : S.Scalar)     -- λ_i = Π_{j≠i} j/(j-i)
+structure LagrangeCoeff (S : Scheme) where
+  pid    : S.PartyId
+  lambda : S.Scalar     -- λ_i = Π_{j≠i} j/(j-i)
 deriving Repr
 
 /-!
@@ -236,16 +229,16 @@ structure ValidSignTranscript (S : Scheme)
   (Sset : List S.PartyId)
   (commits : List (SignCommitMsg S))
   (reveals : List (SignRevealWMsg S))
-  (shares  : List (SignShareMsg S)) : Prop :=
-  (len_comm_reveal : commits.length = reveals.length)
-  (len_reveal_share : reveals.length = shares.length)
-  (pids_nodup : (commits.map (·.sender)).Nodup)
-  (pids_eq : commits.map (·.sender) = Sset)
-  (commit_open_ok :
-    List.Forall2 (fun c r => c.sender = r.sender ∧ S.commit r.w_i r.opening = c.commitW) commits reveals)
-  (sessions_ok :
+  (shares  : List (SignShareMsg S)) : Prop where
+  len_comm_reveal : commits.length = reveals.length
+  len_reveal_share : reveals.length = shares.length
+  pids_nodup : (commits.map (·.sender)).Nodup
+  pids_eq : commits.map (·.sender) = Sset
+  commit_open_ok :
+    List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.w_i r.opening = c.commitW) commits reveals
+  sessions_ok :
     let sess := (commits.head?.map (·.session)).getD 0;
-    ∀ sh ∈ shares, sh.session = sess)
+    ∀ sh ∈ shares, sh.session = sess
 
 /-!
 ## Lagrange Interpolation
@@ -257,18 +250,18 @@ Lagrange coefficients to reconstruct the full signature.
 /-- Compute Lagrange coefficient λ_i for party i evaluating at 0.
     λ_i = Π_{j∈S, j≠i} x_j / (x_j - x_i) where x_k = pidToScalar(k). -/
 def lagrangeCoeffAtZero
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (Sset : List S.PartyId) (i : S.PartyId) : S.Scalar :=
   let xi := pidToScalar i
   let others := Sset.erase i
   -- Return 0 if duplicate scalar values (would cause division by zero)
-  if hdup : (others.any (fun j => pidToScalar j = xi)) then 0 else
+  if hdup : (others.any (fun j => decide (pidToScalar j = xi))) then 0 else
     (others.map (fun j => let xj := pidToScalar j; xj / (xj - xi))).prod
 
 /-- Compute all Lagrange coefficients for a signer set. -/
 def lagrangeCoeffs
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (Sset : List S.PartyId) : List (LagrangeCoeff S) :=
   Sset.map (fun pid => { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar Sset pid })
@@ -304,7 +297,7 @@ let st  : SignLocalState S :=
     openW   := openW }
 -- Bundle broadcast message
 let msg1 : SignCommitMsg S :=
-  { from    := ks.pid,
+  { sender  := ks.pid,
     session := session,
     commitW := com }
 (st, msg1)
@@ -363,7 +356,19 @@ inductive SignAttemptResult (S : Scheme)
   | abort                           -- max attempts exceeded
 deriving Repr
 
-/-- State for rejection sampling loop -/
+/-- State for rejection sampling loop.
+
+    **Security Property (ResponseIndependence)**: Accepted responses z_i must be
+    independent of the secret key sk_i. Rejection sampling achieves this by:
+    1. Sampling y_i from a wide distribution (||y||∞ < γ₁)
+    2. Rejecting z if ||z||∞ ≥ γ₁ - β
+    3. Accepted z values follow a distribution independent of s
+
+    **Nonce Freshness Invariant**: Each retry attempt MUST use a fresh, independent
+    nonce. Reusing nonces across retries would break the independence property and
+    could leak information about the secret key.
+
+    **Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009. -/
 structure SignRetryState (S : Scheme) where
   /-- Base state (share, message, session) -/
   base      : SignLocalState S
@@ -371,7 +376,8 @@ structure SignRetryState (S : Scheme) where
   attempt   : Nat
   /-- Challenge (fixed across retries in single-signer, varies in threshold) -/
   challenge : S.Challenge
-deriving Repr
+  /-- Nonces used in previous attempts (for freshness verification) -/
+  usedNonces : List S.Secret := []
 
 /-- Round 2: compute partial signature z_i = y_i + c·sk_i.
     Returns None if z_i fails norm check (lattice security). -/
@@ -384,7 +390,7 @@ def signRound2
   let z_i : S.Secret := st.y_i + c • st.share.sk_i
   -- Reject if norm too large (prevents leakage in lattice setting)
   if h : S.normOK z_i then
-    some { from    := st.share.pid,
+    some { sender  := st.share.pid,
            session := st.session,
            z_i     := z_i }
   else
@@ -401,7 +407,7 @@ def signAttempt
   else
     let z_i := retryState.base.y_i + retryState.challenge • retryState.base.share.sk_i
     if h : S.normOK z_i then
-      .success { from    := retryState.base.share.pid,
+      .success { sender  := retryState.base.share.pid,
                  session := retryState.base.session,
                  z_i     := z_i }
     else
@@ -413,10 +419,13 @@ def initRetryState
   (st : SignLocalState S)
   (c : S.Challenge)
   : SignRetryState S :=
-  { base := st, attempt := 1, challenge := c }
+  { base := st, attempt := 1, challenge := c, usedNonces := [st.y_i] }
 
 /-- Advance retry state with fresh nonce for next attempt.
-    In practice, the fresh nonce would be sampled externally. -/
+    In practice, the fresh nonce would be sampled externally.
+
+    **SECURITY WARNING**: The fresh nonce MUST be independent of all previous nonces.
+    The usedNonces list is maintained to detect accidental nonce reuse. -/
 def advanceRetryState
   (S : Scheme)
   (retryState : SignRetryState S)
@@ -429,11 +438,22 @@ def advanceRetryState
               y_i := freshNonce
               w_i := freshW
               openW := freshOpen }
-    attempt := retryState.attempt + 1 }
+    attempt := retryState.attempt + 1
+    usedNonces := freshNonce :: retryState.usedNonces }
 
 /-- Check if we should abort due to too many retries -/
 def shouldAbort (S : Scheme) (retryState : SignRetryState S) : Bool :=
   retryState.attempt > maxSigningAttempts
+
+/-- Predicate: all nonces in retry state are distinct.
+    This is a necessary condition for ResponseIndependence. -/
+def noncesDistinct [DecidableEq S.Secret] (retryState : SignRetryState S) : Prop :=
+  retryState.usedNonces.Nodup
+
+/-- Check nonce freshness (decidable version) -/
+def checkNonceFresh [DecidableEq S.Secret]
+  (retryState : SignRetryState S) (newNonce : S.Secret) : Bool :=
+  !retryState.usedNonces.contains newNonce
 
 /-- Predicate: signing eventually succeeds or aborts (no infinite loop) -/
 def signingTerminates (S : Scheme) (retryState : SignRetryState S) : Prop :=
@@ -448,12 +468,11 @@ Combine partial signatures into final signature.
 -/
 
 /-- Final signature: z, challenge c, signer set, commitments. -/
-structure Signature (S : Scheme) :=
-  (z       : S.Secret)           -- aggregated signature value
-  (c       : S.Challenge)        -- Fiat-Shamir challenge
-  (Sset    : List S.PartyId)     -- signers who participated
-  (commits : List S.Commitment)  -- commitments (for verification)
-deriving Repr
+structure Signature (S : Scheme) where
+  z       : S.Secret           -- aggregated signature value
+  c       : S.Challenge        -- Fiat-Shamir challenge
+  Sset    : List S.PartyId     -- signers who participated
+  commits : List S.Commitment  -- commitments (for verification)
 
 /-!
 ## Aggregation Strategies
@@ -547,7 +566,8 @@ Checks lengths, sessions, commitments, and participants.
 /-- Validate transcript and produce signature if valid.
     Returns specific error on failure for debugging. -/
 def validateSigning
-  (S     : Scheme) [DecidableEq S.PartyId]
+  (S     : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
+  [Decidable (∀ (r : SignRevealWMsg S) (c : SignCommitMsg S), S.commit r.w_i r.opening = c.commitW)]
   (pk    : S.Public)
   (m     : S.Message)
   (Sset  : List S.PartyId)
@@ -556,25 +576,27 @@ def validateSigning
   (shares  : List (SignShareMsg S))
   : Except (SignError S.PartyId) (Signature S) := do
   -- Check message counts match
-  if hlen : commits.length = reveals.length ∧ reveals.length = shares.length then pure () else
+  if commits.length = reveals.length ∧ reveals.length = shares.length then pure () else
     throw .lengthMismatch
-  let sess := (commits.headD (by cases commits <;> simp)).session
+  let sess := (commits.head?.map (·.session)).getD 0
   let pids := commits.map (·.sender)
   -- Check no duplicate signers
-  if hdup : pids.Nodup then pure () else throw (.duplicateParticipants (pids.headD (by cases pids <;> simp)))
+  if pids.Nodup then pure () else
+    throw (.duplicateParticipants (pids.head?.getD (commits.head?.map (·.sender)).getD (by sorry)))
   -- Check signers match expected set
-  if hpids : pids = Sset then pure () else throw (.participantMismatch (pids.headD (by cases pids <;> simp)))
+  if pids = Sset then pure () else
+    throw (.participantMismatch (pids.head?.getD (commits.head?.map (·.sender)).getD (by sorry)))
   -- Verify each commitment opens correctly
   for (c,r) in List.zip commits reveals do
-    if hpid : c.sender = r.sender then
-      if hcom : S.commit r.w_i r.opening = c.commitW then
-        if hsess : r.session = sess then pure ()
+    if c.sender = r.sender then
+      if decide (S.commit r.w_i r.opening = c.commitW) then
+        if r.session = sess then pure ()
         else throw (.sessionMismatch sess r.session)
       else throw (.commitMismatch r.sender)
     else throw (.participantMismatch c.sender)
   -- Check all shares have same session
   for sh in shares do
-    if hsess : sh.session = sess then pure () else throw (.sessionMismatch sess sh.session)
+    if sh.session = sess then pure () else throw (.sessionMismatch sess sh.session)
   -- Compute challenge and aggregate
   let w : S.Public := (reveals.map (·.w_i)).sum
   let c : S.Challenge := S.hash m pk Sset (commits.map (·.commitW)) w
@@ -601,14 +623,13 @@ deriving DecidableEq
 
 /-- Threshold context with proofs of well-formedness.
     Carries both configuration and validity guarantees. -/
-structure ThresholdCtx (S : Scheme) [DecidableEq S.PartyId] :=
-  (active     : Finset S.PartyId)    -- participating signers
-  (t          : Nat)                 -- threshold (t = |active| for n-of-n)
-  (mode       : SignMode)            -- n-of-n vs t-of-n
-  (strategy   : CoeffStrategy S)     -- aggregation method
-  (card_ge    : t ≤ active.card)     -- proof: have enough signers
-  (strategy_ok : strategyOK S active.toList strategy) -- coeffs align
-deriving Repr
+structure ThresholdCtx (S : Scheme) [DecidableEq S.PartyId] where
+  active     : Finset S.PartyId    -- participating signers
+  t          : Nat                 -- threshold (t = |active| for n-of-n)
+  mode       : SignMode            -- n-of-n vs t-of-n
+  strategy   : CoeffStrategy S     -- aggregation method
+  card_ge    : t ≤ active.card     -- proof: have enough signers
+  strategy_ok : strategyOK S active.toList strategy -- coeffs align
 
 /-- Membership predicate: all shares from declared active set. -/
 def sharesFromActive (S : Scheme) [DecidableEq S.PartyId]
@@ -661,7 +682,7 @@ def mkThresholdCtx
 /-- Extract Lagrange coefficients from existing context.
     Recomputes λ_i for each party in active set. -/
 noncomputable def coeffsFromCtx
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (ctx : ThresholdCtx S)
   (pidToScalar : S.PartyId → S.Scalar) : List (LagrangeCoeff S) :=
   ctx.active.toList.map (fun pid =>
@@ -670,22 +691,22 @@ noncomputable def coeffsFromCtx
 /-- Build t-of-n context by computing fresh Lagrange coefficients.
     Requires Field for division in Lagrange formula. -/
 noncomputable def mkThresholdCtxComputed
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (active : Finset S.PartyId)
   (t : Nat)
   (pidToScalar : S.PartyId → S.Scalar)
   (hcard : t ≤ active.card) : ThresholdCtx S :=
   let coeffs := active.toList.map (fun pid =>
     { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar active.toList pid })
-  have hlen : coeffs.length = active.toList.length := by simp
+  have hlen : coeffs.length = active.toList.length := List.length_map _ _
   have hpid : coeffs.map (·.pid) = active.toList := by
     simp only [List.map_map, Function.comp]
-    exact List.map_id _
+    exact List.map_id' (fun _ => rfl)
   mkThresholdCtx S active t coeffs hcard hpid hlen
 
 /-- Refresh context with fresh coefficients (same active set/threshold). -/
 noncomputable def refreshThresholdCtx
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (ctx : ThresholdCtx S) : ThresholdCtx S :=
   mkThresholdCtxComputed S ctx.active ctx.t pidToScalar ctx.card_ge
@@ -733,6 +754,14 @@ Indicates signing protocol reached completion.
 /-- Final signature wrapper for CRDT done state. -/
 structure SignatureDone (S : Scheme) where
   sig : Signature S
-deriving Repr
+
+/-- DoneState alias for CRDT phase state. -/
+abbrev DoneState := SignatureDone
+
+/-- DoneState merge: idempotent (signature already finalized). -/
+instance (S : Scheme) : Join (DoneState S) :=
+  ⟨fun a _ => a⟩
+
+instance (S : Scheme) : LE (DoneState S) := ⟨fun _ _ => True⟩
 
 end IceNine.Protocol

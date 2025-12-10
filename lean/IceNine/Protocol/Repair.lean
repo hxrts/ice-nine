@@ -11,6 +11,7 @@ Security proofs in `Security/Repair`.
 -/
 
 import IceNine.Protocol.Core
+import IceNine.Protocol.Phase  -- for Join class
 import Mathlib
 
 namespace IceNine.Protocol
@@ -36,9 +37,9 @@ deriving Repr
 /-- Repair contribution from a helper party.
     delta = λ_j·sk_j where λ_j is helper's Lagrange coefficient. -/
 structure RepairMsg (S : Scheme) :=
-  (from  : S.PartyId)   -- helper party
-  (to    : S.PartyId)   -- requester (for routing)
-  (delta : S.Secret)    -- weighted share contribution
+  (sender : S.PartyId)  -- helper party
+  (to     : S.PartyId)  -- requester (for routing)
+  (delta  : S.Secret)   -- weighted share contribution
 deriving Repr
 
 /-- Bundle of repair messages with CRDT merge via append.
@@ -92,9 +93,9 @@ def helperContribution
   (requester : S.PartyId)     -- who to send to
   (coefficient : S.Scalar)    -- Lagrange weight λ_j
   : RepairMsg S :=
-  { from  := helper.pid
-  , to    := requester
-  , delta := coefficient • helper.sk_i }  -- λ_j·sk_j
+  { sender := helper.pid
+  , to     := requester
+  , delta  := coefficient • helper.sk_i }  -- λ_j·sk_j
 
 /-- Sum deltas to recover the lost share.
     Correctness: Σ_j λ_j·sk_j = sk_i via Lagrange interpolation. -/

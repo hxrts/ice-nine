@@ -137,6 +137,64 @@ lemma aggregateSignature_masks_zero
   ext <;> simp [aggregateSignature_add_masks, hzero, aggregateSignature]
 
 /-!
+## CRDT pipeline to verification (all-ones strategy)
+-/
+
+/-- If the share context uses the all-ones strategy (n-of-n), the transcript is
+    valid, lengths match, and the challenge matches Fiat–Shamir, then the
+    signature produced by `aggregateSignatureWithCtx` verifies. -/
+lemma tryAggregate_verify_ones
+  (S : Scheme) [DecidableEq S.PartyId]
+  (pk : S.Public) (m : S.Message)
+  (st : ShareWithCtx S)
+  (c : S.Challenge) (sig : Signature S)
+  (hones : st.ctx.strategy = CoeffStrategy.ones)
+  (hlen : st.state.shares.length = st.ctx.active.toList.length)
+  (hvalid : ValidSignTranscript S st.ctx.active.toList st.state.commits st.state.reveals st.state.shares)
+  (hchallenge : c = S.hash m pk st.ctx.active.toList (st.state.commits.map (·.commitW)) (st.state.reveals.foldl (fun acc r => acc + r.w_i) (0 : S.Public)))
+  (hagg : aggregateSignatureWithCtx S c st.ctx (st.state.commits.map (·.commitW)) st.state.shares = some sig) :
+  verify S pk m sig := by
+  classical
+  subst hchallenge
+  -- expand ones-branch of aggregateSignatureWithCtx
+  have hs : sig = aggregateSignature S c st.ctx.active.toList (st.state.commits.map (·.commitW)) st.state.shares := by
+    simp [aggregateSignatureWithCtx, hones, hlen] at hagg
+    simpa using hagg
+  subst hs
+  -- apply generic correctness
+  have hv := IceNine.Security.verify_happy_generic (S := S) (pk := pk) (m := m)
+      (Sset := st.ctx.active.toList) (commits := st.state.commits) (reveals := st.state.reveals) (shares := st.state.shares) hvalid
+  simpa using hv
+
+/-- Threshold/Lagrange case: if coefficients align with the active set and lengths
+    match, a valid transcript and matching Fiat–Shamir challenge imply the
+    aggregated signature verifies. -/
+lemma tryAggregate_verify_lagrange
+  (S : Scheme) [DecidableEq S.PartyId]
+  (pk : S.Public) (m : S.Message)
+  (st : ShareWithCtx S)
+  (coeffs : List (LagrangeCoeff S))
+  (c : S.Challenge) (sig : Signature S)
+  (hstrat : st.ctx.strategy = CoeffStrategy.lagrange coeffs)
+  (hpid : coeffs.map (·.pid) = st.ctx.active.toList)
+  (hlen : st.state.shares.length = coeffs.length)
+  (hvalid : ValidSignTranscript S st.ctx.active.toList st.state.commits st.state.reveals st.state.shares)
+  (hchallenge : c = S.hash m pk st.ctx.active.toList (st.state.commits.map (·.commitW)) (st.state.reveals.foldl (fun acc r => acc + r.w_i) (0 : S.Public)))
+  (hagg : aggregateSignatureWithCtx S c st.ctx (st.state.commits.map (·.commitW)) st.state.shares = some sig) :
+  verify S pk m sig := by
+  classical
+  subst hchallenge
+  -- Expand lagrange branch
+  have hs : sig = aggregateSignatureLagrange S c st.ctx.active.toList (st.state.commits.map (·.commitW)) coeffs st.state.shares := by
+    simp [aggregateSignatureWithCtx, hstrat, hlen, hpid] at hagg
+    simpa using hagg
+  subst hs
+  -- Reduce to generic correctness
+  have hv := IceNine.Security.verify_happy_generic (S := S) (pk := pk) (m := m)
+      (Sset := st.ctx.active.toList) (commits := st.state.commits) (reveals := st.state.reveals) (shares := st.state.shares) hvalid
+  simpa [aggregateSignatureLagrange] using hv
+
+/-!
 ## Nonce Reuse Attack
 
 **CRITICAL SECURITY PROPERTY**: Nonce reuse completely breaks Schnorr signatures.

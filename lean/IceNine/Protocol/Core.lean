@@ -197,4 +197,19 @@ structure DkgLocalState (S : Scheme) where
   openPk : S.Opening    -- randomness for commitment
 
 
+/-!
+## Signing Message Types
+
+These are placed in Core to break circular dependencies between Phase and Sign.
+-/
+
+/-- Round 2 signing message: partial signature z_i = y_i + c·sk_i.
+    Ephemeral nonce y_i masks the secret share contribution. -/
+structure SignShareMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  z_i     : S.Secret
+deriving Repr
+
+
 end IceNine.Protocol

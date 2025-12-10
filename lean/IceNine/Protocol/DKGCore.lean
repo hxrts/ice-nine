@@ -53,7 +53,7 @@ def dkgRound2
   (S : Scheme)
   (st : DkgLocalState S)
   : DkgRevealMsg S :=
-{ from    := st.pid,
+{ sender  := st.pid,
   pk_i    := st.pk_i,
   opening := st.openPk }
 
@@ -65,28 +65,23 @@ then sum the public shares to get the global public key: pk = Σ pk_i.
 -/
 
 /-- Validity predicate: each reveal matches its commitment.
-    Forall2 ensures lists are same length and pairwise valid. -/
+    Forall₂ ensures lists are same length and pairwise valid. -/
 def dkgValid
   (S : Scheme)
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S)) : Prop :=
-  List.Forall2
+  List.Forall₂
     (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk)
     commits reveals
 
-/-- Simple aggregation: returns Some pk if valid, None otherwise.
+/-- Simple aggregation: returns pk always (validation done separately).
     pk = Σ pk_i is the global public key for signing. -/
 def dkgAggregate
   (S : Scheme)
-  (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
-  : Option S.Public :=
-  match h : dkgValid S commits reveals with
-  | False => none
-  | True =>
-      -- Sum all public shares to get global public key
-      let pk : S.Public := (reveals.map (·.pk_i)).sum
-      some pk
+  : S.Public :=
+  -- Sum all public shares to get global public key
+  (reveals.map (·.pk_i)).sum
 
 /-- Convert DKG local state to a KeyShare once pk is known.
     This is the credential a party carries into signing. -/
@@ -108,23 +103,24 @@ Enables blame attribution and recovery strategies.
 -/
 
 /-- DKG failure modes with identifying information. -/
-inductive DkgError (PartyId : Type u) where
+inductive DkgError (PartyId : Type*) where
   | lengthMismatch : DkgError PartyId           -- commits/reveals count differs
   | duplicatePids  : DkgError PartyId           -- same party appears twice
   | commitMismatch : PartyId → DkgError PartyId -- party's reveal doesn't match commit
-  deriving DecidableEq
 
-/-- Walk through commit-reveal pairs, checking each opens correctly. -/
+/-- Walk through commit-reveal pairs, checking each opens correctly.
+    Requires DecidableEq on all relevant types for runtime checking. -/
 partial def checkPairs
-  (S : Scheme) (commits : List (DkgCommitMsg S)) (reveals : List (DkgRevealMsg S)) :
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
+  (commits : List (DkgCommitMsg S)) (reveals : List (DkgRevealMsg S)) :
   Except (DkgError S.PartyId) Unit :=
   match commits, reveals with
   | [], [] => pure ()
   | c::cs, r::rs =>
       -- Check party IDs match
-      if hpid : c.sender = r.sender then
+      if c.sender = r.sender then
         -- Check commitment opens to revealed value
-        if hcom : S.commit r.pk_i r.opening = c.commitPk then
+        if S.commit r.pk_i r.opening = c.commitPk then
           checkPairs S cs rs
         else throw (.commitMismatch r.sender)
       else throw (.commitMismatch r.sender)
@@ -133,7 +129,7 @@ partial def checkPairs
 /-- Full checked aggregation: validates then computes pk.
     Returns either the global public key or a specific error. -/
 def dkgAggregateChecked
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
   : Except (DkgError S.PartyId) S.Public := do

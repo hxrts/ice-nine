@@ -11,6 +11,7 @@ but Σ pk_i stays fixed when Σ m_i = 0.
 -/
 
 import IceNine.Protocol.Core
+import IceNine.Protocol.Phase  -- for Join class
 
 namespace IceNine.Protocol
 
@@ -25,9 +26,8 @@ Masks merge via pointwise addition (CRDT semilattice structure).
 
 /-- Mask function: maps party ID to a secret offset.
     Fresh masks are sampled such that they sum to zero. -/
-structure MaskFn (S : Scheme) :=
-  (mask : S.PartyId → S.Secret)
-deriving Repr
+structure MaskFn (S : Scheme) where
+  mask : S.PartyId → S.Secret
 
 /-- CRDT merge: pointwise addition of masks.
     Join of two refresh rounds = combined mask per party. -/
@@ -43,9 +43,9 @@ This ensures Σ sk_i remains unchanged, preserving the global secret.
 
 /-- Mask function with proof that masks sum to zero on active set.
     The invariant guarantees global secret is preserved. -/
-structure ZeroSumMaskFn (S : Scheme) (active : Finset S.PartyId) :=
-  (fn       : MaskFn S)
-  (sum_zero : (active.toList.map (fun pid => fn.mask pid)).sum = 0)
+structure ZeroSumMaskFn (S : Scheme) (active : Finset S.PartyId) where
+  fn       : MaskFn S
+  sum_zero : (active.toList.map (fun pid => fn.mask pid)).sum = 0
 
 /-- Merge preserves zero-sum: (a+b).sum = a.sum + b.sum = 0 + 0 = 0. -/
 instance (S : Scheme) (active : Finset S.PartyId) : Join (ZeroSumMaskFn S active) :=
