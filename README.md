@@ -1,10 +1,10 @@
 # Ice Nine
 
-Schnorr-inspired Lattice-based threshold signatures with Lean proofs.
+A threshold signature scheme using lattice cryptography. The protocol adapts Schnorr signatures to lattice assumptions for post-quantum security. Multiple parties hold secret shares and collaborate to sign messages without reconstructing the full key.
 
-- Lean models: core scheme, DKG (core + t-of-n with complaints), two-round signing (n-of-n, t-of-n), dealer keygen, refresh, repair, rerandomized signing, phase/CRDT state.
-- Security: correctness/robustness lemmas and assumption scaffolding (binding commits, RO hash, norm bounds).
-- Instances/Norms/Samples: demo schemes (Int, ZMod, vectors), norm predicates, `#eval` transcripts.
+The implementation is written in Lean with proofs of correctness. Security reduces to the Short Integer Solution and Module Learning With Errors problems. The protocol supports distributed key generation, proactive refresh, and share repair.
+
+The name Ice Nine is a nod to [Cat's Cradle](https://en.wikipedia.org/wiki/Ice-nine) and [Dilithium](https://pq-crystals.org/dilithium/).
 
 ## Quick start
 ```bash

@@ -677,8 +677,10 @@ noncomputable def mkThresholdCtxComputed
   (hcard : t ≤ active.card) : ThresholdCtx S :=
   let coeffs := active.toList.map (fun pid =>
     { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar active.toList pid })
-  have hlen : coeffs.length = active.toList.length := by simp [List.length_map]
-  have hpid : coeffs.map (·.pid) = active.toList := by simp [List.map_map]
+  have hlen : coeffs.length = active.toList.length := by simp
+  have hpid : coeffs.map (·.pid) = active.toList := by
+    simp only [List.map_map, Function.comp]
+    exact List.map_id _
   mkThresholdCtx S active t coeffs hcard hpid hlen
 
 /-- Refresh context with fresh coefficients (same active set/threshold). -/
@@ -704,7 +706,7 @@ noncomputable def aggregateSignatureWithCtx
   (commits : List S.Commitment)
   (shares : List (SignShareMsg S))
   : Option (Signature S) :=
-  if hfrom : sharesFromActive S ctx shares then
+  if _hfrom : sharesFromActive S ctx shares then
     aggregateWithStrategy S c ctx.active.toList commits shares ctx.strategy
   else
     none
