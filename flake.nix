@@ -1,6 +1,18 @@
 {
   description = "Ice Nine - Cryptographic protocol with formal verification";
 
+  # Cachix configuration for faster builds
+  nixConfig = {
+    extra-substituters = [
+      "https://lean4.cachix.org"
+      "https://cache.nixos.org"
+    ];
+    extra-trusted-public-keys = [
+      "lean4.cachix.org-1:mawtxSxcaiWE24xCXXgh3qnvlTkyU7evRRnGeAhD4Wk="
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
@@ -71,6 +83,10 @@
             jq
             ripgrep
 
+            # Documentation
+            mdbook
+            mdbook-katex
+
             # Deployment
             rclone
             rsync
@@ -89,6 +105,7 @@
             echo "Commands:"
             echo "  just --list      Show all tasks"
             echo "  just build       Build Lean + Rust"
+            echo "  just book        Build documentation"
             echo "  just deploy      Sync & build on server"
             echo "  just ssh         SSH into server dev env"
             echo ""

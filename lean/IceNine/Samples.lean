@@ -22,7 +22,7 @@ def sampleTranscriptInt : IO Unit := do
   let w  : Int := ys.sum
   let c  : Int := scheme.hash ByteArray.empty pk [0,1] [] w
   let shares : List (SignShareMsg scheme) :=
-    List.zipWith (fun y s => { from := 0, session := 0, z_i := y + c * s }) ys sks
+    List.zipWith (fun y s => { sender := 0, session := 0, z_i := y + c * s }) ys sks
   let sig : Signature scheme := aggregateSignature scheme c [0,1] [] shares
   IO.println s!"pk={pk}, w={w}, c={c}, z={sig.z}"
 
@@ -36,7 +36,7 @@ def sampleTranscriptZMod : IO Unit := do
   let w  : ZMod 7 := ys.sum
   let c  : ZMod 7 := S.hash ByteArray.empty pk [0,1] [] w
   let shares : List (SignShareMsg S) :=
-    List.zipWith (fun y s => { from := 0, session := 0, z_i := y + c * s }) ys sks
+    List.zipWith (fun y s => { sender := 0, session := 0, z_i := y + c * s }) ys sks
   let sig : Signature S := aggregateSignature S c [0,1] [] shares
   IO.println s!"pk={pk}, w={w}, c={c}, z={sig.z}"
 

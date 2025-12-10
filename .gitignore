@@ -35,6 +35,9 @@ result-*
 # Working
 work/
 
+# Documentation build output
+docs/book/
+
 # LLM
 .claude
 CLAUDE.md

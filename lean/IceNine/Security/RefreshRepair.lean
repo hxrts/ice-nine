@@ -1,8 +1,12 @@
 /-
-# Refresh, Repair, Rerandomize invariants
+# Extension Security Integration
 
-This module re-exports key lemmas from the security modules for convenience
-and provides integration lemmas for the extensions.
+Re-exports and integration lemmas for extension protocols:
+- Refresh: zero-sum masks preserve public key
+- Rerandomization: zero-sum masks preserve signature
+
+These lemmas connect the extension protocols to the core security proofs,
+showing that refresh/rerand operations maintain protocol invariants.
 -/
 
 import IceNine.Protocol.Refresh
@@ -16,46 +20,55 @@ namespace IceNine.Security.RefreshRepair
 open IceNine.Protocol
 open List
 
-/-! ## Refresh Invariants -/
+/-!
+## Refresh Invariants
 
+Key property: zero-sum masks don't change the aggregate public key.
+A(sk_i + mask_i) = A(sk_i) + A(mask_i), and Σ A(mask_i) = A(Σ mask_i) = A(0) = 0.
+-/
+
+/-- Refresh preserves global pk: Σ pk'_i = Σ pk_i when Σ mask_i = 0.
+    Uses linearity of A and zero-sum property. -/
 lemma refresh_pk_unchanged
   (S : Scheme)
   (m : MaskFn S)
   (shares : List (KeyShare S))
   (hsum : (shares.map (fun ks => m.mask ks.pid)).sum = 0) :
   let refreshed := refreshShares S m shares
-  (refreshed.foldl (fun acc ks => acc + ks.pk_i) (0 : S.Public)) =
-  (shares.foldl (fun acc ks => acc + ks.pk_i) (0 : S.Public)) := by
+  (refreshed.map (·.pk_i)).sum = (shares.map (·.pk_i)).sum := by
   classical
   unfold refreshShares
+  simp only [List.map_map, Function.comp]
+  -- Split: Σ pk'_i = Σ pk_i + Σ A(mask_i)
   have hsplit :
-    (shares.map (fun ks =>
-        let sk' := ks.sk_i + m.mask ks.pid
-        let pk' := S.A sk'
-        { ks with sk_i := sk', pk_i := pk' })).foldl (fun acc ks => acc + ks.pk_i) 0
-    =
-    shares.foldl (fun acc ks => acc + ks.pk_i) 0
-      + shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0 := by
-    revert shares
+    (shares.map (fun ks => S.A (ks.sk_i + m.mask ks.pid))).sum
+    = (shares.map (·.pk_i)).sum + (shares.map (fun ks => S.A (m.mask ks.pid))).sum := by
+    simp only [List.map_map, Function.comp]
     induction shares with
     | nil => simp
     | cons ks rest ih =>
-        simp [ih, add_assoc, add_left_comm, add_comm, LinearMap.map_add]
-  have hA :
-    shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0
+        simp only [List.map_cons, List.sum_cons, LinearMap.map_add]
+        rw [ih]; ring
+  -- Linearity: Σ A(mask_i) = A(Σ mask_i)
+  have hA : (shares.map (fun ks => S.A (m.mask ks.pid))).sum
       = S.A ((shares.map (fun ks => m.mask ks.pid)).sum) := by
-    revert shares; intro sh; induction sh with
+    induction shares with
     | nil => simp
     | cons ks rest ih =>
-        simp [ih, add_comm, add_left_comm, add_assoc, LinearMap.map_add]
-  have hmask : shares.foldl (fun acc ks => acc + S.A (m.mask ks.pid)) 0 = 0 := by
-    simp [hA, hsum]
-  have := hsplit
-  simp [hmask, add_comm] at this
-  simpa using this
+        simp only [List.map_cons, List.sum_cons, LinearMap.map_add]
+        rw [ih]
+  -- Zero-sum: A(0) = 0
+  simp only [hsplit, hA, hsum, map_zero, add_zero]
 
-/-! ## Rerandomization Invariants -/
+/-!
+## Rerandomization Invariants
 
+Rerandomization masks preserve the final signature.
+Zero-sum masks on z_i values cancel in aggregate.
+-/
+
+/-- Rerandomization preserves signature: masked shares aggregate to same sig.
+    Delegates to Sign.aggregateSignature_masks_zero. -/
 lemma rerand_preserves_sig
   (S : Scheme)
   (masks : RerandMasks S)
@@ -63,8 +76,8 @@ lemma rerand_preserves_sig
   (c : S.Challenge)
   (commits : List S.Commitment)
   (shares : List (SignShareMsg S)) :
-  (shares.map (fun sh => masks.shareMask sh.from)).sum = 0 →
-  aggregateSignature S c Sset commits (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.from }))
+  (shares.map (fun sh => masks.shareMask sh.sender)).sum = 0 →
+  aggregateSignature S c Sset commits (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.sender }))
     = aggregateSignature S c Sset commits shares := by
   intro hzero
   apply IceNine.Security.Sign.aggregateSignature_masks_zero

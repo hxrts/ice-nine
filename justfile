@@ -6,6 +6,12 @@ set dotenv-load
 default:
     @just --list
 
+# Download Mathlib pre-built cache (speeds up builds significantly)
+lean-cache:
+    @echo "Downloading Mathlib cache..."
+    lake exe cache get
+    @echo "✓ Mathlib cache downloaded"
+
 # Build Lean proofs
 lean-build:
     lake build
@@ -62,6 +68,22 @@ dev:
     @echo "Run 'just check' to verify everything"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Documentation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Build documentation book
+book:
+    mdbook build
+
+# Serve documentation locally with live reload
+serve-book:
+    mdbook serve --open
+
+# Clean built documentation
+clean-book:
+    rm -rf docs/book
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Deployment
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -81,19 +103,31 @@ deploy-sync:
         ./ {{server}}:{{remote-path}}/
     @echo "✓ Synced to server"
 
-# Build on remote server
+# Download Mathlib cache on remote server
+deploy-cache:
+    @echo "Downloading Mathlib cache on {{server}}..."
+    ssh {{server}} "cd {{remote-path}} && nix develop --command lake exe cache get"
+    @echo "✓ Mathlib cache downloaded on server"
+
+# Build Lean on remote server (downloads cache first)
+deploy-lean:
+    @echo "Building Lean on {{server}}..."
+    ssh {{server}} "cd {{remote-path}} && nix develop --command bash -c 'lake exe cache get && lake build'"
+    @echo "✓ Lean built on server"
+
+# Build Rust on remote server
 deploy-build:
-    @echo "Building on {{server}}..."
+    @echo "Building Rust on {{server}}..."
     ssh {{server}} "cd {{remote-path}} && nix develop --command cargo build --release"
-    @echo "✓ Built on server"
+    @echo "✓ Rust built on server"
 
 # Run tests on remote server
 deploy-test:
     @echo "Testing on {{server}}..."
     ssh {{server}} "cd {{remote-path}} && nix develop --command cargo test"
 
-# Full deployment: sync + build
-deploy: deploy-sync deploy-build
+# Full deployment: sync + cache + build all
+deploy: deploy-sync deploy-lean deploy-build
     @echo "✓ Deployment complete"
 
 # SSH into server at project directory

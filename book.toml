@@ -1,0 +1,19 @@
+[book]
+title = "Ice-Nine"
+authors = ["Sam Hart"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "docs/book"
+
+[output.html]
+preferred-theme = "rust"
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-heading-for-link-text = true
+
+[preprocessor.katex]

@@ -95,6 +95,90 @@ The predicate captures a bound on the norm of the response. For lattice signatur
 
 In the abstract model the predicate is a parameter. Concrete instantiations define it based on the lattice parameters.
 
+### Dilithium-Style Norm Bounds
+
+For Dilithium-style signatures, the norm check uses:
+
+- $\ell_\infty$ norm: $\|z\|_\infty = \max_i |z_i|$
+- Rejection bound: $\|z\|_\infty < \gamma_1 - \beta$ where $\beta = \tau \cdot \eta$
+
+```lean
+structure DilithiumParams where
+  n      : Nat := 256    -- ring dimension
+  q      : Nat := 8380417 -- modulus
+  tau    : Nat           -- challenge weight (number of ±1)
+  eta    : Nat           -- secret coefficient bound
+  gamma1 : Nat           -- nonce coefficient range
+  gamma2 : Nat           -- low-bits range
+
+def dilithiumNormOK (p : DilithiumParams) (z : List Int) : Prop :=
+  vecInfNorm z < p.gamma1 - p.tau * p.eta
+```
+
+Standard parameter sets:
+
+| Level | τ | η | γ₁ | β | Security |
+|-------|---|---|-----|---|----------|
+| Dilithium2 | 39 | 2 | 2¹⁷ | 78 | 128-bit |
+| Dilithium3 | 49 | 4 | 2¹⁹ | 196 | 192-bit |
+| Dilithium5 | 60 | 2 | 2¹⁹ | 120 | 256-bit |
+
+## Concrete Scheme Instantiations
+
+The implementation provides several concrete schemes:
+
+### Simple Scheme (Testing)
+
+Identity map over integers. For correctness proofs only.
+
+```lean
+def simpleScheme : Scheme :=
+  { Secret := Int, Public := Int, A := LinearMap.id, ... }
+```
+
+### ZMod Scheme (Field Arithmetic)
+
+Scalar multiplication over $\mathbb{Z}_q$.
+
+```lean
+def zmodScheme (q : ℕ) [Fact q.Prime] (a : ZMod q) : Scheme :=
+  { Secret := ZMod q, Public := ZMod q, A := LinearMap.lsmul _ _ a, ... }
+```
+
+### Matrix Scheme (SIS/LWE)
+
+Matrix-vector multiplication: $A : \mathbb{Z}_q^m \to \mathbb{Z}_q^n$.
+
+```lean
+def matrixScheme (n m q : ℕ) (A : Matrix (Fin n) (Fin m) (ZMod q)) : Scheme :=
+  { Secret := Fin m → ZMod q
+  , Public := Fin n → ZMod q
+  , A := matrixMulVecLinear A  -- A(s) = A·s
+  , ... }
+```
+
+This models the SIS/LWE structure:
+- Secret key: $s \in \mathbb{Z}_q^m$ (short vector)
+- Public key: $t = A \cdot s \in \mathbb{Z}_q^n$
+- Security reduces to SIS: forging requires finding short $z$ with $Az = 0$
+
+### Polynomial Scheme (Ring-LWE)
+
+Polynomial multiplication in $R_q = \mathbb{Z}_q[X]/(X^n + 1)$.
+
+```lean
+def polyScheme (n q : ℕ) (a : Fin n → ZMod q) : Scheme :=
+  { Secret := Fin n → ZMod q   -- polynomial coefficients
+  , Public := Fin n → ZMod q
+  , A := polyMulLinear a       -- A(s) = a·s mod (X^n + 1)
+  , ... }
+```
+
+This models Ring-LWE structure:
+- Ring: $R_q = \mathbb{Z}_q[X]/(X^n + 1)$ for $n$ a power of 2
+- Multiplication uses negacyclic convolution ($X^n = -1$)
+- Efficient via Number Theoretic Transform (NTT)
+
 ## Semilattice Structure
 
 Protocol state at each phase forms a join-semilattice. A semilattice is an algebraic structure with a binary join operation $\sqcup$ that is commutative, associative, and idempotent.

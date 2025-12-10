@@ -1,12 +1,13 @@
 /-
-# Share repair protocol
+# Share Repair Protocol
 
-We model a share repair protocol where a target party (who has lost its share)
-asks a helper set to reconstruct its share. Each helper provides a masked delta
-that lets the target reconstruct its share without revealing other shares.
+Recovers a lost share using contributions from helper parties. The party
+who lost their share (requester) still knows their public share pk_i.
+Helpers send masked deltas that sum to the lost sk_i via Lagrange.
 
-The protocol uses Lagrange interpolation in the t-of-n case, or additive
-reconstruction in the n-of-n case.
+Privacy: Individual deltas reveal nothing about helper shares. Only the
+sum (the repaired share) is meaningful.
+Security proofs in `Security/Repair`.
 -/
 
 import IceNine.Protocol.Core
@@ -16,76 +17,94 @@ namespace IceNine.Protocol
 
 open List
 
-/-! ## Core Types -/
+/-!
+## Core Types
 
-/-- Repair request from a party that lost its share. -/
+The repair protocol uses request/response messaging:
+- Requester broadcasts RepairRequest with known pk_i
+- Helpers respond with RepairMsg containing weighted deltas
+- Messages accumulate in RepairBundle (CRDT via list append)
+-/
+
+/-- Repair request from party who lost their secret share.
+    pk_i is public and still known for verification. -/
 structure RepairRequest (S : Scheme) :=
-  (requester : S.PartyId)
-  (knownPk_i : S.Public)  -- The public share is still known
+  (requester : S.PartyId)  -- party who lost their share
+  (knownPk_i : S.Public)   -- public share for verification
 deriving Repr
 
-/-- Repair message from a helper to the requester. -/
+/-- Repair contribution from a helper party.
+    delta = λ_j·sk_j where λ_j is helper's Lagrange coefficient. -/
 structure RepairMsg (S : Scheme) :=
-  (from   : S.PartyId)
-  (to     : S.PartyId)
-  (delta  : S.Secret)
+  (from  : S.PartyId)   -- helper party
+  (to    : S.PartyId)   -- requester (for routing)
+  (delta : S.Secret)    -- weighted share contribution
 deriving Repr
 
-/-- Bundle of repair messages; lists can be merged via append. -/
+/-- Bundle of repair messages with CRDT merge via append.
+    Out-of-order delivery is safe due to commutativity. -/
 structure RepairBundle (S : Scheme) :=
   (msgs : List (RepairMsg S))
 deriving Repr
 
+/-- CRDT merge: concatenate message lists. -/
 instance (S : Scheme) : Join (RepairBundle S) := ⟨fun a b => ⟨a.msgs ++ b.msgs⟩⟩
 
-/-- Repair session state tracking the repair protocol progress. -/
+/-- Repair session state for tracking progress.
+    CRDT merge: union helpers, append messages, max threshold. -/
 structure RepairSession (S : Scheme) :=
-  (request   : RepairRequest S)
-  (helpers   : Finset S.PartyId)
-  (received  : RepairBundle S)
-  (threshold : Nat)
+  (request   : RepairRequest S)      -- who needs repair
+  (helpers   : Finset S.PartyId)     -- available helpers
+  (received  : RepairBundle S)       -- messages received so far
+  (threshold : Nat)                   -- minimum helpers needed
 deriving Repr
 
+/-- CRDT merge for repair sessions: monotonic on all fields. -/
 instance (S : Scheme) : Join (RepairSession S) :=
   ⟨fun a b => { request   := a.request
               , helpers   := a.helpers ∪ b.helpers
               , received  := a.received ⊔ b.received
               , threshold := max a.threshold b.threshold }⟩
 
-/-! ## Repair Protocol Functions -/
+/-!
+## Repair Protocol Functions
 
-/-- Create a repair request for a lost share. -/
+1. Requester creates RepairRequest with known pk_i
+2. Each helper computes delta = λ_j·sk_j (Lagrange-weighted share)
+3. Requester sums deltas: sk_i = Σ_j λ_j·sk_j
+4. Verify: A(sk_i) = pk_i confirms correct reconstruction
+-/
+
+/-- Create a repair request for a lost share.
+    The requester still knows their public share for verification. -/
 def createRepairRequest
   (S : Scheme)
-  (pid : S.PartyId)
-  (pk_i : S.Public)
+  (pid : S.PartyId)    -- requester's party ID
+  (pk_i : S.Public)    -- known public share
   : RepairRequest S :=
   { requester := pid, knownPk_i := pk_i }
 
-/-- Helper generates a delta contribution for the requester.
-    In additive sharing, each helper j sends a share of its own contribution
-    to reconstructing the target's share. -/
+/-- Helper generates weighted delta contribution.
+    coefficient = Lagrange λ_j for this helper over the helper set. -/
 def helperContribution
   (S : Scheme)
-  (helper : KeyShare S)
-  (requester : S.PartyId)
-  (coefficient : S.Scalar)
+  (helper : KeyShare S)       -- helper's credential
+  (requester : S.PartyId)     -- who to send to
+  (coefficient : S.Scalar)    -- Lagrange weight λ_j
   : RepairMsg S :=
   { from  := helper.pid
   , to    := requester
-  , delta := coefficient • helper.sk_i }
+  , delta := coefficient • helper.sk_i }  -- λ_j·sk_j
 
-/--
-  Combine helper deltas to repair a lost share.
-  Assumes deltas are properly weighted so their sum equals the target share value.
--/
+/-- Sum deltas to recover the lost share.
+    Correctness: Σ_j λ_j·sk_j = sk_i via Lagrange interpolation. -/
 def repairShare
   (S : Scheme)
   (msgs : List (RepairMsg S))
   : S.Secret :=
-  msgs.foldl (fun acc m => acc + m.delta) (0 : S.Secret)
+  (msgs.map (·.delta)).sum
 
-/-- Filter messages to only those addressed to a specific party. -/
+/-- Filter messages addressed to a specific requester. -/
 def messagesFor
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
@@ -93,16 +112,20 @@ def messagesFor
   : List (RepairMsg S) :=
   msgs.filter (fun m => m.to = target)
 
-/-- Extract unique helper party IDs from a message list. -/
+/-- Extract unique helper IDs from received messages. -/
 def helperPids
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
   : List S.PartyId :=
-  msgs.map (·.from) |>.dedup
+  msgs.map (·.sender) |>.dedup
 
-/-! ## Verification Predicates -/
+/-!
+## Verification Predicates
 
-/-- Verify that a repaired share matches its known public share. -/
+After repair, verify A(repaired_sk) = pk_i to confirm correctness.
+-/
+
+/-- Verify repaired share: A(sk') must equal known pk_i. -/
 def verifyRepairedShare
   (S : Scheme)
   (repairedSk : S.Secret)
@@ -110,7 +133,7 @@ def verifyRepairedShare
   : Prop :=
   S.A repairedSk = expectedPk
 
-/-- Predicate: repair messages are well-formed (all addressed to the same target). -/
+/-- All messages target the same requester. -/
 def repairMsgsWellFormed
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
@@ -118,23 +141,28 @@ def repairMsgsWellFormed
   : Prop :=
   ∀ m ∈ msgs, m.to = target
 
-/-- Predicate: repair messages come from distinct helpers. -/
+/-- Each helper contributes at most once. -/
 def repairMsgsDistinct
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
   : Prop :=
-  (msgs.map (·.from)).Nodup
+  (msgs.map (·.sender)).Nodup
 
-/-! ## Threshold Repair -/
+/-!
+## Threshold Gating
 
-/-- Check if enough helpers have contributed. -/
+Repair requires ≥ threshold helpers. Only attempt reconstruction
+when enough contributions have been received.
+-/
+
+/-- Check if threshold of helpers reached. -/
 def hasEnoughHelpers
   (S : Scheme) [DecidableEq S.PartyId]
   (session : RepairSession S)
   : Bool :=
   (helperPids S session.received.msgs).length ≥ session.threshold
 
-/-- Attempt to complete repair if threshold is met. -/
+/-- Complete repair if threshold met, otherwise wait for more helpers. -/
 def tryCompleteRepair
   (S : Scheme) [DecidableEq S.PartyId]
   (session : RepairSession S)

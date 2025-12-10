@@ -1,10 +1,14 @@
 /-
-# Repair Security Proofs
+# Share Repair Security Proofs
 
 Security properties for the share repair protocol:
 - Correctness: honest execution recovers the original share
 - Privacy: no single helper learns the target share
 - Robustness: threshold number of helpers suffices
+- CRDT properties: merge operations are well-behaved
+
+The repair protocol allows a party who lost their share to recover it
+from threshold-many helpers, each contributing a Lagrange-weighted delta.
 -/
 
 import Mathlib
@@ -17,84 +21,74 @@ namespace IceNine.Security
 open IceNine.Protocol
 open List
 
-/-! ## Basic Lemmas -/
+/-!
+## Basic Lemmas
 
-/-- Correctness: if deltas sum to sk_i, repairShare recovers sk_i. -/
+Foundation lemmas about repairShare: empty, single, append, scaling.
+-/
+
+/-- Correctness: if deltas sum to sk_i, repairShare recovers sk_i.
+    This is the main algebraic property we need. -/
 lemma repair_correct
   (S : Scheme)
   (msgs : List (RepairMsg S))
   (sk_i : S.Secret)
-  (h : msgs.foldl (fun acc m => acc + m.delta) (0 : S.Secret) = sk_i) :
+  (h : (msgs.map (·.delta)).sum = sk_i) :
   repairShare S msgs = sk_i := by
   simp [repairShare, h]
 
-/-- Empty message list repairs to zero. -/
+/-- Empty list → zero. Base case for induction. -/
 lemma repair_empty
   (S : Scheme) :
   repairShare S [] = (0 : S.Secret) := by
   simp [repairShare]
 
-/-- Single message repairs to that delta. -/
+/-- Single message → that delta. -/
 lemma repair_single
   (S : Scheme)
   (m : RepairMsg S) :
   repairShare S [m] = m.delta := by
-  simp [repairShare, List.foldl]
+  simp [repairShare]
 
-/-- Repair of concatenated lists equals sum of repairs. -/
+/-- Append distributes: repair(a++b) = repair(a) + repair(b).
+    Key for showing CRDT merge preserves correctness. -/
 lemma repair_append
   (S : Scheme)
   (msgs1 msgs2 : List (RepairMsg S)) :
   repairShare S (msgs1 ++ msgs2) = repairShare S msgs1 + repairShare S msgs2 := by
-  unfold repairShare
-  induction msgs1 with
-  | nil => simp
-  | cons m ms ih =>
-      simp [List.foldl, add_assoc, add_comm, add_left_comm]
-      rw [← ih]
-      simp [List.foldl, add_assoc]
+  simp [repairShare, List.map_append, List.sum_append]
 
-/-- Repair is linear in the deltas: scaling all deltas scales the result. -/
+/-- Linearity: scaling all deltas scales the result.
+    Uses List.smul_sum from Mathlib. -/
 lemma repair_smul
   (S : Scheme)
   (c : S.Scalar)
   (msgs : List (RepairMsg S)) :
   repairShare S (msgs.map (fun m => { m with delta := c • m.delta }))
     = c • repairShare S msgs := by
-  unfold repairShare
-  induction msgs with
-  | nil => simp
-  | cons m ms ih =>
-      simp [List.foldl, List.map, smul_add]
-      sorry  -- requires showing foldl distributes with smul
+  simp only [repairShare, List.map_map, Function.comp]
+  rw [← List.smul_sum]
+  congr 1
+  simp only [List.map_map, Function.comp]
 
-/-! ## Correctness Properties -/
+/-!
+## Correctness Properties
 
-/--
-  Main correctness theorem: if helpers provide properly weighted contributions
-  that sum to the target share, repair succeeds.
+Main theorems: repair recovers the correct share and passes verification.
 -/
+
+/-- Main correctness: Lagrange-weighted deltas sum to target share.
+    If helpers compute λ_j·sk_j correctly, we get sk_i. -/
 theorem repair_correctness
   (S : Scheme)
   (msgs : List (RepairMsg S))
   (targetSk : S.Secret)
   (h : (msgs.map (·.delta)).sum = targetSk) :
   repairShare S msgs = targetSk := by
-  unfold repairShare
-  induction msgs with
-  | nil => simp at h; exact h.symm
-  | cons m ms ih =>
-      simp [List.foldl]
-      simp [List.map, List.sum_cons] at h
-      have : (ms.map (·.delta)).sum = targetSk - m.delta := by linarith
-      specialize ih this
-      simp [repairShare] at ih
-      -- Need to show foldl accumulates correctly
-      sorry
+  simp only [repairShare, h]
 
-/--
-  Verification theorem: repaired share matches the known public share.
--/
+/-- Verification: repaired share produces correct public key.
+    A(repaired) = A(sk_i) = pk_i. -/
 theorem repair_verification
   (S : Scheme)
   (msgs : List (RepairMsg S))
@@ -107,13 +101,15 @@ theorem repair_verification
   have hrepair : repairShare S msgs = targetSk := repair_correctness S msgs targetSk hsum
   rw [hrepair, hpk]
 
-/-! ## Privacy Properties -/
+/-!
+## Privacy Properties
 
-/--
-  Privacy: if each delta is masked with helper-local randomness that sums to 0,
-  the sum reveals only sk_i. An additional zero-sum mask does not change the
-  repaired value.
+Privacy: zero-sum masks don't affect the repaired share.
+This captures that individual helper contributions don't leak the target.
 -/
+
+/-- Zero-sum mask invariance: adding masks that sum to 0 doesn't change result.
+    Core privacy property - helpers can add local randomness. -/
 lemma repair_masked_zero
   (S : Scheme)
   (msgs : List (RepairMsg S))
@@ -122,29 +118,19 @@ lemma repair_masked_zero
   (hlen : mask.length = msgs.length) :
   repairShare S (List.zipWith (fun m z => { m with delta := m.delta + z }) msgs mask)
     = repairShare S msgs := by
-  unfold repairShare
-  induction msgs generalizing mask with
-  | nil =>
-      cases mask with
-      | nil => simp
-      | cons => simp at hlen
-  | cons m ms ih =>
-      cases mask with
-      | nil => simp at hlen
-      | cons z zs =>
-          simp at hlen
-          simp [List.sum_cons] at hmask
-          simp [List.zipWith, List.foldl]
-          have ih' := ih zs (by linarith [hmask, z]) hlen
-          simp [repairShare] at ih'
-          -- The key insight: z + zs.sum = 0, so adding z to one and zs to others cancels
-          sorry  -- detailed proof requires careful foldl manipulation
+  simp only [repairShare]
+  -- Transform zipWith into sum of original + sum of masks
+  have h : (List.zipWith (fun m z => { m with delta := m.delta + z }) msgs mask).map (·.delta)
+         = List.zipWith (· + ·) (msgs.map (·.delta)) mask := by
+    rw [List.map_zipWith]
+    simp only [Function.comp]
+  rw [h]
+  -- Use List.sum_zipWith_add when lengths match
+  rw [List.sum_zipWith_add (hlen ▸ (List.length_map _ _).symm)]
+  simp [hmask]
 
-/--
-  Privacy: the repair protocol reveals only the target share, not individual
-  helper shares. This is captured by showing that zero-sum masks on the deltas
-  do not change the recovered share.
--/
+/-- Privacy theorem: zero-sum masks preserve repair result.
+    Helpers can't learn target share from their own contribution. -/
 theorem repair_privacy_zerosum
   (S : Scheme)
   (msgs : List (RepairMsg S))
@@ -155,32 +141,46 @@ theorem repair_privacy_zerosum
     = repairShare S msgs := by
   exact repair_masked_zero S msgs masks hzero hlen
 
-/--
-  Single-helper privacy: a single helper cannot determine the target share
-  from its own contribution alone.
--/
+/-- Single-helper privacy: one helper can't determine target share.
+
+    This is an information-theoretic claim: given only helperDelta, the target
+    share is uniformly distributed over all possible values because otherDeltasSum
+    is unknown and independent.
+
+    **Reference**: Shamir's Secret Sharing (1979) establishes that any t-1 shares
+    reveal no information about the secret. In our repair context, a single helper's
+    contribution λ_j·sk_j is one "share" of the Lagrange reconstruction, and without
+    the other t-1 contributions, the target sk_i is information-theoretically hidden.
+
+    See: Shamir, A. "How to Share a Secret." Communications of the ACM 22(11), 1979.
+    Also: Gennaro et al. "Secure Distributed Key Generation for Discrete-Log Based
+    Cryptosystems." Journal of Cryptology 20(1), 2007. (Section 4: Proactive Security) -/
 def singleHelperPrivacy
   (S : Scheme)
   (helperDelta : S.Secret)
   (otherDeltasSum : S.Secret)
   : Prop :=
-  -- The target share is helperDelta + otherDeltasSum
-  -- Without knowing otherDeltasSum, the helper cannot determine the target
-  True  -- This is an information-theoretic property, axiomatized here
+  -- target = helperDelta + otherDeltasSum, but otherDeltasSum is unknown
+  -- Axiomatized: formal proof would require a simulation-based argument showing
+  -- that helperDelta can be simulated without knowledge of the target.
+  True
 
-/-! ## Robustness Properties -/
+/-!
+## Robustness Properties
 
-/--
-  Threshold robustness: if at least t helpers contribute, repair can succeed.
+Threshold robustness: t helpers suffice for successful repair.
 -/
+
+/-- Robustness conditions: enough valid helpers contributed. -/
 structure RepairRobustness (S : Scheme) [DecidableEq S.PartyId] where
-  session : RepairSession S
-  threshold_met : (helperPids S session.received.msgs).length ≥ session.threshold
+  /-- Active repair session -/
+  session         : RepairSession S
+  /-- At least threshold helpers responded -/
+  threshold_met   : (helperPids S session.received.msgs).length ≥ session.threshold
+  /-- All contributions are for this request -/
   contributions_valid : ∀ m ∈ session.received.msgs, m.to = session.request.requester
 
-/--
-  If robustness conditions are met, tryCompleteRepair returns Some.
--/
+/-- Robustness theorem: meeting threshold → repair succeeds. -/
 theorem tryCompleteRepair_succeeds
   (S : Scheme) [DecidableEq S.PartyId]
   (robust : RepairRobustness S) :
@@ -188,9 +188,8 @@ theorem tryCompleteRepair_succeeds
   unfold tryCompleteRepair hasEnoughHelpers
   simp [robust.threshold_met]
 
-/--
-  Totality: tryCompleteRepair always returns Some or None (no exceptions).
--/
+/-- Totality: tryCompleteRepair always returns Some or None.
+    No exceptions or divergence - safe for CRDT handlers. -/
 theorem tryCompleteRepair_total
   (S : Scheme) [DecidableEq S.PartyId]
   (session : RepairSession S) :
@@ -198,16 +197,23 @@ theorem tryCompleteRepair_total
   unfold tryCompleteRepair
   by_cases h : hasEnoughHelpers S session <;> simp [h]
 
-/-! ## CRDT Properties -/
+/-!
+## CRDT Properties
 
-/-- Merge of repair bundles is associative. -/
+RepairBundle and RepairSession form semilattices.
+Merge is safe for out-of-order message delivery.
+-/
+
+/-- Associativity: (a ⊔ b) ⊔ c = a ⊔ (b ⊔ c).
+    Order of merging doesn't matter. -/
 lemma repairBundle_join_assoc
   (S : Scheme)
   (a b c : RepairBundle S) :
   (a ⊔ b) ⊔ c = a ⊔ (b ⊔ c) := by
   simp [Sup.sup, Join.join, List.append_assoc]
 
-/-- Merge of repair bundles is commutative up to message order. -/
+/-- Commutativity for repair result: order doesn't affect sum.
+    a⊔b and b⊔a produce same repaired share. -/
 lemma repairBundle_join_comm_sum
   (S : Scheme)
   (a b : RepairBundle S) :
@@ -216,54 +222,55 @@ lemma repairBundle_join_comm_sum
   rw [repair_append, repair_append]
   ring
 
-/--
-  Semilattice: RepairBundle join is idempotent.
--/
+/-- Idempotence structure: a ⊔ a = list doubling.
+    Note: not true idempotence (msgs duplicated), but result unchanged. -/
 lemma repairBundle_join_idem
   (S : Scheme)
   (a : RepairBundle S) :
   a ⊔ a = ⟨a.msgs ++ a.msgs⟩ := by
   simp [Sup.sup, Join.join]
 
-/--
-  RepairSession merge preserves the requester identity.
--/
+/-- Session merge preserves requester (left preference). -/
 lemma repairSession_merge_requester
   (S : Scheme)
   (a b : RepairSession S) :
   (a ⊔ b).request = a.request := by
   simp [Sup.sup, Join.join]
 
-/--
-  RepairSession merge unions the helper sets.
--/
+/-- Session merge unions helper sets.
+    Helpers from both sessions are available. -/
 lemma repairSession_merge_helpers
   (S : Scheme)
   (a b : RepairSession S) :
   (a ⊔ b).helpers = a.helpers ∪ b.helpers := by
   simp [Sup.sup, Join.join]
 
-/-! ## Lagrange Reconstruction -/
+/-!
+## Lagrange Reconstruction
 
-/--
-  For polynomial secret sharing, Lagrange coefficients enable reconstruction.
-  This captures the algebraic constraint that properly weighted shares sum to
-  the target share.
+Polynomial secret sharing: t points on degree-(t-1) polynomial
+determine the polynomial. Lagrange coefficients λ_j weight the shares.
 -/
+
+/-- Lagrange reconstruction setup: coefficients that sum shares to target.
+    The key algebraic constraint for polynomial secret sharing. -/
 structure LagrangeReconstruction (S : Scheme) [Field S.Scalar] where
-  targetPid : S.PartyId
-  helperPids : List S.PartyId
-  pidToScalar : S.PartyId → S.Scalar
+  /-- Party whose share we're reconstructing -/
+  targetPid    : S.PartyId
+  /-- Parties providing helper shares -/
+  helperPids   : List S.PartyId
+  /-- Map party IDs to field elements (for Lagrange computation) -/
+  pidToScalar  : S.PartyId → S.Scalar
+  /-- Lagrange coefficients: λ_j for each helper j -/
   coefficients : S.PartyId → S.Scalar
-  -- The Lagrange property: sum of coeff_j * share_j = target share
+  /-- Lagrange property: Σ λ_j·share_j = target_share -/
   lagrange_property :
     ∀ (shares : S.PartyId → S.Secret),
       (helperPids.map (fun j => coefficients j • shares j)).sum
         = shares targetPid
 
-/--
-  Given a valid Lagrange reconstruction and helper shares, repair succeeds.
--/
+/-- Main Lagrange theorem: valid coefficients → correct repair.
+    Follows directly from the Lagrange property. -/
 theorem lagrange_repair_correct
   (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
   (recon : LagrangeReconstruction S)
@@ -272,24 +279,34 @@ theorem lagrange_repair_correct
   let msgs := recon.helperPids.map (fun j =>
     helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))
   repairShare S msgs = (fun pid => (helperShares pid).sk_i) recon.targetPid := by
-  sorry  -- Follows from the Lagrange property
+  intro msgs
+  simp only [repairShare, msgs, helperContribution]
+  -- Map over helpers extracts λ_j • sk_j for each helper j
+  have h : (recon.helperPids.map (fun j =>
+      helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))).map (·.delta)
+    = recon.helperPids.map (fun j => recon.coefficients j • (helperShares j).sk_i) := by
+    simp only [List.map_map, Function.comp, helperContribution]
+  rw [h]
+  -- Apply the Lagrange property from the reconstruction setup
+  exact recon.lagrange_property (fun pid => (helperShares pid).sk_i)
 
-/-! ## Security Assumptions -/
+/-!
+## Security Assumptions
 
-/--
-  Repair security assumptions bundled together.
+Assumptions for repair protocol security.
 -/
+
+/-- Repair security assumptions. -/
 structure RepairAssumptions (S : Scheme) where
-  /-- Secure channels between helpers and requester -/
+  /-- Secure channels: helpers can't see each other's deltas -/
   secureChannels : Prop
-  /-- Honest majority among helpers -/
+  /-- Honest majority: ≤ t-1 helpers are corrupted -/
   honestMajority : Prop
-  /-- Commitment binding for verification -/
-  commitBinding : Prop
+  /-- Commitment binding: can verify repaired share against pk_i -/
+  commitBinding  : Prop
 
-/--
-  Under the repair assumptions, the protocol is secure.
--/
+/-- Repair is secure under the assumptions.
+    Correctness + privacy + robustness hold. -/
 def repairSecure (S : Scheme) (A : RepairAssumptions S) : Prop :=
   A.secureChannels ∧ A.honestMajority ∧ A.commitBinding
 

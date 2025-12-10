@@ -1,9 +1,9 @@
 /-
-# Phase-restricted signature extraction
+# Phase-Restricted Signature Extraction
 
-Signatures can only be extracted from the `done` phase; earlier phases cannot
-produce them by construction. We extend this to carry a threshold context so
-callers must provide the active set and card proof alongside the final sig.
+Type-level enforcement: signatures can ONLY be extracted from .done phase.
+There is no function to extract from commit/reveal/shares phases.
+This prevents returning incomplete signatures by construction.
 -/
 
 import IceNine.Protocol.Phase
@@ -11,16 +11,36 @@ import IceNine.Protocol.Sign
 
 namespace IceNine.Protocol
 
-def extractSignature (S : Scheme) : State S .done → Signature S
+/-!
+## Basic Extraction
+
+Simple extraction from done state. Type system ensures this is the only
+path to get a Signature from protocol state.
+-/
+
+/-- Extract signature from done phase.
+    Type: State S .done → Signature S (no other phases possible). -/
+def extractSignature (S : Scheme) [DecidableEq S.PartyId] : State S .done → Signature S
   | ⟨sig⟩ => sig
 
-structure DoneWithCtx (S : Scheme) :=
-  (ctx : ThresholdCtx S)
-  (sig : Signature S)
+/-!
+## Extraction with Context
 
-def extractSignatureWithCtx (S : Scheme) : DoneWithCtx S → Signature S
+For callers that need threshold context alongside the signature.
+Pairs the ThresholdCtx (active set + threshold proof) with final sig.
+-/
+
+/-- Done state paired with threshold context for verification. -/
+structure DoneWithCtx (S : Scheme) [DecidableEq S.PartyId] :=
+  (ctx : ThresholdCtx S)  -- active set + threshold proof
+  (sig : Signature S)     -- final signature
+deriving Repr
+
+/-- Extract signature, discarding context (already verified). -/
+def extractSignatureWithCtx (S : Scheme) [DecidableEq S.PartyId] : DoneWithCtx S → Signature S
   | ⟨_, sig⟩ => sig
 
--- There is no extractor from earlier phases; this is enforced by the type.
+-- NOTE: No extractors exist for earlier phases. This is by design.
+-- The type `State S .done` is the only one with a Signature inside.
 
 end IceNine.Protocol

@@ -217,8 +217,8 @@ The shares phase accumulates partial signatures along with threshold context.
 
 ```lean
 structure ShareState (S : Scheme) :=
-  (commits : List (DkgCommitMsg S))
-  (reveals : List (DkgRevealMsg S))
+  (commits : List (SignCommitMsg S))
+  (reveals : List (SignRevealWMsg S))
   (shares  : List (SignShareMsg S))
   (active  : Finset S.PartyId)
 
@@ -230,10 +230,52 @@ structure ShareWithCtx (S : Scheme) :=
 The threshold context ensures aggregation only proceeds when sufficient parties contribute.
 
 ```lean
+inductive SignMode | all | threshold
+
+inductive CoeffStrategy (S : Scheme)
+  | ones                                      -- n-of-n: z = Σ z_i
+  | lagrange (coeffs : List (LagrangeCoeff S)) -- t-of-n: z = Σ λ_i·z_i
+
 structure ThresholdCtx (S : Scheme) :=
+  (active     : Finset S.PartyId)    -- participating signers
+  (t          : Nat)                 -- threshold (t = |active| for n-of-n)
+  (mode       : SignMode)            -- n-of-n vs t-of-n
+  (strategy   : CoeffStrategy S)     -- aggregation method
+  (card_ge    : t ≤ active.card)     -- proof: have enough signers
+  (strategy_ok : strategyOK S active.toList strategy) -- coeffs align
+```
+
+The `CoeffStrategy` type selects the aggregation path:
+- `ones`: simple sum z = Σ z_i (n-of-n, no field operations)
+- `lagrange coeffs`: weighted sum z = Σ λ_i·z_i (t-of-n, requires field)
+
+### Context Constructors
+
+Smart constructors build `ThresholdCtx` with proofs:
+
+```lean
+-- n-of-n: threshold = |active|, strategy = ones
+def mkAllCtx (S : Scheme) [DecidableEq S.PartyId]
+  (active : Finset S.PartyId) : ThresholdCtx S
+
+-- t-of-n with pre-supplied coefficients
+def mkThresholdCtx
+  (S : Scheme) [DecidableEq S.PartyId]
   (active : Finset S.PartyId)
   (t : Nat)
-  (card_ge : t ≤ active.card)
+  (coeffs : List (LagrangeCoeff S))
+  (hcard : t ≤ active.card)
+  (halign : coeffs.map (·.pid) = active.toList)
+  (hlen : coeffs.length = active.toList.length)
+  : ThresholdCtx S
+
+-- t-of-n with computed Lagrange coefficients (requires Field)
+def mkThresholdCtxComputed
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (active : Finset S.PartyId)
+  (t : Nat)
+  (pidToScalar : S.PartyId → S.Scalar)
+  (hcard : t ≤ active.card) : ThresholdCtx S
 ```
 
 ### Collecting Partials
@@ -280,6 +322,39 @@ def aggregateSignatureLagrange
   (shares : List (SignShareMsg S))
   : Signature S
 ```
+
+### Strategy-Based Aggregation
+
+The `aggregateWithStrategy` function selects the aggregation path based on the coefficient strategy:
+
+```lean
+def aggregateWithStrategy
+  (S    : Scheme) [DecidableEq S.PartyId]
+  (c    : S.Challenge)
+  (active : List S.PartyId)
+  (commits : List S.Commitment)
+  (shares : List (SignShareMsg S))
+  (strategy : CoeffStrategy S)
+  : Option (Signature S)
+```
+
+This function validates that all shares come from the declared active set, then dispatches to `aggregateSignature` (for `.ones`) or `aggregateSignatureLagrange` (for `.lagrange coeffs`).
+
+### Context-Based Aggregation
+
+For full validation using the threshold context:
+
+```lean
+def aggregateSignatureWithCtx
+  (S    : Scheme) [DecidableEq S.PartyId]
+  (c    : S.Challenge)
+  (ctx  : ThresholdCtx S)
+  (commits : List S.Commitment)
+  (shares : List (SignShareMsg S))
+  : Option (Signature S)
+```
+
+This function checks `sharesFromActive` (membership validation) before delegating to `aggregateWithStrategy` using the context's strategy.
 
 ### Final Signature
 
@@ -402,14 +477,133 @@ The signing protocol may abort under several conditions.
 
 When aborting parties should discard all session state. They should not reuse the ephemeral nonce $y_i$ in any future session.
 
+## Session Tracking and Nonce Safety
+
+**CRITICAL**: Nonce reuse completely breaks Schnorr-style signatures.
+
+If the same nonce $y$ is used with two different challenges $c_1, c_2$:
+- $z_1 = y + c_1 \cdot sk$
+- $z_2 = y + c_2 \cdot sk$
+
+The secret key can be recovered: $sk = (z_1 - z_2) / (c_1 - c_2)$
+
+### Session Tracker
+
+Each party tracks used session IDs:
+
+```lean
+structure SessionTracker (S : Scheme) where
+  usedSessions : Finset Nat    -- sessions that have been used
+  partyId : S.PartyId
+
+def SessionTracker.isFresh (tracker : SessionTracker S) (session : Nat) : Bool :=
+  session ∉ tracker.usedSessions
+
+def SessionTracker.markUsed (tracker : SessionTracker S) (session : Nat) : SessionTracker S :=
+  { tracker with usedSessions := tracker.usedSessions.insert session }
+```
+
+### Session Validation
+
+```lean
+inductive SessionCheckResult
+  | ok                           -- session is fresh
+  | alreadyUsed (session : Nat)  -- DANGER: would reuse nonce
+  | invalidId
+
+def checkSession (tracker : SessionTracker S) (session : Nat) : SessionCheckResult :=
+  if tracker.isFresh session then .ok
+  else .alreadyUsed session
+```
+
+### Nonce Registry
+
+For network-wide detection:
+
+```lean
+structure NonceRegistry (S : Scheme) where
+  commitments : List (S.PartyId × Nat × S.Commitment)
+
+def NonceRegistry.detectReuse (reg : NonceRegistry S) (pid : S.PartyId) (commit : S.Commitment)
+    : Option (Nat × Nat)  -- returns (session1, session2) if same commit used twice
+```
+
+## Rejection Sampling
+
+In lattice signatures, the response $z$ must have bounded norm to prevent leakage.
+
+### Retry State
+
+```lean
+inductive SignAttemptResult (S : Scheme)
+  | success (msg : SignShareMsg S)  -- z_i passed norm check
+  | retry                           -- need fresh nonce
+  | abort                           -- max attempts exceeded
+
+structure SignRetryState (S : Scheme) where
+  base      : SignLocalState S
+  attempt   : Nat
+  challenge : S.Challenge
+
+def maxSigningAttempts : Nat := 16  -- Dilithium expects ~4
+```
+
+### Retry Logic
+
+If $\|z_i\|_\infty \geq \gamma_1 - \beta$:
+1. Sample fresh nonce $y'_i$
+2. Compute $w'_i = A(y'_i)$
+3. Broadcast new commitment
+4. All parties restart with new challenge
+5. Repeat until success or max attempts
+
+### Abort Handling
+
+```lean
+inductive AbortReason (PartyId : Type)
+  | normBoundExceeded : PartyId → Nat → AbortReason PartyId
+  | maxRetriesReached : PartyId → AbortReason PartyId
+  | coordinationFailure : AbortReason PartyId
+  | timeout : AbortReason PartyId
+
+structure SignAbortMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  reason  : AbortReason S.PartyId
+
+structure SignAbortState (S : Scheme) where
+  abortedSession : Option Nat
+  abortVotes : List S.PartyId
+  reasons : List (AbortReason S.PartyId)
+
+instance (S : Scheme) : Join (SignAbortState S) :=
+  ⟨fun a b => { ... }⟩  -- CRDT merge
+```
+
+### Extended Error Types
+
+```lean
+inductive SignError (PartyId : Type) where
+  | lengthMismatch : SignError PartyId
+  | participantMismatch : PartyId → SignError PartyId
+  | duplicateParticipants : SignError PartyId
+  | commitMismatch : PartyId → SignError PartyId
+  | sessionMismatch : Nat → Nat → SignError PartyId
+  | normCheckFailed : PartyId → SignError PartyId      -- NEW
+  | maxRetriesExceeded : PartyId → SignError PartyId   -- NEW
+  | sessionAborted : Nat → SignError PartyId           -- NEW
+```
+
 ## Security Considerations
 
-**Nonce reuse.** Using the same nonce $y_i$ in two sessions leaks the secret share $s_i$. Each session must use fresh randomness.
+**Nonce reuse.** Using the same nonce $y_i$ in two sessions leaks the secret share $s_i$. Session tracking prevents this catastrophic failure.
 
 **Commitment binding.** The commitment prevents a party from choosing its nonce adaptively. This protects against rogue key attacks.
 
 **Challenge entropy.** The hash function must produce challenges with sufficient entropy. In the random oracle model this is guaranteed.
 
-**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Proper bounds depend on the lattice parameters.
+**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Rejection sampling with retry ensures signatures are independent of the secret.
+
+**Abort coordination.** When a party must abort due to norm failure, all parties must restart together. The CRDT abort state coordinates this.
 
 **Totality.** The validation function always returns either a valid signature or a structured error.

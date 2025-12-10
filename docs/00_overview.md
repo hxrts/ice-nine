@@ -36,10 +36,31 @@ The implementation uses wrapper types to enforce disciplined handling of secret 
 
 **Security.** The protocol assumes binding commitments and models the hash as a random oracle. Under these assumptions it achieves threshold unforgeability. Formal proofs reside in the Lean verification modules. Totality theorems ensure that validation functions always return either success or a structured error.
 
-## Document Structure
+## Lattice Cryptography
 
-- `01_algebra.md`: Algebraic primitives, module structure, and semilattice definitions
-- `02_keygen.md`: Dealer and distributed key generation with CRDT state
-- `03_signing.md`: Two-round signing protocol with phase-indexed state
-- `04_verification.md`: Signature verification and threshold context
-- `05_extensions.md`: Complaints, refresh, repair, rerandomization with merge semantics
+The security of Ice Nine reduces to standard lattice hardness assumptions:
+
+**Short Integer Solution (SIS).** Given matrix $A \in \mathbb{Z}_q^{n \times m}$, finding short $z$ with $Az = 0$ is hard. Signature unforgeability reduces to SIS: a forger that produces valid signatures can be used to solve SIS instances.
+
+**Module Learning With Errors (MLWE).** Distinguishing $(A, As + e)$ from $(A, u)$ where $s, e$ are small is hard. Key secrecy reduces to MLWE: recovering the secret key from the public key requires solving MLWE.
+
+**Rejection Sampling.** The signing protocol uses rejection sampling to ensure signatures are independent of the secret key. If the response norm exceeds the bound $\gamma_1 - \beta$, the party aborts and retries with a fresh nonce. Expected attempts: ~4 for Dilithium parameters.
+
+**Parameter Validation.** The implementation includes lightweight parameter validation to catch obviously insecure configurations. Full security analysis requires the lattice estimator.
+
+## Nonce Safety
+
+**Critical property:** Nonce reuse completely breaks Schnorr-style signatures. If the same nonce $y$ is used with two different challenges $c_1, c_2$:
+- $z_1 = y + c_1 \cdot sk$
+- $z_2 = y + c_2 \cdot sk$
+- Then $sk = (z_1 - z_2) / (c_1 - c_2)$
+
+The protocol tracks used session IDs via `SessionTracker` to prevent this catastrophic failure mode.
+
+## Docs Index
+
+1. `01_algebra.md`: Algebraic primitives, module structure, lattice instantiations, and semilattice definitions
+2. `02_keygen.md`: Dealer and distributed key generation with CRDT state, party exclusion
+3. `03_signing.md`: Two-round signing protocol with phase-indexed state, rejection sampling
+4. `04_verification.md`: Signature verification and threshold context
+5. `05_extensions.md`: Complaints, refresh, repair, rerandomization with merge semantics

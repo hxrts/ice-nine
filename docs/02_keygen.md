@@ -237,6 +237,101 @@ def dkgAggregateWithComplaints
 
 This enables exclusion of misbehaving parties while continuing with the honest subset.
 
+## Party Exclusion
+
+After collecting complaints, the protocol computes which parties should be excluded.
+
+```lean
+def Complaint.accused : Complaint PartyId → PartyId
+  | .openingMismatch p => p
+  | .missingReveal p => p
+
+def accusedParties (complaints : List (Complaint PartyId)) : List PartyId :=
+  (complaints.map Complaint.accused).dedup
+
+def excludeFaulty (allParties : List PartyId) (complaints : List (Complaint PartyId)) : List PartyId :=
+  let faulty := accusedParties complaints
+  allParties.filter (fun p => p ∉ faulty)
+```
+
+### Quorum Check
+
+For threshold security, enough valid parties must remain:
+
+```lean
+inductive ExclusionResult (PartyId : Type)
+  | quorumMet (validParties : List PartyId)   -- can continue
+  | quorumFailed (validCount : Nat) (needed : Nat)  -- must abort
+
+def hasThresholdQuorum (allParties complaints : List _) (threshold : Nat) : Bool :=
+  (excludeFaulty allParties complaints).length ≥ threshold
+```
+
+If $|valid| \geq t$, the protocol can continue. Otherwise it must abort.
+
+## Reconstruction from Subset
+
+When some parties are excluded, the remaining valid parties can reconstruct the public key using Lagrange interpolation.
+
+```lean
+def dkgLagrangeCoeff [Field F] (pidToScalar : PartyId → F) (validPids : List PartyId) (i : PartyId) : F :=
+  let xi := pidToScalar i
+  let others := validPids.filter (· ≠ i)
+  (others.map (fun j => let xj := pidToScalar j; xj / (xj - xi))).prod
+
+def reconstructPkFromSubset
+    (S : Scheme) [Field S.Scalar]
+    (pidToScalar : S.PartyId → S.Scalar)
+    (validReveals : List (DkgRevealMsg S)) : S.Public :=
+  let validPids := validReveals.map (·.sender)
+  let weightedPks := validReveals.map fun r =>
+    let λ_i := dkgLagrangeCoeff pidToScalar validPids r.sender
+    λ_i • r.pk_i
+  weightedPks.sum
+```
+
+### Full DKG with Exclusion
+
+The `dkgWithExclusion` function combines complaint handling with reconstruction:
+
+```lean
+def dkgWithExclusion
+    (S : Scheme) [Field S.Scalar]
+    (pidToScalar : S.PartyId → S.Scalar)
+    (allParties : List S.PartyId)
+    (commits : List (DkgCommitMsg S))
+    (reveals : List (DkgRevealMsg S))
+    (threshold : Nat)
+    : Except (List (Complaint S.PartyId) × Nat) (S.Public × List S.PartyId) :=
+  let complaints := dkgCheckComplaints S commits reveals
+  if complaints.isEmpty then
+    -- No complaints: simple aggregation
+    Except.ok ((reveals.map (·.pk_i)).sum, allParties)
+  else
+    -- Try reconstruction from valid subset
+    let validParties := excludeFaulty allParties complaints
+    if validParties.length ≥ threshold then
+      let validReveals := filterValidReveals reveals validParties
+      let pk := reconstructPkFromSubset S pidToScalar validReveals
+      Except.ok (pk, validParties)
+    else
+      Except.error (complaints, validParties.length)
+```
+
+### Threshold Parameters
+
+```lean
+structure DKGParams where
+  n : Nat                    -- total parties
+  t : Nat                    -- threshold
+  threshold_valid : t ≤ n    -- proof that t ≤ n
+
+def DKGParams.maxFaulty (p : DKGParams) : Nat := p.n - p.t
+
+def DKGParams.canContinue (p : DKGParams) (faultyCount : Nat) : Bool :=
+  faultyCount ≤ p.maxFaulty
+```
+
 ## Finalizing Key Shares
 
 After DKG completes successfully, each party converts its local state into a persistent key share.

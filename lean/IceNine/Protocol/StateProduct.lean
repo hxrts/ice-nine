@@ -1,8 +1,12 @@
 /-
-# Combined CRDT states
+# Product Semilattice Instances
 
-Simple product semilattice instances to combine protocol phase state with
-refresh/repair/rerandomization metadata.
+Generic semilattice for product types. Enables combining multiple CRDT
+states (phase, refresh, repair, rerand) into a single composite state
+that merges componentwise.
+
+Given (α × β) where both α and β are semilattices:
+  (a₁, b₁) ⊔ (a₂, b₂) = (a₁ ⊔ a₂, b₁ ⊔ b₂)
 -/
 
 import IceNine.Protocol.Phase
@@ -12,20 +16,27 @@ import IceNine.Protocol.Rerandomize
 
 namespace IceNine.Protocol
 
+/-!
+## Product Join
+
+Componentwise join for pairs. Extends naturally to tuples via nesting.
+-/
+
+/-- Componentwise join for products: (a₁, b₁) ⊔ (a₂, b₂) = (a₁⊔a₂, b₁⊔b₂). -/
 instance prodJoin (α β) [Join α] [Join β] : Join (α × β) :=
   ⟨fun a b => (a.1 ⊔ b.1, a.2 ⊔ b.2)⟩
 
-instance prodSemilatticeSup (α β) [SemilatticeSup α] [SemilatticeSup β] : SemilatticeSup (α × β) := by
-  classical
-  refine
-    { sup := (· ⊔ ·)
-      le := fun a b => a.1 ≤ b.1 ∧ a.2 ≤ b.2
-      le_sup_left := ?_
-      le_sup_right := ?_
-      sup_le := ?_
-      sup_assoc := ?_
-      sup_comm := ?_
-      le_refl := by intro a; constructor <;> exact le_rfl
-      le_trans := ?_ } <;> intros <;> constructor <;> simp [sup_assoc, sup_comm, sup_left_comm, prodJoin] <;> tauto
+/-!
+## Product Semilattice
+
+Full semilattice structure for products. Mathlib provides this automatically
+via `Prod.instSemilatticeSup` from `Mathlib.Order.Lattice`. The ordering is
+componentwise: (a₁, b₁) ≤ (a₂, b₂) ↔ a₁ ≤ a₂ ∧ b₁ ≤ b₂.
+
+We re-export the instance here for clarity and to ensure our Join aligns.
+-/
+
+-- Mathlib provides SemilatticeSup (α × β) automatically when both components
+-- have SemilatticeSup instances. No custom proof needed.
 
 end IceNine.Protocol

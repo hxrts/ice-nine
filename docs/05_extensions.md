@@ -262,6 +262,28 @@ lemma repair_masked_zero
 
 One construction uses Lagrange interpolation. If the shares are polynomial shares evaluated at distinct points then any $t$ parties can reconstruct the share at any point.
 
+The Lagrange coefficient for party $i$ evaluating at 0 over set $S$ is:
+
+$$\lambda_i^S = \prod_{j \in S, j \neq i} \frac{x_j}{x_j - x_i}$$
+
+These coefficients satisfy the partition of unity property: $\sum_{i \in S} \lambda_i^S = 1$.
+
+The implementation verifies these properties against Mathlib's `Lagrange` module:
+
+```lean
+-- Our formula equals Mathlib's basis polynomial evaluated at 0
+lemma lagrangeCoeffAtZero_eq_basis_eval :
+  lagrangeCoeffAtZero S pidToScalar Sset i = (Lagrange.basis s v i).eval 0
+
+-- Lagrange coefficients sum to 1 (partition of unity)
+lemma lagrangeCoeffs_sum_one (hs : s.Nonempty) :
+  (∑ i ∈ s, (Lagrange.basis s v i).eval 0) = 1
+
+-- Weighted sum reconstructs polynomial at 0
+lemma lagrange_interpolation_at_zero :
+  (∑ i ∈ s, λ_i * r i) = p.eval 0
+```
+
 For additive shares a simpler approach works. Each helper $P_j$ sends a random share of its own share $s_j$. The recovering party combines these to reconstruct its share through a pre-established linear relation.
 
 ### Helper Contribution Function
@@ -459,23 +481,55 @@ Merge is provided by the product semilattice instances. This allows all extensio
 
 ## Threshold-Aware Merge
 
-For threshold protocols, the `ShareWithCtx` structure couples share state with threshold context.
+For threshold protocols, the `ShareWithCtx` structure couples share state with threshold context. When two replicas merge, the active signer sets may differ. The merge must:
+
+1. Union the active sets: `merged.active = a.active ∪ b.active`
+2. Preserve threshold: `merged.t = max(a.t, b.t)`
+3. Prove validity: `merged.t ≤ |merged.active|`
+4. Recompute coefficients: Lagrange λ_i depend on the signer set
+
+### Merge Strategies
+
+Three merge strategies are provided:
+
+**Conservative merge (ones):** Falls back to n-of-n with simple sum.
 
 ```lean
-def mergeShareWithCtx (S : Scheme) [DecidableEq S.PartyId]
-  (a b : ShareWithCtx S) : ShareWithCtx S :=
-  let mergedActive := a.state.active ∪ b.state.active
-  let state := { commits := a.state.commits ⊔ b.state.commits,
-                 reveals := a.state.reveals ⊔ b.state.reveals,
-                 shares  := a.state.shares ⊔ b.state.shares,
-                 active  := mergedActive }
-  let t := Nat.max a.ctx.t b.ctx.t
-  have hcard : t ≤ mergedActive.card := ...
-  let ctx := { active := mergedActive, t := t, card_ge := hcard }
-  { state := state, ctx := ctx }
+def mergeShareWithCtxOnes (S : Scheme) [DecidableEq S.PartyId]
+  (a b : ShareWithCtx S) : ShareWithCtx S
 ```
 
-The merge:
-- Unions the active participant sets
-- Takes the maximum threshold
-- Proves the merged active set satisfies the threshold requirement
+- Pro: No field required, always safe
+- Con: Loses threshold efficiency (all signers must participate)
+
+**Full merge with recompute:** Recomputes Lagrange coefficients for merged set.
+
+```lean
+def mergeShareWithCtx
+  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (pidToScalar : S.PartyId → S.Scalar)
+  (a b : ShareWithCtx S) : ShareWithCtx S
+```
+
+- Pro: Preserves t-of-n semantics
+- Con: Requires Field instance for division
+
+**Auto merge:** Selects strategy based on field availability.
+
+```lean
+def mergeShareWithCtxAuto
+  (S : Scheme) [DecidableEq S.PartyId]
+  (fieldInst : Option (Field S.Scalar))
+  (pidToScalar : S.PartyId → S.Scalar)
+  (a b : ShareWithCtx S) : ShareWithCtx S
+```
+
+Pass `some inferInstance` for field-backed schemes, `none` for lattice-only builds.
+
+### Cardinality Proof Maintenance
+
+The merge must prove that `max(t_a, t_b) ≤ |a.active ∪ b.active|`. This follows from:
+
+- `a.ctx.t ≤ |a.active| ≤ |a.active ∪ b.active|` (subset monotonicity)
+- `b.ctx.t ≤ |b.active| ≤ |a.active ∪ b.active|` (subset monotonicity)
+- Therefore `max(t_a, t_b) ≤ |merged.active|`

@@ -255,11 +255,90 @@ The formal soundness proof lives in the Lean verification modules. It follows th
 
 ```lean
 structure Assumptions (S : Scheme) where
-  hashRO : Prop
-  commitBinding : Prop
-  normLeakageBound : Prop
-  corruptionBound : Nat
+  hashRO : Prop                   -- hash modeled as random oracle
+  commitBinding : Prop            -- commitment is binding
+  normLeakageBound : Prop         -- norm bounds prevent leakage
+  corruptionBound : Nat           -- max corrupted parties < threshold
+  sisParams : Option SISParams    -- SIS parameters for unforgeability
+  mlweParams : Option MLWEParams  -- MLWE parameters for key secrecy
 
 def thresholdUFcma (S : Scheme) (A : Assumptions S) : Prop :=
   A.hashRO ∧ A.commitBinding ∧ A.normLeakageBound
 ```
+
+## Lattice Hardness Assumptions
+
+Security reduces to standard lattice problems:
+
+### Short Integer Solution (SIS)
+
+Given $A \in \mathbb{Z}_q^{n \times m}$, find short $z$ with $Az = 0 \mod q$.
+
+```lean
+structure SISParams where
+  n : Nat              -- rows (dimension)
+  m : Nat              -- columns
+  q : Nat              -- modulus
+  beta : Nat           -- solution norm bound
+  m_large : m > n * Nat.log2 q  -- security requirement
+
+structure SISSolution (p : SISParams) (inst : SISInstance p) where
+  z : Fin p.m → Int
+  z_short : ∀ i, Int.natAbs (z i) ≤ p.beta
+  z_nonzero : ∃ i, z i ≠ 0
+  Az_zero : ∀ i, (Finset.univ.sum fun j => inst.A i j * (z j)) = 0
+
+def SISHard (p : SISParams) : Prop := True  -- axiomatized
+```
+
+**Reduction**: A forger that produces valid signatures can be used to solve SIS.
+
+### Module Learning With Errors (MLWE)
+
+Distinguish $(A, As + e)$ from $(A, u)$ where $s, e$ are small.
+
+```lean
+structure MLWEParams where
+  n : Nat    -- ring dimension (power of 2)
+  k : Nat    -- module rank
+  q : Nat    -- modulus
+  eta : Nat  -- error bound
+
+def MLWEHard (p : MLWEParams) : Prop := True  -- axiomatized
+```
+
+**Reduction**: Recovering the secret key from the public key requires solving MLWE.
+
+### Full Lattice Assumptions
+
+```lean
+structure LatticeAssumptions (S : Scheme) extends Assumptions S where
+  sisInst : SISParams
+  mlweInst : MLWEParams
+  sis_hard : SISHard sisInst
+  mlwe_hard : MLWEHard mlweInst
+
+def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
+  A.mlwe_hard
+```
+
+## Parameter Validation
+
+Lightweight checks catch obviously insecure parameters:
+
+```lean
+def SISParams.isSecure (p : SISParams) : Prop :=
+  p.n ≥ 256 ∧ p.m ≥ 2 * p.n ∧ p.beta < p.q / 2
+
+def MLWEParams.isSecure (p : MLWEParams) : Prop :=
+  p.n ≥ 256 ∧ isPowerOf2 p.n ∧ p.k ≥ 1 ∧ p.eta ≤ 4
+
+structure SecuritySummary where
+  sisValid : Bool
+  mlweValid : Bool
+  sisSecurityBits : Nat
+  mlweSecurityBits : Nat
+  overallSecurityBits : Nat
+```
+
+For full security analysis, use the lattice estimator tool.
