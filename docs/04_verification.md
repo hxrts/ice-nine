@@ -251,6 +251,18 @@ The binding property of commitments prevents an adversary from adaptively choosi
 
 The formal soundness proof lives in the Lean verification modules. It follows the standard Schnorr signature security argument adapted for the threshold setting.
 
+### Axiom Index
+
+All axioms used throughout the codebase are documented in `Security/Assumptions.lean`. They fall into three categories:
+
+1. **Mathlib-equivalent**: Properties provable with Mathlib but requiring significant integration work (e.g., `coeffs_sum_to_one` for Lagrange interpolation)
+
+2. **Cryptographic assumptions**: Properties requiring computational hardness assumptions (e.g., `vss_hiding`, `SISHard`, `MLWEHard`)
+
+3. **Implementation details**: Properties about data structures requiring extensive formalization (e.g., `MsgMap.merge_idem`)
+
+Each axiom includes a justification and literature reference. See `Security/Assumptions.lean` for the complete index.
+
 ### Security Assumptions Structure
 
 ```lean

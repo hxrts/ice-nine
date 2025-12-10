@@ -532,4 +532,52 @@ def LatticeAssumptions.securitySummary (A : LatticeAssumptions S) : SecuritySumm
     mlweSecurityBits := mlweBits
     overallSecurityBits := Option.map2 min sisBits mlweBits }
 
+/-!
+## Axiom Index
+
+This section documents all axioms used throughout the codebase for easy reference.
+Axioms are kept in their respective modules for locality but indexed here.
+
+### Protocol Axioms
+
+| Axiom | Module | Purpose |
+|-------|--------|---------|
+| `coeffs_sum_to_one` | Protocol/Lagrange | Lagrange coefficients sum to 1 |
+| `lagrange_interpolation` | Protocol/Lagrange | Interpolation recovers polynomial at target |
+| `List.sum_perm` | Protocol/RefreshCoord | Permuted lists have equal sums |
+| `Finset.ofList_toList_perm` | Protocol/RefreshCoord | Finset conversion preserves elements |
+| `MsgMap.merge_senders_comm` | Protocol/Phase | Message map merge is commutative |
+| `MsgMap.merge_idem` | Protocol/Phase | Message map merge is idempotent |
+
+### Security Axioms
+
+| Axiom | Module | Purpose |
+|-------|--------|---------|
+| `vss_correctness` | Security/VSS | Honest shares verify against commitments |
+| `vss_soundness` | Security/VSS | Invalid shares are detected |
+| `vss_hiding` | Security/VSS | Commitments hide polynomial coefficients |
+| `reconstruction_unique` | Security/VSS | Unique polynomial from sufficient shares |
+| `refresh_privacy` | Security/Coordination | Refresh masks hide original shares |
+| `repair_privacy` | Security/Coordination | Repair contributions hide helper shares |
+| `dilithium_acceptance_probability` | Security/Correctness | Rejection sampling acceptance rate |
+
+### Justifications
+
+All axioms fall into three categories:
+
+1. **Mathlib-equivalent**: Properties that should be provable with Mathlib but
+   require significant integration work (e.g., `coeffs_sum_to_one`).
+
+2. **Cryptographic assumptions**: Properties that cannot be proven from first
+   principles and require computational hardness assumptions (e.g., `vss_hiding`).
+
+3. **Implementation details**: Properties about data structures that would require
+   extensive formalization (e.g., `MsgMap.merge_idem`).
+
+**References**:
+- Lagrange interpolation: Burden & Faires, "Numerical Analysis", Ch. 3
+- VSS: Feldman, "A Practical Scheme for Non-interactive Verifiable Secret Sharing", FOCS 1987
+- Rejection sampling: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009
+-/
+
 end IceNine.Security

@@ -163,6 +163,145 @@ attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
 attribute [instance] Scheme.normOKDecidable
 
 /-!
+## Randomness Requirements
+
+This protocol requires cryptographically secure randomness (CSPRNG) at several points.
+**All randomness MUST be sampled from a cryptographically secure source** (e.g., `/dev/urandom`,
+`getrandom()`, `CryptGenRandom`, or equivalent OS facility).
+
+| Value | Generation | Security Impact |
+|-------|------------|-----------------|
+| `sk_i` | DKG: each party samples own share | Secret key - obvious |
+| `y_i` | Signing: ephemeral nonce | Nonce reuse = key recovery |
+| `Opening` | Commitments: randomness for hiding | Predictable = hiding breaks |
+| `randomCoeffs` | VSS: polynomial coefficients | Bias = share correlation |
+| `masks` | Refresh/Rerandomize: zero-sum masks | Bias = refresh leakage |
+
+### Nonce Catastrophe Warning
+
+**CRITICAL**: Reusing a nonce `y_i` across two signing sessions with the same key
+immediately leaks the secret share `sk_i`:
+
+    z₁ = y + c₁·sk
+    z₂ = y + c₂·sk
+    ⟹  sk = (z₁ - z₂) / (c₁ - c₂)
+
+The `SignSession` API is designed to prevent this by coupling nonce sampling with
+session creation. **Never implement signing without using the session API.**
+
+### Implementation Guidance
+
+1. **OS-level CSPRNG**: Use `getrandom(2)` on Linux, `arc4random(3)` on BSD/macOS,
+   `BCryptGenRandom` on Windows. Do NOT use `rand()`, `random()`, or PRNGs.
+
+2. **Nonce derivation** (alternative): RFC 6979 deterministic nonces can prevent
+   catastrophic reuse but require careful implementation. If using deterministic
+   nonces, the derivation MUST include the message, key, and a counter.
+
+3. **Rejection sampling**: The Dilithium-style signing loop requires fresh `y_i`
+   for each retry. Never reuse a rejected nonce.
+
+4. **Entropy at startup**: Ensure sufficient entropy before first key/nonce generation.
+   Block if entropy pool is depleted (`GRND_RANDOM` flag on Linux).
+-/
+
+/-!
+## Side-Channel Considerations
+
+This formal specification does NOT address side-channel attacks. Production implementations
+MUST consider the following timing and power analysis vulnerabilities:
+
+### Data-Dependent Timing
+
+| Operation | Risk | Mitigation |
+|-----------|------|------------|
+| Lagrange coefficient computation | Division timing varies with operands | Montgomery multiplication, constant-time inversion |
+| Polynomial evaluation | Branch on coefficient values | Constant-time multiply-accumulate |
+| Rejection sampling | Loop count leaks norm info | Add dummy iterations, constant-time norm check |
+| Secret comparison | Early-exit on mismatch | Constant-time comparison (e.g., `crypto_verify_32`) |
+
+### Memory Access Patterns
+
+- **Cache timing**: Table lookups indexed by secret values leak through cache timing
+- **Branch prediction**: Secret-dependent branches can be observed via Spectre-like attacks
+- **Memory allocation**: Variable-size allocations may leak secret sizes
+
+### Flagged Functions
+
+The following functions in this codebase have data-dependent behavior that MUST be
+replaced with constant-time implementations in production:
+
+1. `lagrangeCoefficient` (Protocol/RepairCoord.lean) - Division varies with inputs
+2. `allCoeffsAtZero` (Protocol/Lagrange.lean) - Loop over party list
+3. `vecInfNorm` (Norms.lean) - Max computation has secret-dependent comparisons
+4. `verifyShareBool` (Protocol/VSSCore.lean) - Comparison may short-circuit
+
+### Recommendations
+
+1. Use **constant-time primitives** from validated libraries (e.g., libsodium, HACL*)
+2. Compile with **security hardening flags** (`-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`)
+3. Consider **hardware isolation** (SGX, TrustZone) for secret key operations
+4. Perform **side-channel audits** before deployment (differential power analysis, timing measurements)
+5. Use **blinding techniques** where applicable (randomize intermediate values)
+-/
+
+/-!
+## Memory Zeroization
+
+Sensitive data MUST be securely erased from memory after use. Language runtime garbage
+collectors and compiler optimizations may prevent naive zeroing from working.
+
+### Sensitive Values Requiring Zeroization
+
+| Type | Example | When to Zeroize |
+|------|---------|-----------------|
+| `SecretBox` | `KeyShare.sk_i` | After signing session completes |
+| `y_i` | Ephemeral nonce | Immediately after computing `z_i` |
+| `Opening` | Commitment randomness | After reveal phase |
+| Intermediate `z_i` | Partial signature | After aggregation |
+| Lagrange-weighted contributions | Repair deltas | After aggregation |
+
+### Implementation Patterns
+
+1. **Volatile writes**: Use `memset_s` or `explicit_bzero` which compilers cannot optimize away
+2. **Secure allocators**: Use `mlock()` to prevent swapping secrets to disk
+3. **RAII wrappers**: Implement `Drop`/destructor that zeroizes (SecretBox pattern)
+4. **Memory barriers**: Insert barriers to prevent reordering around zeroization
+
+### Platform-Specific APIs
+
+| Platform | Secure Zeroize Function |
+|----------|------------------------|
+| C11+ | `memset_s(ptr, size, 0, size)` |
+| POSIX | `explicit_bzero(ptr, size)` |
+| Windows | `SecureZeroMemory(ptr, size)` |
+| Rust | `zeroize` crate |
+| Lean | (runtime-dependent, may need FFI) |
+
+**Note**: The Lean runtime does not provide memory zeroization. For production use,
+secret operations should be performed via FFI to a constant-time library.
+-/
+
+/-!
+## Naming Conventions
+
+This codebase uses semantically distinct names for party collections:
+
+| Name | Meaning | Usage |
+|------|---------|-------|
+| `Sset` | Signer set | Specific signers chosen for a signing session |
+| `active` | Active parties | Parties currently participating in a protocol phase |
+| `parties` / `allParties` | Complete party list | Full set for Lagrange interpolation or DKG |
+| `validParties` | Verified parties | Parties that passed a verification check |
+| `helpers` | Helper parties | Parties assisting in repair operations |
+| `threshold` / `t` | Threshold value | Minimum parties needed for reconstruction |
+
+These distinctions are intentional - a signer set (`Sset`) is a specific subset
+chosen for one signing session, while `active` tracks dynamic participation,
+and `parties` is the complete enumeration for coefficient computation.
+-/
+
+/-!
 ## Key and Message Types
 
 After DKG, each party holds a KeyShare. During DKG, parties exchange
@@ -199,7 +338,7 @@ def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.
 
 /-- Get the unwrapped secret share for computation.
     **Security**: Only use when the secret is needed for cryptographic operations. -/
-def KeyShare.secret (share : KeyShare S) : S.Secret :=
+def KeyShare.secret {S : Scheme} (share : KeyShare S) : S.Secret :=
   share.sk_i.val
 
 

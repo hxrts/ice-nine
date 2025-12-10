@@ -2,6 +2,103 @@
 
 The core protocol supports several extensions. These extensions address operational requirements beyond basic signing. They enable share management and enhanced privacy. All extension state structures form semilattices that merge via join.
 
+## Error Handling
+
+The `Protocol/Error.lean` module provides unified error handling patterns across the protocol.
+
+### BlameableError Typeclass
+
+Errors that can identify a misbehaving party implement the `BlameableError` typeclass:
+
+```lean
+class BlameableError (E : Type*) (PartyId : Type*) where
+  blamedParty : E → Option PartyId
+
+instance : BlameableError (DkgError PartyId) PartyId where
+  blamedParty
+    | .lengthMismatch => none
+    | .duplicatePids => none
+    | .commitMismatch p => some p
+
+instance : BlameableError (Complaint PartyId) PartyId where
+  blamedParty c := some c.accused
+
+instance : BlameableError (VSS.VSSError PartyId) PartyId where
+  blamedParty
+    | .shareVerificationFailed accused _ => some accused
+    | .missingCommitment p => some p
+    | .missingShare from _ => some from
+    | .thresholdMismatch _ _ => none
+    | .duplicateDealer p => some p
+```
+
+### Error Aggregation
+
+Utilities for collecting and analyzing errors across protocol execution:
+
+```lean
+/-- Count how many errors blame a specific party -/
+def countBlame (errors : List E) (party : PartyId) : Nat
+
+/-- Get all unique blamed parties from a list of errors -/
+def allBlamedParties (errors : List E) : List PartyId
+```
+
+### Error Categories
+
+| Module | Type | Category | Description |
+|--------|------|----------|-------------|
+| DKGCore | `DkgError` | Fatal | Protocol abort required |
+| DKGThreshold | `Complaint` | Recoverable | Party exclusion possible |
+| VSS | `VSSError` | Fatal/Recoverable | Depends on complaint count |
+| RepairCoord | `ContribCommitResult` | Result | Processing outcome |
+
+## Serialization
+
+The `Protocol/Serialize.lean` module provides type-safe serialization for network transport.
+
+### Serializable Typeclass
+
+```lean
+class Serializable (α : Type*) where
+  toBytes : α → ByteArray
+  fromBytes : ByteArray → Option α
+```
+
+Implementations are provided for primitives (`Nat`, `Int`, `ByteArray`), compound types (`Option`, `List`), and all protocol messages.
+
+### Wire Format
+
+The wire format uses little-endian encoding with explicit length prefixes:
+
+| Type | Format |
+|------|--------|
+| Nat | 8-byte little-endian |
+| Int | 8-byte little-endian (two's complement) |
+| List α | 4-byte length + concatenated elements |
+| Option α | 1-byte tag (0=none, 1=some) + element if some |
+
+### Message Wrapping
+
+Messages are wrapped with type tags for network transport:
+
+```lean
+inductive MessageTag
+  | dkgCommit | dkgReveal
+  | signCommit | signReveal | signShare
+  | signature
+  | abort
+
+structure WrappedMessage where
+  tag : MessageTag
+  payload : ByteArray
+
+def WrappedMessage.toBytes (msg : WrappedMessage) : ByteArray :=
+  -- tag (1 byte) + length (4 bytes) + payload
+```
+
+**Security Note**: Deserialization is a potential attack surface. All `fromBytes` implementations validate input lengths and return `none` on malformed input.
+
 ## Complaints
 
 The complaint mechanism identifies misbehaving parties. It activates when protocol invariants are violated.

@@ -286,14 +286,41 @@ These functions integrate with the Scheme type for protocol use, including batch
 Secrets and nonces are wrapped in opaque structures to discourage accidental duplication or exposure.
 
 ```lean
-structure SecretBox (α : Type) where
+/-- Wrapper for secrets with private constructor.
+    Forces explicit acknowledgment when accessing secret material. -/
+structure SecretBox (α : Type*) where
+  private mk ::
   val : α
 
-structure NonceBox (α : Type) where
+/-- Wrapper for nonces to highlight their ephemeral nature.
+    Nonce reuse is catastrophic: treat these as single-use. -/
+structure NonceBox (α : Type*) where
+  private mk ::
   val : α
 ```
 
-This lightweight discipline signals intent. Code that pattern-matches on these wrappers must explicitly acknowledge it is handling secret material.
+The `private` constructors prevent arbitrary creation of wrapped values. This lightweight discipline signals intent—code that accesses the `val` field must explicitly acknowledge it is handling secret material.
+
+**Key Share Integration:**
+
+```lean
+structure KeyShare (S : Scheme) where
+  pid  : S.PartyId        -- party identifier
+  sk_i : SecretBox S.Secret  -- wrapped secret share
+  pk_i : S.Public         -- public share = A(sk_i)
+  pk   : S.Public         -- global public key
+
+/-- Create KeyShare from unwrapped secret (use during DKG). -/
+def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.Public)
+    : KeyShare S :=
+  { pid := pid, sk_i := ⟨sk⟩, pk_i := pk_i, pk := pk }
+
+/-- Access secret for cryptographic operations. -/
+def KeyShare.secret (share : KeyShare S) : S.Secret :=
+  share.sk_i.val
+```
+
+All protocol code that needs the secret share calls `share.secret` rather than pattern-matching on the `SecretBox`. This creates a clear audit trail for secret access.
 
 ## Single-Signer Schnorr Relation
 

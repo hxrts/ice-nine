@@ -71,12 +71,97 @@ dev:
 # Documentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Build documentation book
-book:
+# Generate docs/SUMMARY.md from markdown files (extracts titles from # headings)
+summary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    docs="docs"
+    build_dir="$docs/book"
+    out="$docs/SUMMARY.md"
+
+    echo "# Summary" > "$out"
+    echo "" >> "$out"
+
+    # Helper function to extract title from markdown file
+    get_title() {
+        local f="$1"
+        local title
+        title="$(grep -m1 '^# ' "$f" | sed 's/^# *//')"
+        if [ -z "$title" ]; then
+            local base="$(basename "${f%.*}")"
+            title="$(printf '%s\n' "$base" \
+                | tr '._-' '   ' \
+                | awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1')"
+        fi
+        echo "$title"
+    }
+
+    # Helper function to get chapter name from directory
+    get_chapter_name() {
+        local dir="$1"
+        echo "$dir" | tr '_-' '  ' | awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1'
+    }
+
+    # Collect all files, organized by directory
+    declare -A dirs
+    declare -a root_files
+
+    while IFS= read -r f; do
+        rel="${f#$docs/}"
+
+        # Skip SUMMARY.md
+        [ "$rel" = "SUMMARY.md" ] && continue
+
+        # Skip files under the build output directory
+        case "$f" in "$build_dir"/*) continue ;; esac
+
+        # Check if file is in a subdirectory
+        if [[ "$rel" == */* ]]; then
+            # Extract directory name (first component of path)
+            dir="${rel%%/*}"
+            # Add file to this directory's list
+            dirs[$dir]+="$f"$'\n'
+        else
+            # Root-level file
+            root_files+=("$f")
+        fi
+    done < <(find "$docs" -type f -name '*.md' -not -name 'SUMMARY.md' -not -path "$build_dir/*" | LC_ALL=C sort)
+
+    # Write root-level files first
+    for f in "${root_files[@]}"; do
+        rel="${f#$docs/}"
+        title="$(get_title "$f")"
+        echo "- [$title]($rel)" >> "$out"
+    done
+
+    # Write chapters (directories) with their files
+    for dir in $(printf '%s\n' "${!dirs[@]}" | LC_ALL=C sort); do
+        # Add blank line before chapter
+        [ ${#root_files[@]} -gt 0 ] && echo "" >> "$out"
+
+        # Add chapter heading
+        chapter_name="$(get_chapter_name "$dir")"
+        echo "# $chapter_name" >> "$out"
+        echo "" >> "$out"
+
+        # Add files in this directory
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            rel="${f#$docs/}"
+            title="$(get_title "$f")"
+            echo "- [$title]($rel)" >> "$out"
+        done < <(echo -n "${dirs[$dir]}" | LC_ALL=C sort)
+    done
+
+    echo "Generated $out"
+
+# Build documentation book (regenerates SUMMARY.md first)
+book: summary
     mdbook build
 
 # Serve documentation locally with live reload
-serve-book:
+serve-book: summary
     mdbook serve --open
 
 # Clean built documentation

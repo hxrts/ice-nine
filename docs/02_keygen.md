@@ -9,11 +9,25 @@ Both modes produce additive shares. Each party $P_i$ holds a secret share $s_i \
 After key generation each party holds a `KeyShare` containing its local view.
 
 ```lean
-structure KeyShare (S : Scheme) :=
-  (pid  : S.PartyId)   -- party identifier
-  (sk_i : S.Secret)    -- secret share
-  (pk_i : S.Public)    -- public share = A(sk_i)
-  (pk   : S.Public)    -- global public key
+structure KeyShare (S : Scheme) where
+  pid  : S.PartyId          -- party identifier
+  sk_i : SecretBox S.Secret -- secret share (wrapped for safety)
+  pk_i : S.Public           -- public share = A(sk_i)
+  pk   : S.Public           -- global public key
+```
+
+The secret share is wrapped in a `SecretBox` with a private constructor. This prevents accidental duplication or exposure of the secret material. Access the secret via `KeyShare.secret`:
+
+```lean
+/-- Create KeyShare from unwrapped secret (use during DKG). -/
+def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.Public)
+    : KeyShare S :=
+  { pid := pid, sk_i := ⟨sk⟩, pk_i := pk_i, pk := pk }
+
+/-- Get the unwrapped secret share for computation.
+    **Security**: Only use when the secret is needed for cryptographic operations. -/
+def KeyShare.secret (share : KeyShare S) : S.Secret :=
+  share.sk_i.val
 ```
 
 The key share is the persistent credential a signer carries into the signing protocol.
@@ -436,7 +450,7 @@ def DKGParams.canContinue (p : DKGParams) (faultyCount : Nat) : Bool :=
 
 ## Finalizing Key Shares
 
-After DKG completes successfully, each party converts its local state into a persistent key share.
+After DKG completes successfully, each party converts its local state into a persistent key share using `KeyShare.create`:
 
 ```lean
 def finalizeKeyShare
@@ -444,11 +458,10 @@ def finalizeKeyShare
   (st : DkgLocalState S)
   (pk : S.Public)
   : KeyShare S :=
-{ pid  := st.pid,
-  sk_i := st.sk_i,
-  pk_i := st.pk_i,
-  pk   := pk }
+  KeyShare.create S st.pid st.sk_i st.pk_i pk
 ```
+
+The `KeyShare.create` function wraps the secret in a `SecretBox`, ensuring the protective wrapper is applied at the point of creation.
 
 ## Security Properties
 

@@ -2,6 +2,20 @@
 
 The signing protocol produces a threshold signature from partial contributions. It runs in two rounds with phase-indexed CRDT state. The first round commits to ephemeral nonces. The second round produces partial signatures. An aggregator combines the partials into a final signature.
 
+## Module Structure
+
+The signing implementation is split across focused modules for maintainability:
+
+- **`Protocol/SignTypes.lean`** - Core types: `SessionTracker`, `NonceRegistry`, message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`), error types (`SignError`, `AbortReason`), and output types (`Signature`, `SignatureDone`)
+
+- **`Protocol/SignCore.lean`** - Core functions: `lagrangeCoeffAtZero`, `lagrangeCoeffs`, `computeChallenge`, `aggregateSignature`, `aggregateSignatureLagrange`, `ValidSignTranscript`, `validateSigning`
+
+- **`Protocol/SignThreshold.lean`** - Threshold support: `CoeffStrategy`, `strategyOK`, `SignMode`, `ThresholdCtx`, context constructors (`mkAllCtx`, `mkThresholdCtx`, `mkThresholdCtxComputed`), and context-based aggregation
+
+- **`Protocol/Sign.lean`** - Re-exports from all submodules for backward compatibility
+
+- **`Protocol/SignSession.lean`** - Session-typed API that makes nonce reuse a compile-time error
+
 ## Phase-Indexed State
 
 The signing protocol uses phase-indexed state that forms a join-semilattice at each phase.

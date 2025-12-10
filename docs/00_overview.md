@@ -38,6 +38,43 @@ The implementation uses session types to enforce disciplined handling of secret 
 
 **Security.** The protocol assumes binding commitments and models the hash as a random oracle. Under these assumptions it achieves threshold unforgeability. Formal proofs reside in the Lean verification modules. Totality theorems ensure that validation functions always return either success or a structured error.
 
+## Module Organization
+
+The implementation is organized into focused modules:
+
+**Protocol Core:**
+- `Protocol/Core.lean` - Scheme record, key shares, DKG messages, security documentation
+- `Protocol/SignTypes.lean` - Session tracking, signing messages, error types
+- `Protocol/SignCore.lean` - Challenge computation, n-of-n aggregation
+- `Protocol/SignThreshold.lean` - Coefficient strategies, threshold context
+- `Protocol/Sign.lean` - Re-exports from split modules for backward compatibility
+- `Protocol/SignSession.lean` - Session-typed API preventing nonce reuse
+
+**VSS and DKG:**
+- `Protocol/VSSCore.lean` - Polynomial commitments, share verification
+- `Protocol/VSS.lean` - VSS transcript, complaint mechanism
+- `Protocol/DKGCore.lean` - Basic DKG protocol
+- `Protocol/DKGThreshold.lean` - Threshold DKG with exclusion
+
+**Share Management:**
+- `Protocol/Refresh.lean` - Share refresh with zero-sum masks
+- `Protocol/RefreshCoord.lean` - Distributed refresh coordination
+- `Protocol/Repair.lean` - Share repair protocol
+- `Protocol/RepairCoord.lean` - Repair coordination with commit-reveal
+- `Protocol/Rerandomize.lean` - Signature rerandomization
+
+**Infrastructure:**
+- `Protocol/Phase.lean` - Phase state with MsgMap CRDT
+- `Protocol/PhaseIndexed.lean` - Type-indexed phase transitions
+- `Protocol/Lagrange.lean` - Unified Lagrange coefficient API
+- `Protocol/Error.lean` - BlameableError typeclass, error utilities
+- `Protocol/Serialize.lean` - Serialization API for network transport
+
+**Security:**
+- `Security/Assumptions.lean` - Cryptographic assumptions, axiom index
+- `Security/Correctness.lean` - Verification theorems
+- `Security/VSS.lean` - VSS security properties
+
 ## Lattice Cryptography
 
 The security of Ice Nine reduces to standard lattice hardness assumptions:
@@ -58,6 +95,18 @@ The security of Ice Nine reduces to standard lattice hardness assumptions:
 - Then $sk = (z_1 - z_2) / (c_1 - c_2)$
 
 The session-typed signing protocol makes nonce reuse a compile-time error. Each `FreshNonce` can only be consumed once, and the type system enforces that signing sessions progress linearly through states without backtracking.
+
+## Implementation Security
+
+The implementation includes comprehensive security documentation in `Protocol/Core.lean`:
+
+**Randomness Requirements:** All secret values (shares, nonces, commitment openings) must be sampled from a CSPRNG. Nonce reuse is catastrophic—the session-typed API makes it a compile-time error.
+
+**Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives.
+
+**Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust.
+
+**Secret Wrappers:** The `SecretBox` type wraps secret shares with a private constructor, discouraging accidental duplication or exposure.
 
 ## Docs Index
 
