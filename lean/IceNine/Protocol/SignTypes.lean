@@ -36,7 +36,7 @@ def SessionTracker.isFresh {S : Scheme} (tracker : SessionTracker S) (session : 
 /-- Mark a session as used (call after committing to nonce) -/
 def SessionTracker.markUsed {S : Scheme} (tracker : SessionTracker S) (session : Nat)
     : SessionTracker S :=
-  { tracker with usedSessions := tracker.usedSessions.insert session }
+  { tracker with usedSessions := Insert.insert session tracker.usedSessions }
 
 /-- Create empty tracker for a party -/
 def SessionTracker.empty (S : Scheme) (pid : S.PartyId) : SessionTracker S :=
@@ -80,9 +80,9 @@ def NonceRegistry.empty (S : Scheme)
 
 /-- Check if a nonce commitment was seen before. -/
 def NonceRegistry.hasCommitment {S : Scheme}
-    (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    (reg : NonceRegistry S)
     (pid : S.PartyId) (session : Nat) (commit : S.Commitment) : Bool :=
   match reg.bySession.get? (pid, session) with
   | some c => c == commit
@@ -90,17 +90,17 @@ def NonceRegistry.hasCommitment {S : Scheme}
 
 /-- Check if a (party, session) pair exists. -/
 def NonceRegistry.hasSession {S : Scheme}
-    (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    (reg : NonceRegistry S)
     (pid : S.PartyId) (session : Nat) : Bool :=
   reg.bySession.contains (pid, session)
 
 /-- Record a nonce commitment. -/
 def NonceRegistry.record {S : Scheme}
-    (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    (reg : NonceRegistry S)
     (pid : S.PartyId) (session : Nat) (commit : S.Commitment) : NonceRegistry S :=
   let newBySession := reg.bySession.insert (pid, session) commit
   let key := (pid, commit)
@@ -111,9 +111,9 @@ def NonceRegistry.record {S : Scheme}
 
 /-- Detect if same nonce was used in different sessions. -/
 def NonceRegistry.detectReuse {S : Scheme}
-    (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    (reg : NonceRegistry S)
     (pid : S.PartyId) (commit : S.Commitment) : Option (Nat × Nat) :=
   match reg.byCommitment.get? (pid, commit) with
   | some (s1 :: s2 :: _) => if s1 ≠ s2 then some (s1, s2) else none
@@ -121,9 +121,9 @@ def NonceRegistry.detectReuse {S : Scheme}
 
 /-- Get all commitments as a list. -/
 def NonceRegistry.toList {S : Scheme}
-    (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    (reg : NonceRegistry S)
     : List (S.PartyId × Nat × S.Commitment) :=
   reg.bySession.toList.map fun ((pid, session), commit) => (pid, session, commit)
 
@@ -491,7 +491,6 @@ inductive BatchVerificationResult (S : Scheme)
       -- Batch check failed, entries need individual verification
   | individualFailures (failed : List (BatchEntry S × Nat))
       -- Individual verification identified specific failures (entry, index)
-  deriving Repr
 
 /-- Configuration for batch verification. -/
 structure BatchVerifyConfig where

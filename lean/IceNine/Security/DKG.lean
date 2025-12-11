@@ -64,17 +64,18 @@ lemma checkPairs_ok_forall2
 
 /-- Checked aggregation is total: always Ok or Error. -/
 lemma dkgAggregateChecked_total
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S)) :
   (dkgAggregateChecked S commits reveals).isOk ∨
   (dkgAggregateChecked S commits reveals).isError := by
-  by_cases h : dkgAggregateChecked S commits reveals with
-  | _ => cases h <;> simp
+  cases h : dkgAggregateChecked S commits reveals with
+  | ok _ => left; rfl
+  | error _ => right; rfl
 
 /-- Ok result → pk equals sum of public shares. -/
 lemma dkgAggregateChecked_sound
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
   (pk : S.Public)
@@ -89,7 +90,7 @@ lemma dkgAggregateChecked_sound
 
 /-- Ok result → dkgValid predicate holds. -/
 lemma dkgAggregateChecked_ok_valid
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
   (pk : S.Public)
@@ -114,7 +115,7 @@ With complaints, Ok result still implies correct pk.
 
 /-- Ok from complaint-based aggregation → correct pk. -/
 lemma dkgAggregateWithComplaints_correct
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
   (pk : S.Public)
@@ -142,7 +143,7 @@ lemma dealerKeygen_pk
   tr.pk = (tr.shares.map (·.pk_i)).sum := by
   unfold dealerKeygen at h
   by_cases hlen : pids.length = secrets.length ∧ secrets.length = opens.length
-  · simp [hlen] at h; cases h with | rfl => rfl
+  · simp [hlen] at h; cases h with | refl => rfl
   · simp [hlen] at h
 
 /-- Binding: same commitment → same public key.
@@ -152,7 +153,9 @@ lemma dealer_commit_binding
   {sh1 sh2 : DealerShare S}
   (h : sh1.commitPk = sh2.commitPk) :
   sh1.pk_i = sh2.pk_i := by
-  have := S.commitBinding (x₁ := sh1.pk_i) (x₂ := sh2.pk_i) (o₁ := sh1.opening) (o₂ := sh2.opening)
-  simpa [DealerShare.commitPk] using this h
+  have hcommit : S.commit sh1.pk_i sh1.opening = S.commit sh2.pk_i sh2.opening := by
+    simp only [← DealerShare.commitPk] at h ⊢
+    exact h
+  exact S.commitBinding hcommit
 
 end IceNine.Security.DKG

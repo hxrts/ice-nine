@@ -28,7 +28,7 @@ Hiding is computational and left as an assumption (not modeled here).
 -/
 
 /-- A generic hash type placeholder. Replace with SHAKE256 output type if desired. -/
-@[simp] def HashOut := ByteArray
+abbrev HashOut := ByteArray
 
 /-- Serialize public/nonce pair to bytes (simple concat). -/
 def encodePair {α β} [ToString α] [ToString β] (w : α) (nonce : β) : ByteArray :=

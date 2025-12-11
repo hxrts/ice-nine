@@ -366,7 +366,7 @@ immediately leaks the secret share `sk_i`:
     ⟹  sk = (z₁ - z₂) / (c₁ - c₂)
 
 The `SignSession` API is designed to prevent this by coupling nonce sampling with
-session creation. **Never implement signing without using the session API.**
+session creation. Never implement signing without using the session API.
 
 ### Implementation Guidance
 

@@ -95,22 +95,38 @@ structure VSSLocalState (S : Scheme) where
 ## VSS-DKG Protocol Functions
 -/
 
+/-- Commit to polynomial coefficients stored as a list.
+    Unlike `commitPolynomial`, this works without `Semiring S.Secret`. -/
+def commitPolynomialFromList (S : Scheme) (coeffs : List S.Secret) (hne : coeffs ≠ []) : PolyCommitment S :=
+  { commitments := coeffs.map S.A
+    threshold := coeffs.length
+    consistent := by simp [List.length_map] }
+
+/-- Generate share from coefficient list.
+    Uses `evalPolynomialScalar` to avoid `Semiring S.Secret`. -/
+def generateShareFromList (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Secret] [Module S.Scalar S.Secret]
+    (coeffs : List S.Secret) (recipient : S.PartyId) (evalPoint : S.Scalar) : VSSShare S :=
+  { recipient := recipient
+    evalPoint := evalPoint
+    value := evalPolynomialScalar S coeffs evalPoint }
+
 /-- Initialize VSS state for a party.
     Party samples polynomial with their secret contribution as constant term.
     Note: Uses list-based polynomial to avoid Semiring requirement on Secret. -/
-def vssInit (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Secret]
+def vssInit (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Secret] [Module S.Scalar S.Secret]
     (pid : S.PartyId)
     (secretContribution : S.Secret)  -- sk_i: this party's share of the master secret
     (randomCoeffs : List S.Secret)   -- random coefficients for polynomial
     (parties : List (S.PartyId × S.Scalar))  -- all parties with their eval points
     : VSSLocalState S :=
   let coeffs := secretContribution :: randomCoeffs
-  let poly := mkPolynomialFromCoeffs coeffs
-  let commit := commitPolynomial S poly
+  -- Coeffs is non-empty by construction
+  let hne : coeffs ≠ [] := by simp [coeffs]
+  let commit := commitPolynomialFromList S coeffs hne
   let shares := parties.map fun (recipient, evalPt) =>
     { sender := pid
       recipient := recipient
-      share := generateShare S poly recipient evalPt }
+      share := generateShareFromList S coeffs recipient evalPt }
   { pid := pid
     polyCoeffs := coeffs
     commitment := commit
@@ -192,7 +208,7 @@ def vssFinalize (S : Scheme)
     -- pk = Σ_i A(a_{i,0}) = Σ_i C_{i,0} (first commitment from each dealer)
     let pk := (allCommitments.filterMap (fun c => c.polyCommit.commitments.head?)).sum
     some { pid := st.pid
-           sk_i := SecretBox.mk sk
+           sk_i := SecretBox.wrap sk
            pk_i := pk_i
            pk := pk }
   else

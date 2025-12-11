@@ -34,7 +34,7 @@ Simple ℓ∞ bounds for scalar types.
 -/
 
 -- ℓ∞ bound for integers
-def intLeqBound (B : Int) (x : Int) : Prop := Int.abs x ≤ B
+def intLeqBound (B : Int) (x : Int) : Prop := |x| ≤ B
 
 -- ℓ∞ bound for ZMod by lifting to centered representatives
 -- Maps x to range [-(q-1)/2, (q-1)/2] before checking bound
@@ -49,7 +49,7 @@ We define ℓ∞ (max coefficient) and ℓ₂ (Euclidean) norms.
 -/
 
 /-- ℓ∞ norm of an integer vector: max |v_i| -/
-def vecInfNorm (v : List Int) : Int :=
+def vecInfNorm (v : List Int) : Nat :=
   v.foldl (fun acc x => max acc (Int.natAbs x)) 0
 
 /-- ℓ₂² norm (squared Euclidean): Σ v_i² -/
@@ -57,7 +57,7 @@ def vecL2Squared (v : List Int) : Int :=
   v.foldl (fun acc x => acc + x * x) 0
 
 /-- ℓ∞ norm bound for vectors -/
-def vecInfLeqBound (B : Int) (v : List Int) : Prop :=
+def vecInfLeqBound (B : Nat) (v : List Int) : Prop :=
   vecInfNorm v ≤ B
 
 /-- ℓ₂² bound (compare squared to avoid sqrt) -/
@@ -65,10 +65,9 @@ def vecL2SqLeqBound (B : Int) (v : List Int) : Prop :=
   vecL2Squared v ≤ B
 
 /-- Function-based vector ℓ∞ norm for Fin n → α -/
-def finVecInfNorm {n : Nat} (v : Fin n → Int) : Int :=
-  Finset.univ.sup' (by simp [Finset.univ_nonempty_iff]; exact Fin.pos n)
-    (fun i => (Int.natAbs (v i) : WithBot Int))
-  |>.getD 0
+def finVecInfNorm {n : Nat} (v : Fin n → Int) : Nat :=
+  if h : n = 0 then 0
+  else Finset.univ.sup (fun i => Int.natAbs (v i))
 
 /-- ℓ∞ bound for function-based vectors -/
 def finVecInfLeqBound {n : Nat} (B : Int) (v : Fin n → Int) : Prop :=
@@ -119,7 +118,7 @@ def DilithiumParams.zBound (p : DilithiumParams) : Int :=
 
 /-- Norm check for Dilithium: all coefficients below rejection bound -/
 def dilithiumNormOK (p : DilithiumParams) (z : List Int) : Prop :=
-  vecInfNorm z < p.zBound
+  (vecInfNorm z : Int) < p.zBound
 
 /-- Expected number of rejection sampling attempts -/
 def DilithiumParams.expectedAttempts (p : DilithiumParams) : Nat :=
@@ -224,23 +223,26 @@ theorem dilithium5_valid : dilithium5.isValid = true := by native_decide
 
 /-!
 ## Scheme Instantiations with Proper Bounds
+
+TODO: These require simpleScheme and zmodScheme to be defined in Instances.lean.
+Currently using latticeScheme from Instances as the base scheme.
 -/
 
--- Replace normOK in the simpleScheme with a parameterized bound.
-def simpleSchemeBounded (B : Int) : IceNine.Protocol.Core.Scheme :=
-  { simpleScheme with normOK := intLeqBound B }
-
-def zmodSchemeBounded (q : ℕ) [Fact q.Prime] (a : ZMod q) (B : Nat) :
-    IceNine.Protocol.Core.Scheme :=
-  { zmodScheme q a with normOK := zmodLeqBound B }
-
-/-- Scheme with Dilithium-style vector norm bounds.
-    Uses List Int as a simple model for polynomial coefficients. -/
-def dilithiumStyleScheme (p : DilithiumParams) : IceNine.Protocol.Core.Scheme :=
-  { simpleScheme with
-    Secret := List Int
-    Public := List Int
-    normOK := dilithiumNormOK p }
+-- TODO: Define simpleScheme and zmodScheme in Instances.lean, then uncomment these:
+-- def simpleSchemeBounded (B : Int) : IceNine.Protocol.Core.Scheme :=
+--   { simpleScheme with normOK := intLeqBound B }
+--
+-- def zmodSchemeBounded (q : ℕ) [Fact q.Prime] (a : ZMod q) (B : Nat) :
+--     IceNine.Protocol.Core.Scheme :=
+--   { zmodScheme q a with normOK := zmodLeqBound B }
+--
+-- /-- Scheme with Dilithium-style vector norm bounds.
+--     Uses List Int as a simple model for polynomial coefficients. -/
+-- def dilithiumStyleScheme (p : DilithiumParams) : IceNine.Protocol.Core.Scheme :=
+--   { simpleScheme with
+--     Secret := List Int
+--     Public := List Int
+--     normOK := dilithiumNormOK p }
 
 /-!
 ## Norm Bound Lemmas
