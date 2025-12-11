@@ -211,7 +211,6 @@ Structure for storing computed coefficients with a party.
 structure PartyCoeff (S : Scheme) where
   pid : S.PartyId
   lambda : S.Scalar
-deriving Repr
 
 /-- Build party coefficient pairs from a party list. -/
 def buildPartyCoeffs (S : Scheme)
@@ -242,7 +241,7 @@ Theorems about Lagrange coefficients.
 
     **Reference**: See Mathlib4 `Mathlib/RingTheory/Polynomial/Lagrange.lean`
     for the formalized version using Finsets. -/
-axiom coeffs_sum_to_one [Field F] [DecidableEq F]
+axiom coeffs_sum_to_one {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     (hnodup : partyScalars.Nodup)
     (hne : partyScalars ≠ []) :
@@ -260,7 +259,7 @@ axiom coeffs_sum_to_one [Field F] [DecidableEq F]
     Therefore: f = Σ_i f(x_i) · L_i, and f(0) = Σ_i f(x_i) · L_i(0) = Σ_i λ_i · f(x_i)
 
     **Reference**: Mathlib4 `Polynomial.interpolate_eq` -/
-axiom lagrange_interpolation [Field F] [DecidableEq F]
+axiom lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     (values : List F)
     (hnodup : partyScalars.Nodup)
@@ -271,7 +270,7 @@ axiom lagrange_interpolation [Field F] [DecidableEq F]
       (List.zipWith (· * ·) coeffs values).sum
 
 /-- Zero coefficient when party not in set. -/
-theorem coeff_zero_not_in [Field F] [DecidableEq F]
+theorem coeff_zero_not_in {F : Type*} [Field F] [DecidableEq F]
     (partyScalar : F)
     (allScalars : List F)
     (hnotin : partyScalar ∉ allScalars) :
@@ -300,7 +299,7 @@ theorem coeff_zero_not_in [Field F] [DecidableEq F]
     - `Field.mul_ne_zero` from Mathlib
 
     These are standard but verbose in Lean 4. We axiomatize with clear justification. -/
-axiom coeff_nonzero_in_set [Field F] [DecidableEq F]
+axiom coeff_nonzero_in_set {F : Type*} [Field F] [DecidableEq F]
     (partyScalar : F)
     (allScalars : List F)
     (hin : partyScalar ∈ allScalars)

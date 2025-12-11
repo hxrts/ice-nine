@@ -10,7 +10,12 @@ The implementation uses a semilattice/CRDT architecture for protocol state. Each
 
 **Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
 
-**Conflict-free message maps.** Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender un-expressable in the type system. Each party can contribute at most one message per phase. The `tryInsert` operation returns a conflict indicator for strict validation, while `insert` silently ignores duplicates for CRDT merge semantics.
+**Conflict-free message maps.** Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender un-expressable in the type system. Each party can contribute at most one message per phase.
+
+**Separated CRDT and validation.** The coordination protocols (RefreshCoord, RepairCoord) cleanly separate concerns:
+- **CRDT layer** (`process*`): Pure merge semantics—idempotent, commutative, always succeeds. Use for replication/networking.
+- **Validation layer** (`detect*`, `validate*`): Conflict detection without modifying state. Use for auditing/security.
+- **Combined** (`process*Validated`): Merge + validation in one call, returning `(newState, Option error)`.
 
 **Monotonic handlers.** Step functions that advance state are monotone with respect to the semilattice order. This ensures that merging divergent traces preserves safety properties. If $a \leq b$ then $\mathsf{step}(a) \leq \mathsf{step}(b)$.
 
@@ -107,7 +112,7 @@ The implementation includes comprehensive security documentation in `Protocol/Co
 
 **Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust. The `Zeroizable` typeclass marks types requiring secure erasure.
 
-**Secret Wrappers:** The `SecretBox` type wraps secret shares with a private constructor, discouraging accidental duplication or exposure.
+**Secret Wrappers:** The `SecretBox` and `NonceBox` types wrap sensitive values with private constructors, discouraging accidental duplication or exposure. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances.
 
 ## Docs Index
 
