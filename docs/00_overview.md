@@ -49,6 +49,7 @@ The implementation is organized into focused modules within subdirectories:
 
 **Protocol/Core/** - Foundation types and utilities:
 - `Core/Core.lean` - Scheme record, key shares, DKG messages, linear security wrappers
+- `Core/CRDT.lean` - CRDT primitives: Join typeclass, MsgMap sender-keyed collection
 - `Core/Security.lean` - Security markers (Zeroizable, ConstantTimeEq), SecretBox, NonceBox
 - `Core/Patterns.lean` - Reusable patterns: constraint aliases, commit-reveal framework, utilities
 - `Core/Error.lean` - BlameableError typeclass, error utilities
@@ -60,6 +61,7 @@ The implementation is organized into focused modules within subdirectories:
 - `Sign/Core.lean` - Challenge computation, n-of-n aggregation
 - `Sign/Threshold.lean` - Coefficient strategies, threshold context
 - `Sign/Session.lean` - Session-typed API preventing nonce reuse
+- `Sign/ThresholdMerge.lean` - Threshold-aware state merge operations
 - `Sign/Sign.lean` - Re-exports for backward compatibility
 
 **Protocol/DKG/** - Distributed key generation:
@@ -85,7 +87,6 @@ The implementation is organized into focused modules within subdirectories:
 - `State/PhaseSig.lean` - Phase signatures
 - `State/PhaseMerge.lean` - Composite state merging
 - `State/StateProduct.lean` - Product semilattice
-- `State/ThresholdMerge.lean` - Threshold-aware merge operations
 
 **Security/** - Security proofs and threat models:
 - `Security/Assumptions.lean` - Cryptographic assumptions, axiom index, Dilithium parameters

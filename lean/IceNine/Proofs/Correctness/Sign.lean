@@ -9,7 +9,7 @@ Validation lemmas and mask invariants for the signing protocol:
 
 import IceNine.Protocol.Sign.Sign
 
-namespace IceNine.Security.Sign
+namespace IceNine.Proofs.Correctness.Sign
 
 open IceNine.Protocol
 open List
@@ -162,7 +162,7 @@ lemma tryAggregate_verify_ones
     simpa using hagg
   subst hs
   -- apply generic correctness
-  have hv := IceNine.Security.verify_happy_generic (S := S) (pk := pk) (m := m)
+  have hv := IceNine.Proofs.Core.verify_happy_generic (S := S) (pk := pk) (m := m)
       (Sset := st.ctx.active.toList) (commits := st.state.commits) (reveals := st.state.reveals) (shares := st.state.shares) hvalid
   simpa using hv
 
@@ -190,7 +190,7 @@ lemma tryAggregate_verify_lagrange
     simpa using hagg
   subst hs
   -- Reduce to generic correctness
-  have hv := IceNine.Security.verify_happy_generic (S := S) (pk := pk) (m := m)
+  have hv := IceNine.Proofs.Core.verify_happy_generic (S := S) (pk := pk) (m := m)
       (Sset := st.ctx.active.toList) (commits := st.state.commits) (reveals := st.state.reveals) (shares := st.state.shares) hvalid
   simpa [aggregateSignatureLagrange] using hv
 
@@ -264,4 +264,4 @@ lemma empty_tracker_all_fresh
     (SessionTracker.empty S pid).isFresh session := by
   simp [SessionTracker.empty, SessionTracker.isFresh]
 
-end IceNine.Security.Sign
+end IceNine.Proofs.Correctness.Sign

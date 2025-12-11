@@ -12,7 +12,7 @@ import Mathlib
 import IceNine.Protocol.Sign.Sign
 import IceNine.Protocol.DKG.Core
 
-namespace IceNine.Security
+namespace IceNine.Proofs
 
 open IceNine.Protocol
 
@@ -27,8 +27,8 @@ Used for specific theorem statements.
 structure SecurityAssumptions (S : Scheme) where
   /-- Hash is random oracle -/
   hashRO            : Prop
-  /-- Commitments are binding -/
-  commitmentBinding : Prop := True
+  /-- Commitments are binding (hash-based binding assumption). -/
+  commitmentBinding : Prop := IceNine.Instances.hashBindingAssumption.binding
   /-- Threshold UF-CMA holds -/
   thresholdUFcma    : Prop
 
@@ -83,4 +83,4 @@ theorem liveness_or_abort
   (validateSigning S pk m Sset commits reveals shares).isError :=
   validateSigning_total S pk m Sset commits reveals shares
 
-end IceNine.Security
+end IceNine.Proofs

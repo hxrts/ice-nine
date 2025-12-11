@@ -16,10 +16,11 @@ Security properties for refresh and repair coordination protocols:
 
 import IceNine.Protocol.Shares.RefreshCoord
 import IceNine.Protocol.Shares.RepairCoord
-import IceNine.Security.Assumptions
+import IceNine.Proofs.Core.ListLemmas
+import IceNine.Proofs.Core.Assumptions
 import Mathlib
 
-namespace IceNine.Security.Coordination
+namespace IceNine.Proofs.Extensions.Coordination
 
 open IceNine.Protocol
 open IceNine.Protocol.RefreshCoord
@@ -167,23 +168,6 @@ When both refresh and repair protocols are composed:
 - Repair can recover shares at any point
 -/
 
-/-- Auxiliary: sum of zipWith add distributes.
-    Σ(a_i + b_i) = Σa_i + Σb_i -/
-theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
-    ∀ (as bs : List α),
-      (List.zipWith (· + ·) as bs).sum = as.take bs.length |>.sum + bs.take as.length |>.sum
-  | [], _ => by simp
-  | _, [] => by simp
-  | a::as, b::bs => by
-      simp only [List.zipWith_cons_cons, List.sum_cons, List.take_succ_cons, List.length_cons]
-      rw [sum_zipWith_add as bs]
-      ring
-
-/-- When lists have equal length, take is identity. -/
-theorem take_eq_self_of_length_eq {α : Type*} (as bs : List α) (h : as.length = bs.length) :
-    as.take bs.length = as := by
-  simp [List.take_length_le, h]
-
 /-- Share invariant: after refresh, sum of shares equals original secret.
     sk = Σ sk_i = Σ (sk_i + m_i) = Σ sk'_i (since Σ m_i = 0). -/
 theorem share_invariant_refresh
@@ -195,9 +179,9 @@ theorem share_invariant_refresh
     (List.zipWith (· + ·) shares masks).sum = shares.sum := by
   -- Sum of refreshed shares = sum of original shares + sum of masks
   -- = sum of original shares + 0 = sum of original shares
-  rw [sum_zipWith_add]
-  rw [take_eq_self_of_length_eq shares masks hlen]
-  rw [take_eq_self_of_length_eq masks shares hlen.symm]
+  rw [List.sum_zipWith_add]
+  rw [List.take_eq_self_of_length_eq shares masks hlen]
+  rw [List.take_eq_self_of_length_eq masks shares hlen.symm]
   rw [hzero, add_zero]
 
 /-- Repair preserves public key relationship.
@@ -211,4 +195,4 @@ theorem repair_preserves_public
   simp only [verifyRepairedShareCoord] at hverify
   exact hverify
 
-end IceNine.Security.Coordination
+end IceNine.Proofs.Extensions.Coordination

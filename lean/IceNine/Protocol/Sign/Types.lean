@@ -539,10 +539,10 @@ inductive ContextValidationResult
 
 /-- Validate that all shares have consistent external context.
     Returns the first inconsistency found, or .ok if all consistent. -/
-def validateShareContexts [BEq ByteArray] (shares : List (SignShareMsg S))
+def validateShareContexts {S : Scheme} [BEq ByteArray] (shares : List (SignShareMsg S))
     : ContextValidationResult :=
   match shares with
-  | [] => .ok
+  | [] => ContextValidationResult.ok
   | first :: rest =>
       let checkPair := fun (idx : Nat) (sh : SignShareMsg S) =>
         if !ExternalContext.isConsistent first.context sh.context then
@@ -552,15 +552,16 @@ def validateShareContexts [BEq ByteArray] (shares : List (SignShareMsg S))
             | some vx, some vy => vx == vy
             | _, _ => true
           if !check first.context.consensusId sh.context.consensusId then
-            some (.inconsistentConsensusId 0 (idx + 1))
+            some (ContextValidationResult.inconsistentConsensusId 0 (idx + 1))
           else if !check first.context.resultId sh.context.resultId then
-            some (.inconsistentResultId 0 (idx + 1))
+            some (ContextValidationResult.inconsistentResultId 0 (idx + 1))
           else
-            some (.inconsistentPrestateHash 0 (idx + 1))
+            some (ContextValidationResult.inconsistentPrestateHash 0 (idx + 1))
         else none
-      match rest.enum.findSome? (fun (idx, sh) => checkPair idx sh) with
+      -- Use List.zipIdx instead of List.enum
+      match (List.range rest.length).zip rest |>.findSome? (fun (idx, sh) => checkPair idx sh) with
       | some err => err
-      | none => .ok
+      | none => ContextValidationResult.ok
 
 /-- Aggregate shares with context validation.
     Ensures all shares reference the same consensusId and resultId.

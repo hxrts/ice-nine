@@ -13,10 +13,11 @@ from threshold-many helpers, each contributing a Lagrange-weighted delta.
 
 import Mathlib
 import IceNine.Protocol.Core.Core
+import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Shares.Repair
 import IceNine.Protocol.Sign.Sign
 
-namespace IceNine.Security
+namespace IceNine.Proofs
 
 open IceNine.Protocol
 open List
@@ -125,8 +126,8 @@ lemma repair_masked_zero
     rw [List.map_zipWith]
     simp only [Function.comp]
   rw [h]
-  -- Use List.sum_zipWith_add when lengths match
-  rw [List.sum_zipWith_add (hlen ▸ (List.length_map _ _).symm)]
+  -- Use List.sum_zipWith_add_eq when lengths match
+  rw [List.sum_zipWith_add_eq _ _ (hlen ▸ (List.length_map _ _).symm)]
   simp [hmask]
 
 /-- Privacy theorem: zero-sum masks preserve repair result.
@@ -310,4 +311,4 @@ structure RepairAssumptions (S : Scheme) where
 def repairSecure (S : Scheme) (A : RepairAssumptions S) : Prop :=
   A.secureChannels ∧ A.honestMajority ∧ A.commitBinding
 
-end IceNine.Security
+end IceNine.Proofs

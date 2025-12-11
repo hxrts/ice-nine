@@ -85,7 +85,7 @@ def sharesFromActive (S : Scheme) [DecidableEq S.PartyId]
 instance sharesFromActiveDecidable (S : Scheme) [DecidableEq S.PartyId]
   (ctx : ThresholdCtx S) (shares : List (SignShareMsg S))
   : Decidable (sharesFromActive S ctx shares) :=
-  List.decidableBAll shares (fun sh => sh.sender ∈ ctx.active)
+  inferInstanceAs (Decidable (∀ sh ∈ shares, sh.sender ∈ ctx.active))
 
 /-!
 ## Context Constructors
@@ -136,9 +136,10 @@ noncomputable def mkThresholdCtxComputed
   let coeffs := active.toList.map (fun pid =>
     { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar active.toList pid })
   have hlen : coeffs.length = active.toList.length := List.length_map _ _
-  have hpid : coeffs.map (·.pid) = active.toList := by
-    simp only [List.map_map, Function.comp]
-    exact List.map_id' (fun _ => rfl)
+  have hpid : coeffs.map (fun c => c.pid) = active.toList := by
+    simp only [List.map_map, Function.comp_def]
+    conv_rhs => rw [← List.map_id active.toList]
+    rfl
   mkThresholdCtx S active t coeffs hcard hpid hlen
 
 /-- Refresh context with fresh coefficients. -/

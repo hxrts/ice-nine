@@ -11,11 +11,12 @@ This is the main entry point for the Ice Nine formal verification library.
 - `IceNine.Protocol.DKG`: Distributed key generation, VSS, dealer mode
 - `IceNine.Protocol.Shares`: Share management (refresh, repair, rerandomize)
 - `IceNine.Protocol.State`: Phase state, CRDT merging, threshold-aware operations
-- `IceNine.Security`: Security proofs and threat models
+- `IceNine.Proofs`: Formal proofs (correctness, soundness, extensions)
 -/
 
 import IceNine.Crypto
 import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Core.CRDT
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.Sign.Types
@@ -34,8 +35,7 @@ import IceNine.Protocol.State.PhaseIndexed
 import IceNine.Protocol.State.PhaseHandlers
 import IceNine.Protocol.State.PhaseSig
 import IceNine.Protocol.State.PhaseMerge
-import IceNine.Protocol.State.StateProduct
-import IceNine.Protocol.State.ThresholdMerge
+import IceNine.Protocol.Sign.ThresholdMerge
 import IceNine.Protocol.DKG.VSSCore
 import IceNine.Protocol.DKG.VSS
 import IceNine.Protocol.Shares.RefreshCoord
@@ -44,14 +44,21 @@ import IceNine.Protocol.Core.Error
 import IceNine.Norms
 import IceNine.Instances
 import IceNine.Samples
-import IceNine.Security.Assumptions
-import IceNine.Security.Correctness
-import IceNine.Security.Lagrange
-import IceNine.Security.Robustness
-import IceNine.Security.DKG
-import IceNine.Security.Sign
-import IceNine.Security.Repair
-import IceNine.Security.RefreshRepair
-import IceNine.Security.Phase
-import IceNine.Security.VSS
-import IceNine.Security.Coordination
+-- Proofs/Core
+import IceNine.Proofs.Core.Assumptions
+import IceNine.Proofs.Core.ListLemmas
+import IceNine.Proofs.Core.HighBits
+-- Proofs/Correctness
+import IceNine.Proofs.Correctness.Correctness
+import IceNine.Proofs.Correctness.Lagrange
+import IceNine.Proofs.Correctness.DKG
+import IceNine.Proofs.Correctness.Sign
+-- Proofs/Soundness
+import IceNine.Proofs.Soundness.Soundness
+import IceNine.Proofs.Soundness.Robustness
+import IceNine.Proofs.Soundness.VSS
+-- Proofs/Extensions
+import IceNine.Proofs.Extensions.Phase
+import IceNine.Proofs.Extensions.Coordination
+import IceNine.Proofs.Extensions.Repair
+import IceNine.Proofs.Extensions.RefreshRepair

@@ -11,11 +11,12 @@ So: A(z) - c·pk = w ✓
 
 import Mathlib
 import IceNine.Protocol.Core.Core
+import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Sign.Sign
 import IceNine.Instances
 import IceNine.Norms
 
-namespace IceNine.Security
+namespace IceNine.Proofs
 
 open IceNine.Protocol
 open IceNine.Instances
@@ -26,20 +27,11 @@ open IceNine.Norms
 
 The key insight: z_i = y_i + c·sk_i sums linearly.
 Σ(y_i + c·sk_i) = Σy_i + c·Σsk_i
--/
 
-/-- Linearity of partial signature aggregation for integers.
-    Σ(y_i + c·sk_i) splits into Σy_i + c·Σsk_i. -/
-lemma sum_zipWith_add_mul (c : Int) :
-  ∀ (ys sks : List Int),
-    (List.zipWith (fun y s => y + c * s) ys sks).sum
-      = ys.sum + c * sks.sum
-  | [], [] => by simp
-  | [], _  => by simp
-  | _ , [] => by simp
-  | y::ys, s::sks =>
-      have ih := sum_zipWith_add_mul ys sks
-      simp [ih, List.sum_cons, add_assoc, add_left_comm, add_comm, mul_add, add_mul]
+These are in `IceNine.Protocol.Core.ListLemmas`:
+- `List.sum_zipWith_add_mul` for integers
+- `List.sum_zipWith_add_smul` for modules
+-/
 
 /-!
 ## Generic Scheme Correctness
@@ -80,27 +72,6 @@ theorem verify_happy_generic
     simpa using hsess
   -- core algebra: Σ(y_i + c•sk_i) = Σy_i + c•Σsk_i handled inside verify simplification
   simp [hlen, hpids, hopen_ok, hsess_all, List.forall₂_and_left] at *
-
-/-!
-## Module-General Correctness
-
-Generalize to any R-module (needed for ZMod vectors, lattices, etc.).
--/
-
-/-- Module-general linearity: works for any semiring R and module M.
-    Σ(y_i + c•sk_i) = Σy_i + c•Σsk_i. -/
-lemma sum_zipWith_add_smul
-    {R M : Type _} [Semiring R] [AddCommMonoid M] [Module R M]
-    (c : R) :
-  ∀ (ys sks : List M),
-    (List.zipWith (fun y s => y + c • s) ys sks).sum
-      = ys.sum + c • sks.sum
-  | [], [] => by simp
-  | [], _  => by simp
-  | _ , [] => by simp
-  | y::ys, s::sks =>
-      have ih := sum_zipWith_add_smul ys sks
-      simp [ih, List.sum_cons, add_assoc, add_left_comm, add_comm, smul_add, add_smul]
 
 /-!
 ## Short Input Hypothesis
@@ -209,8 +180,14 @@ axiom dilithium_acceptance_probability (p : DilithiumParams) (hvalid : p.isValid
 
     The current placeholder allows all responses, which is fine for testing
     correctness but must be replaced for security. -/
-lemma lattice_normOK_honest (z : latticeScheme.Secret) : latticeScheme.normOK z := by
-  trivial
+lemma lattice_normOK_honest
+    (z : latticeScheme.Secret)
+    (hcoeff : ∀ i, Int.natAbs (z i) ≤ IceNine.Instances.LatticeBound) :
+  latticeScheme.normOK z := by
+  -- normOK is intVecInfLeq; apply bound on all coefficients
+  change IceNine.Instances.intVecInfLeq (IceNine.Instances.LatticeBound) z
+  apply IceNine.Instances.intVecInfLeq_of_coeff_bound
+  simpa using hcoeff
 
 /-- Conditional correctness: if all responses pass norm check, verification succeeds.
     This is the form needed for real lattice schemes where normOK is non-trivial. -/
@@ -232,4 +209,4 @@ theorem verify_happy_lattice_conditional
     (Sset := Sset) (commits := commits) (reveals := reveals) (shares := shares) hvalid
   simpa using this
 
-end IceNine.Security
+end IceNine.Proofs

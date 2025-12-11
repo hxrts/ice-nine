@@ -22,10 +22,11 @@ Mathlib provides:
 -/
 
 import Mathlib
+import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Sign.Sign
 import IceNine.Instances
 
-namespace IceNine.Security
+namespace IceNine.Proofs
 
 open IceNine.Protocol
 open IceNine.Instances
@@ -36,21 +37,9 @@ open Polynomial
 
 Core algebraic lemma: weighted partial signatures aggregate correctly.
 Σ λ_i·(y_i + c·sk_i) = Σλ_i·y_i + c·Σλ_i·sk_i
--/
 
-/-- Lagrange-weighted aggregation splits linearly (integer version).
-    Σ λ_i·(y_i + c·sk_i) = Σλ_i·y_i + c·Σλ_i·sk_i. -/
-lemma sum_zipWith_scaled_add_mul (c : Int) :
-  ∀ (ys sks coeffs : List Int),
-    (List.zipWith3 (fun λ y s => λ * y + λ * (c * s)) coeffs ys sks).sum
-      = (coeffs.zipWith (·*·) ys).sum + c * (coeffs.zipWith (·*·) sks).sum
-  | [], [], [] => by simp
-  | [], _, _ => by simp
-  | _, [], _ => by simp
-  | _, _, [] => by simp
-  | λ::λs, y::ys, s::sks =>
-      have ih := sum_zipWith_scaled_add_mul ys sks λs
-      simp [List.sum_cons, ih, mul_add, add_assoc, add_left_comm, add_comm, left_distrib, right_distrib, mul_comm, mul_left_comm]
+The lemma `List.sum_zipWith3_scaled_add_mul` is now in `IceNine.Protocol.Core.ListLemmas`.
+-/
 
 /-!
 ## Threshold Correctness
@@ -79,7 +68,7 @@ lemma verify_happy_simple_lagrange
   verify simpleScheme pk m sig := by
   intros pk w c coeffStructs shares sig
   simp [aggregateSignatureLagrange, verify, simpleScheme, normOKAlways,
-        smul_int_eq_mul, sum_zipWith_scaled_add_mul, LinearMap.id_apply, List.zipWith, List.zipWith3, List.foldl_map] at *
+        smul_int_eq_mul, List.sum_zipWith3_scaled_add_mul, LinearMap.id_apply, List.zipWith, List.zipWith3, List.foldl_map] at *
   ring_nf
 
 /-!
@@ -161,4 +150,4 @@ theorem lagrange_interpolation_at_zero
         simp only [Lagrange.interpolate, eval_finset_sum, eval_mul, eval_C]
     _ = p.eval 0 := by rw [← heq]
 
-end IceNine.Security
+end IceNine.Proofs

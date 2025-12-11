@@ -13,7 +13,7 @@ This guarantees:
 import IceNine.Protocol.State.PhaseHandlers
 import IceNine.Protocol.State.PhaseSig
 
-namespace IceNine.Security.Phase
+namespace IceNine.Proofs.Extensions.Phase
 
 open IceNine.Protocol
 
@@ -42,4 +42,4 @@ lemma stepShare_monotone (S : Scheme) [DecidableEq S.PartyId] (msg : SignShareMs
   ∀ a b, a.state ≤ b.state → (stepShare S msg a).state ≤ (stepShare S msg b).state := by
   intro a b h; exact h
 
-end IceNine.Security.Phase
+end IceNine.Proofs.Extensions.Phase

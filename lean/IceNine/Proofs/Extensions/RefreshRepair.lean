@@ -12,10 +12,10 @@ showing that refresh/rerand operations maintain protocol invariants.
 import IceNine.Protocol.Shares.Refresh
 import IceNine.Protocol.Shares.Repair
 import IceNine.Protocol.Shares.Rerandomize
-import IceNine.Security.Repair
-import IceNine.Security.Sign
+import IceNine.Proofs.Extensions.Repair
+import IceNine.Proofs.Correctness.Sign
 
-namespace IceNine.Security.RefreshRepair
+namespace IceNine.Proofs.Extensions.RefreshRepair
 
 open IceNine.Protocol
 open List
@@ -80,7 +80,7 @@ lemma rerand_preserves_sig_raw
   aggregateSignature S c Sset commits (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.sender }))
     = aggregateSignature S c Sset commits shares := by
   intro hzero
-  apply IceNine.Security.Sign.aggregateSignature_masks_zero
+  apply IceNine.Proofs.Correctness.Sign.aggregateSignature_masks_zero
   · exact hzero
 
 /-- Rerandomization preserves signature using zero-sum masks.
@@ -101,4 +101,4 @@ lemma rerand_preserves_sig
   simp only [List.map_map, Function.comp]
   exact masks.shareSumZero
 
-end IceNine.Security.RefreshRepair
+end IceNine.Proofs.Extensions.RefreshRepair

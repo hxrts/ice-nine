@@ -44,7 +44,7 @@ VSSCore.lean         Error.lean          Lagrange.lean
 
 **Composition**:
 - `PhaseMerge.lean` (composite CRDT state)
-- `ThresholdMerge.lean` (threshold-aware merge)
+- `Sign/ThresholdMerge.lean` (threshold-aware merge)
 
 **Serialization**:
 - `Serialize.lean` (wire format)
@@ -309,30 +309,30 @@ def foo (S : Scheme) [PartyIdHash S] [DecidableEq S.PartyId] ...
 abbrev PartyIdHash (S : Scheme) := BEq S.PartyId × Hashable S.PartyId
 
 /-- Extract BEq instance from PartyIdHash. -/
-instance PartyIdHash.toBEq {S : Scheme} [h : PartyIdHash S] : BEq S.PartyId := h.1
+def PartyIdHash.toBEq {S : Scheme} (h : PartyIdHash S) : BEq S.PartyId := h.1
 
 /-- Extract Hashable instance from PartyIdHash. -/
-instance PartyIdHash.toHashable {S : Scheme} [h : PartyIdHash S] : Hashable S.PartyId := h.2
+def PartyIdHash.toHashable {S : Scheme} (h : PartyIdHash S) : Hashable S.PartyId := h.2
 
 /-- Full constraints for state operations: HashMap + decidable equality.
     Use when functions need both HashMap operations and if-then-else guards. -/
 abbrev PartyIdState (S : Scheme) := PartyIdHash S × DecidableEq S.PartyId
 
 /-- Extract PartyIdHash from PartyIdState. -/
-instance PartyIdState.toHash {S : Scheme} [h : PartyIdState S] : PartyIdHash S := h.1
+def PartyIdState.toHash {S : Scheme} (h : PartyIdState S) : PartyIdHash S := h.1
 
 /-- Extract DecidableEq from PartyIdState. -/
-instance PartyIdState.toDecidableEq {S : Scheme} [h : PartyIdState S] : DecidableEq S.PartyId := h.2
+def PartyIdState.toDecidableEq {S : Scheme} (h : PartyIdState S) : DecidableEq S.PartyId := h.2
 
 /-- Constraints for Lagrange coefficient computation.
     Requires field arithmetic and decidable equality on scalars. -/
 abbrev ScalarField (S : Scheme) := Field S.Scalar × DecidableEq S.Scalar
 
 /-- Extract Field instance from ScalarField. -/
-instance ScalarField.toField {S : Scheme} [h : ScalarField S] : Field S.Scalar := h.1
+def ScalarField.toField {S : Scheme} (h : ScalarField S) : Field S.Scalar := h.1
 
 /-- Extract DecidableEq instance from ScalarField. -/
-instance ScalarField.toDecidableEq {S : Scheme} [h : ScalarField S] : DecidableEq S.Scalar := h.2
+def ScalarField.toDecidableEq {S : Scheme} (h : ScalarField S) : DecidableEq S.Scalar := h.2
 
 /-!
 ## Generic Share Verification
@@ -401,9 +401,9 @@ it needs Scheme for the verification function.
 
 /-- Typeclass for commit messages that can be verified against reveals.
     Enables generic commit-reveal verification. -/
-class CommitVerifiable (CommitMsg RevealMsg : Type*) (S : Scheme) where
+class CommitVerifiable (CommitMsg RevealMsg : Type*) where
   /-- Verify that a reveal correctly opens a commit -/
-  verifyOpening : S → CommitMsg → RevealMsg → Bool
+  verifyOpening : CommitMsg → RevealMsg → Bool
 
 /-!
 ## Domain Separation Constants
@@ -758,7 +758,7 @@ structure KeyShare (S : Scheme) where
     Use this during DKG when creating shares. -/
 def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.Public)
     : KeyShare S :=
-  { pid := pid, sk_i := ⟨sk⟩, pk_i := pk_i, pk := pk }
+  { pid := pid, sk_i := SecretBox.wrap sk, pk_i := pk_i, pk := pk }
 
 /-- Get the unwrapped secret share for computation.
     **Security**: Only use when the secret is needed for cryptographic operations. -/
@@ -810,6 +810,13 @@ structure DkgRevealMsg (S : Scheme) where
   pk_i    : S.Public
   opening : S.Opening
 
+/-- HasSender instance for DkgCommitMsg -/
+instance (S : Scheme) : HasSender (DkgCommitMsg S) S.PartyId where
+  sender := DkgCommitMsg.sender
+
+/-- HasSender instance for DkgRevealMsg -/
+instance (S : Scheme) : HasSender (DkgRevealMsg S) S.PartyId where
+  sender := DkgRevealMsg.sender
 
 /-- Party's local state during DKG. The secret sk_i is sampled locally
     and never transmitted. Only the commitment/reveal are broadcast. -/
@@ -844,7 +851,6 @@ structure ExternalContext where
   prestateHash : Option ByteArray := none
   /-- Opaque evidence delta for CRDT propagation -/
   evidenceDelta : Option ByteArray := none
-  deriving Repr
 
 /-- Empty external context (default for standalone use). -/
 def ExternalContext.empty : ExternalContext := {}
@@ -898,7 +904,7 @@ class EvidenceCarrier (M : Type*) where
   hasEvidence : M → Bool := fun m => (extractEvidence m).isSome
 
 /-- Convenience: attach evidence only if some -/
-def EvidenceCarrier.attachOpt [EvidenceCarrier M] (m : M) (evid : Option ByteArray) : M :=
+def EvidenceCarrier.attachOpt {M : Type*} [EvidenceCarrier M] (m : M) (evid : Option ByteArray) : M :=
   match evid with
   | some e => EvidenceCarrier.attachEvidence m e
   | none => m
@@ -924,5 +930,8 @@ instance (S : Scheme) : EvidenceCarrier (SignShareMsg S) where
     { msg with context := { msg.context with evidenceDelta := some evid } }
   extractEvidence := fun msg => msg.context.evidenceDelta
 
+/-- HasSender instance for SignShareMsg -/
+instance (S : Scheme) : HasSender (SignShareMsg S) S.PartyId where
+  sender := SignShareMsg.sender
 
 end IceNine.Protocol

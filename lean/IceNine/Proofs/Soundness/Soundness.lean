@@ -14,9 +14,9 @@ https://blog.cryptographyengineering.com/2023/11/30/to-schnorr-and-beyond-part-2
 
 import Mathlib
 import IceNine.Protocol.Core.Core
-import IceNine.Security.Assumptions
+import IceNine.Proofs.Core.Assumptions
 
-namespace IceNine.Security.Soundness
+namespace IceNine.Proofs.Soundness
 
 open IceNine.Protocol
 
@@ -359,4 +359,4 @@ theorem threshold_independence_composition
     : True := by
   trivial
 
-end IceNine.Security.Soundness
+end IceNine.Proofs.Soundness

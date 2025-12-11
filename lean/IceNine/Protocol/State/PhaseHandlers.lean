@@ -14,7 +14,7 @@ import IceNine.Protocol.State.Phase
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.Sign.Sign
-import IceNine.Protocol.State.ThresholdMerge
+import IceNine.Protocol.Sign.ThresholdMerge
 
 namespace IceNine.Protocol
 

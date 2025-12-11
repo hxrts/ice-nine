@@ -13,10 +13,10 @@ Secret Sharing", FOCS 1987.
 
 import IceNine.Protocol.DKG.VSS
 import IceNine.Protocol.DKG.VSSCore
-import IceNine.Security.Assumptions
+import IceNine.Proofs.Core.Assumptions
 import Mathlib
 
-namespace IceNine.Security.VSS
+namespace IceNine.Proofs.Soundness.VSS
 
 open IceNine.Protocol
 open IceNine.Protocol.VSS
@@ -177,4 +177,4 @@ axiom reconstruction_unique
       (∀ s ∈ shares, s.value = q.eval s.evalPoint) →
       p.coeffs = q.coeffs
 
-end IceNine.Security.VSS
+end IceNine.Proofs.Soundness.VSS

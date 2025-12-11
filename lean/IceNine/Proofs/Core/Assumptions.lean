@@ -37,7 +37,7 @@ import IceNine.Protocol.Sign.Sign
 import IceNine.Protocol.DKG.Core
 import Mathlib
 
-namespace IceNine.Security
+namespace IceNine.Proofs
 
 open IceNine.Protocol
 
@@ -185,6 +185,7 @@ def mkLatticeAssumptions
   : LatticeAssumptions S :=
 { hashRO := hashRO
   commitCR := commitCR
+  hashBinding := IceNine.Instances.hashBindingAssumption
   normLeakageBound := normLeakageBound
   corruptionBound := corruptionBound
   sisParams := some (sisParamsOfLevel lvl)
@@ -194,11 +195,13 @@ def mkLatticeAssumptions
   sis_hard := sis_hard
   mlwe_hard := mlwe_hard }
 
-/-- Default lattice assumptions for our concrete latticeScheme at Level 1.
-    Hash/commit/norm bounds are treated axiomatically here (True). -/
+/-- Default lattice assumptions for our concrete latticeScheme at Level 1. -/
 def latticeAssumptionsL1 : LatticeAssumptions (IceNine.Instances.latticeScheme ()) :=
   mkLatticeAssumptions (S := IceNine.Instances.latticeScheme ()) PQSecurityLevel.L1
-    True True True 0
+    True   -- hashRO
+    True   -- commitCR (digest collision resistance)
+    True   -- normLeakageBound
+    0
     (by trivial) (by trivial)
 
 /-!
@@ -346,6 +349,8 @@ structure Assumptions (S : Scheme) where
   hashRO            : Prop
   /-- Commitment scheme is collision resistant (implies binding). -/
   commitCR          : Prop := commitmentCR S
+  /-- Binding for the hash-based commitment (collision resistance of digest). -/
+  hashBinding       : IceNine.Instances.HashBinding := IceNine.Instances.hashBindingAssumption
   /-- Commitment hiding (requires ROM; NOT formally proven). -/
   commitHiding      : HidingAssumption S := ⟨True.intro⟩
   /-- Norm bounds prevent leakage in lattice setting. -/
@@ -770,4 +775,4 @@ All axioms fall into three categories:
 - Rejection sampling: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009
 -/
 
-end IceNine.Security
+end IceNine.Proofs

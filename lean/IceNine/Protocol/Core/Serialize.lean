@@ -57,7 +57,7 @@ inductive SchemeId : Type
   | mlDsa65    -- ML-DSA-65 (192-bit security)
   | mlDsa87    -- ML-DSA-87 (256-bit security)
   | custom (id : ByteArray)  -- Custom/experimental schemes
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- Convert scheme ID to bytes. -/
 def SchemeId.toBytes : SchemeId → ByteArray
@@ -79,7 +79,7 @@ structure SerializationHeader where
   version : UInt8
   /-- Scheme/parameter set identifier -/
   schemeId : SchemeId
-  deriving Repr
+  deriving DecidableEq
 
 /-- Default header for current protocol version. -/
 def SerializationHeader.default (sid : SchemeId) : SerializationHeader :=
@@ -101,7 +101,9 @@ def SerializationHeader.fromBytes (bs : ByteArray) : Option (SerializationHeader
           -- Custom scheme: read 4-byte length + data
           if bs.size < 6 then none
           else
-            let len := bs.get! 2 |>.toNat + bs.get! 3 |>.toNat * 256
+            let b2 := bs.get! 2
+            let b3 := bs.get! 3
+            let len := b2.toNat + b3.toNat * 256
             if bs.size < 4 + len then none
             else
               let customId := bs.extract 4 (4 + len)
@@ -172,7 +174,7 @@ structure ParameterSet where
   gamma2 : Nat
   /-- Rejection bound (β) -/
   beta : Nat
-  deriving Repr
+  deriving DecidableEq
 
 /-- ML-DSA-44: 128-bit security (NIST Level 1) -/
 def paramsMlDsa44 : ParameterSet :=
@@ -271,13 +273,15 @@ class Serializable (α : Type*) where
 class SerializableWithHeader (α : Type*) extends Serializable α where
   /-- The scheme ID for this type's serialization -/
   schemeId : SchemeId
-  /-- Serialize with header prefix -/
-  toBytesWithHeader (x : α) : ByteArray :=
-    SerializationHeader.default schemeId |>.toBytes ++ toBytes x
-  /-- Parse with header validation -/
-  fromBytesWithHeader (bs : ByteArray) : Option α := do
-    let (h, rest) ← SerializationHeader.fromBytes bs
-    if h.schemeId = schemeId then fromBytes rest else none
+
+/-- Serialize with header prefix -/
+def SerializableWithHeader.toBytesWithHeader [inst : SerializableWithHeader α] (x : α) : ByteArray :=
+  (SerializationHeader.default inst.schemeId).toBytes ++ inst.toBytes x
+
+/-- Parse with header validation -/
+def SerializableWithHeader.fromBytesWithHeader [inst : SerializableWithHeader α] (bs : ByteArray) : Option α := do
+  let (h, rest) ← SerializationHeader.fromBytes bs
+  if h.schemeId = inst.schemeId then inst.fromBytes rest else none
 
 /-!
 ## Primitive Serializers
@@ -354,7 +358,7 @@ Serialization for Option, List, and product types.
 -/
 
 /-- Serialize Option: 0x00 for none, 0x01 + value for some -/
-instance [Serializable α] : Serializable (Option α) where
+instance {α : Type*} [Serializable α] : Serializable (Option α) where
   toBytes
     | none => ⟨#[0]⟩
     | some x => ⟨#[1]⟩ ++ Serializable.toBytes x
@@ -365,8 +369,33 @@ instance [Serializable α] : Serializable (Option α) where
       Serializable.fromBytes (bs.extract 1 bs.size) |>.map some
     else none
 
+/-- Helper to parse a list of elements from bytes.
+
+    **Known Limitation**: This parser assumes 8 bytes per element. This is a
+    placeholder value that works for 64-bit integers but will NOT correctly
+    parse variable-length elements.
+
+    **Production Fix**: The `Serializable` typeclass should be extended to:
+    1. Return `(α × Nat)` from `fromBytes` indicating bytes consumed, OR
+    2. Add a `byteSize : α → Nat` method, OR
+    3. Use a length-prefix encoding for each element
+
+    For now, this limitation is acceptable because:
+    - List serialization is only used for testing/debugging
+    - The wire protocol would use a proper framing layer
+    - Production implementations should use a well-tested serialization library -/
+def parseList {α : Type*} [Serializable α] (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α) :=
+  if count = 0 then some acc.reverse
+  else
+    match Serializable.fromBytes bs with
+    | some x =>
+        -- FIXME: Hardcoded 8 bytes per element. See docstring above.
+        let consumed := min 8 bs.size
+        parseList (count - 1) (bs.extract consumed bs.size) (x :: acc)
+    | none => none
+
 /-- Serialize List: 4-byte count + concatenated elements -/
-instance [Serializable α] : Serializable (List α) where
+instance {α : Type*} [Serializable α] : Serializable (List α) where
   toBytes xs :=
     let count := natToBytes xs.length |>.extract 0 4
     let elements := xs.foldl (fun acc x => acc ++ Serializable.toBytes x) ByteArray.empty
@@ -381,31 +410,6 @@ instance [Serializable α] : Serializable (List α) where
           let rest := bs.extract 4 bs.size
           parseList count rest []
       | none => none
-  where
-    /-- Parse a list of elements from bytes.
-
-        **Known Limitation**: This parser assumes 8 bytes per element. This is a
-        placeholder value that works for 64-bit integers but will NOT correctly
-        parse variable-length elements.
-
-        **Production Fix**: The `Serializable` typeclass should be extended to:
-        1. Return `(α × Nat)` from `fromBytes` indicating bytes consumed, OR
-        2. Add a `byteSize : α → Nat` method, OR
-        3. Use a length-prefix encoding for each element
-
-        For now, this limitation is acceptable because:
-        - List serialization is only used for testing/debugging
-        - The wire protocol would use a proper framing layer
-        - Production implementations should use a well-tested serialization library -/
-    parseList (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α) :=
-      if count = 0 then some acc.reverse
-      else
-        match Serializable.fromBytes bs with
-        | some x =>
-            -- FIXME: Hardcoded 8 bytes per element. See docstring above.
-            let consumed := min 8 bs.size
-            parseList (count - 1) (bs.extract consumed bs.size) (x :: acc)
-        | none => none
 
 /-!
 ## Protocol Message Serializers
@@ -502,7 +506,7 @@ def MessageTag.fromByte : UInt8 → Option MessageTag
 structure WrappedMessage where
   tag : MessageTag
   payload : ByteArray
-deriving Repr
+deriving DecidableEq
 
 /-- Serialize wrapped message: tag (1 byte) + length (4 bytes) + payload -/
 def WrappedMessage.toBytes (msg : WrappedMessage) : ByteArray :=
