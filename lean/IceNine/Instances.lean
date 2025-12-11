@@ -8,12 +8,13 @@ is treated as an **assumption** (computational) while binding is proved from the
 injectivity of the hash input tuple.
 
 **NOTE**: The hash/commitment here are still abstracted; to connect to a real
-SHAKE implementation, wire in a concrete hash function with collision resistance
-and preimage resistance assumptions.
+SHAKE implementation, wire in `Std.Digest` (or a SHAKE binding) with collision
+resistance assumptions.
 -/
 
 import Mathlib
-import IceNine.Protocol.Core
+import IceNine.Protocol.Core.Core
+import Std.Data.Digest
 
 namespace IceNine.Instances
 
@@ -28,14 +29,14 @@ Hiding is computational and left as an assumption (not modeled here).
 -/
 
 /-- A generic hash type placeholder. Replace with SHAKE256 output type if desired. -/
-abbrev HashOut := ByteArray
+abbrev HashOut := Std.Digest
 
 /-- Serialize public/nonce pair to bytes (simple concat). -/
 def encodePair {α β} [ToString α] [ToString β] (w : α) (nonce : β) : ByteArray :=
   (toString w ++ "|" ++ toString nonce).toUTF8
 
 /-- Abstract hash function; assume collision resistance elsewhere. -/
-def hashBytes (b : ByteArray) : HashOut := b -- placeholder; treat as injective for binding
+def hashBytes (b : ByteArray) : HashOut := Std.Digest.hash b
 
 /-- Hash-based commitment: Com(w; nonce) = H( encode(w, nonce) ). -/
 structure HashCommitment (P N : Type) where
@@ -76,11 +77,8 @@ def hashFS {P M C W PartyId : Type} [ToString P] [ToString M] [ToString C] [ToSt
 
     **Reference**: FIPS 204 (ML-DSA) Section 8.3 "Challenge Derivation" -/
 def hashToChallenge (h : HashOut) : Int :=
-  -- Interpret first 8 bytes as little-endian Int64, then take modulo to bound
-  -- This is a simplified model; real Dilithium uses rejection sampling
-  let bytes := h.toList.take 8
+  let bytes := h.toByteArray.toList.take 8
   let asNat := bytes.foldl (fun (acc, i) b => (acc + (b.toNat <<< (8 * i)), i + 1)) (0, 0) |>.1
-  -- Reduce to a reasonable range (Dilithium τ is at most 60)
   Int.ofNat (asNat % 256) - 128  -- Range [-128, 127] for simple bound
 
 /-!
@@ -91,10 +89,7 @@ We model secrets/publics as integer vectors and enforce an ℓ∞ bound.
 
 /-- Compute ℓ∞ norm of an integer vector (max absolute value). -/
 def intVecInfNorm {n : Nat} (v : Fin n → Int) : Int :=
-  if h : n = 0 then 0
-  else
-    let vals := List.ofFn (fun i : Fin n => (v i).natAbs)
-    Int.ofNat (vals.foldl max 0)
+  Finset.univ.sup (fun i => (Int.natAbs (v i)))
 
 def intVecInfLeq (B : Int) {n : Nat} (v : Fin n → Int) : Prop :=
   intVecInfNorm v ≤ B

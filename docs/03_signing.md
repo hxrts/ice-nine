@@ -12,7 +12,7 @@ The signing implementation is split across focused modules for maintainability:
 
 - **`Protocol/SignThreshold.lean`** - Threshold support: `CoeffStrategy`, `strategyOK`, `SignMode`, `ThresholdCtx`, context constructors (`mkAllCtx`, `mkThresholdCtx`, `mkThresholdCtxComputed`), and context-based aggregation
 
-- **`Protocol/Sign.lean`** - Re-exports from all submodules for backward compatibility
+- **`Protocol/Sign/Sign.lean`** - Re-exports from all submodules for backward compatibility
 
 - **`Protocol/SignSession.lean`** - Session-typed API that makes nonce reuse a compile-time error
 
@@ -61,7 +61,10 @@ structure SignShareMsg (S : Scheme) :=
   (sender  : S.PartyId)
   (session : Nat)
   (z_i     : S.Secret)
+  (context : ExternalContext := {})  -- for external protocol binding
 ```
+
+All message types include an optional `context` field for binding to external protocols. See [Protocol Integration](06_integration.md) for details.
 
 ## Dual Nonce Structure (FROST Pattern)
 
@@ -357,7 +360,10 @@ structure Signature (S : Scheme) :=
   (c       : S.Challenge)
   (Sset    : List S.PartyId)
   (commits : List S.Commitment)
+  (context : ExternalContext := {})  -- merged from contributing shares
 ```
+
+The signature's context is merged from all contributing shares, enabling external protocols to verify consensus binding.
 
 ### Signature Computation
 
@@ -556,6 +562,8 @@ If the same nonce $y$ is used with two different challenges $c_1, c_2$:
 - $z_2 = y + c_2 \cdot sk$
 
 The secret key can be recovered: $sk = (z_1 - z_2) / (c_1 - c_2)$
+
+This attack is formalized in `Security/Soundness.lean` as the `nonce_reuse_key_recovery` theorem. See [Verification: Special Soundness](04_verification.md#special-soundness) for the formal proof.
 
 ### Session Tracker
 
@@ -860,6 +868,53 @@ def badNonceReuse (S : Scheme) (ready : ReadyToCommit S) :=
   let (committed2, _) := commit S ready  -- ERROR: ready already consumed
   (committed1, committed2)
 ```
+
+## Fast-Path Signing
+
+For latency-sensitive applications, Ice Nine supports single-round signing when nonces are precomputed and pre-shared. This mode skips the commit-reveal round by preparing nonces during idle time.
+
+### Precomputed Nonces
+
+```lean
+structure PrecomputedNonce (S : Scheme) where
+  commitment : S.Commitment
+  nonce : FreshNonce S
+  publicHiding : S.Public
+  publicBinding : S.Public
+  generatedAt : Nat
+  maxAge : Nat := 3600  -- 1 hour default expiry
+
+structure NoncePool (S : Scheme) where
+  available : List (PrecomputedNonce S)
+  consumedCount : Nat := 0
+```
+
+### Fast Signing Function
+
+```lean
+def signFast (S : Scheme)
+    (keyShare : KeyShare S)
+    (precomputed : PrecomputedNonce S)
+    (challenge : S.Challenge)
+    (bindingFactor : S.Scalar)
+    (session : Nat)
+    (context : ExternalContext := {})
+    : Option (SignShareMsg S)
+```
+
+This function produces a signature share immediately using a precomputed nonce. It returns `none` if the norm check fails, requiring a fresh nonce.
+
+### Security Assumptions
+
+Fast-path signing trusts that:
+1. Nonce commitments were honestly generated
+2. Nonces are not being reused (enforced by `FreshNonce` type)
+3. Precomputed nonces have not expired
+4. The coordinator will aggregate honestly
+
+Use standard two-round signing when these assumptions don't hold.
+
+See [Protocol Integration](06_integration.md) for detailed usage patterns with external consensus protocols.
 
 ## Security Considerations
 

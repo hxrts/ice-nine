@@ -12,9 +12,9 @@ from threshold-many helpers, each contributing a Lagrange-weighted delta.
 -/
 
 import Mathlib
-import IceNine.Protocol.Core
-import IceNine.Protocol.Repair
-import IceNine.Protocol.Sign
+import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Shares.Repair
+import IceNine.Protocol.Sign.Sign
 
 namespace IceNine.Security
 

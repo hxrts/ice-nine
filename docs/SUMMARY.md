@@ -6,3 +6,4 @@
 - [Two-Round Threshold Signing](03_signing.md)
 - [Verification](04_verification.md)
 - [Extensions](05_extensions.md)
+- [Protocol Integration](06_integration.md)

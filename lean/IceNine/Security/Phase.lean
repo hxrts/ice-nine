@@ -10,8 +10,8 @@ This guarantees:
 - Eventual consistency: all replicas converge to same state
 -/
 
-import IceNine.Protocol.PhaseHandlers
-import IceNine.Protocol.PhaseSig
+import IceNine.Protocol.State.PhaseHandlers
+import IceNine.Protocol.State.PhaseSig
 
 namespace IceNine.Security.Phase
 

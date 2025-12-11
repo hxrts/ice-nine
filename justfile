@@ -220,3 +220,67 @@ deploy-status:
     @echo "Checking $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH 2>/dev/null && echo '✓ Project exists' || echo '✗ Project not found'"
     ssh $DEPLOY_SERVER "which nix && nix --version"
+
+# Pin development shell to GC root (prevents garbage collection of dependencies)
+# Uses TMPDIR on large volume to avoid filling root during builds
+deploy-pin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Pinning development shell on $DEPLOY_SERVER..."
+    echo "This may take a while if dependencies need to be built."
+    echo ""
+    ssh $DEPLOY_SERVER "
+        # Set up TMPDIR on large volume (avoids filling root during Rust builds)
+        mkdir -p /mnt/data/tmp
+        chmod 1777 /mnt/data/tmp
+        export TMPDIR=/mnt/data/tmp
+        export TEMP=/mnt/data/tmp
+        export TMP=/mnt/data/tmp
+
+        # Create GC root directory
+        mkdir -p /nix/var/nix/gcroots/per-user/root
+
+        # Build and pin devShell
+        cd $DEPLOY_PATH && nix develop \
+            --profile /nix/var/nix/gcroots/per-user/root/ice-nine-devshell \
+            --accept-flake-config \
+            --command true
+    "
+    echo ""
+    echo "✓ Development shell pinned to GC root"
+
+# Free up disk space on server (preserves pinned dependencies)
+deploy-gc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Freeing up space on $DEPLOY_SERVER..."
+    echo ""
+    echo "Before cleanup:"
+    ssh $DEPLOY_SERVER "df -h / /nix/store 2>/dev/null || df -h /"
+    echo ""
+    echo "Running garbage collection (pinned paths will be preserved)..."
+    ssh $DEPLOY_SERVER "nix-collect-garbage -d"
+    echo ""
+    echo "After cleanup:"
+    ssh $DEPLOY_SERVER "df -h / /nix/store 2>/dev/null || df -h /"
+    echo ""
+    echo "✓ Garbage collection complete"
+
+# Show disk usage on server
+deploy-df:
+    @echo "Disk usage on $DEPLOY_SERVER:"
+    ssh $DEPLOY_SERVER "df -h / /nix/store /mnt/data 2>/dev/null || df -h"
+
+# Show what's pinned (GC roots)
+deploy-roots:
+    @echo "GC roots on $DEPLOY_SERVER:"
+    ssh $DEPLOY_SERVER "ls -la /nix/var/nix/gcroots/per-user/root/ 2>/dev/null || echo 'No per-user roots'"
+    @echo ""
+    @echo "Pinned devShell size:"
+    ssh $DEPLOY_SERVER "nix path-info -Sh /nix/var/nix/gcroots/per-user/root/ice-nine-devshell 2>/dev/null || echo 'Not pinned yet'"
+
+# Initialize server: sync + pin dependencies (run once, or after flake changes)
+deploy-init: deploy-sync deploy-pin
+    @echo ""
+    @echo "✓ Server initialized with pinned dependencies"
+    @echo "  Run 'just deploy-lean' to build Lean proofs"

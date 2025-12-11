@@ -249,7 +249,79 @@ Verification is sound under the security assumptions. If the hash function behav
 
 The binding property of commitments prevents an adversary from adaptively choosing nonces. The norm check prevents signatures with excessive response norms.
 
-The formal soundness proof lives in the Lean verification modules. It follows the standard Schnorr signature security argument adapted for the threshold setting.
+### Special Soundness
+
+The core security property is **special soundness**: two valid signatures with the same nonce but different challenges reveal the secret key.
+
+Given two valid signature equations with the same nonce $w$ but different challenges:
+- $A(z_1) = w + c_1 \cdot \mathsf{pk}$
+- $A(z_2) = w + c_2 \cdot \mathsf{pk}$
+
+We can derive: $A(z_1 - z_2) = (c_1 - c_2) \cdot \mathsf{pk}$
+
+If $c_1 \neq c_2$ and we're in a field, this reveals $\mathsf{sk}$ such that $\mathsf{pk} = A(\mathsf{sk})$:
+
+$$\mathsf{sk} = (c_1 - c_2)^{-1} \cdot (z_1 - z_2)$$
+
+This property explains:
+1. **Why nonce reuse is catastrophic** - the secret key can be algebraically recovered
+2. **The basis for the Fiat-Shamir security proof** - a simulator can rewind a forger to extract two transcripts
+3. **The core of the SIS reduction** - extracted differences are short vectors in ker(A)
+
+```lean
+theorem special_soundness_algebraic
+    {M : Type*} [AddCommGroup M]
+    {R : Type*} [Ring R] [Module R M]
+    (A : M →ₗ[R] M) (z₁ z₂ w pk : M) (c₁ c₂ : R)
+    (hv1 : A z₁ = w + c₁ • pk)
+    (hv2 : A z₂ = w + c₂ • pk) :
+    A (z₁ - z₂) = (c₁ - c₂) • pk
+
+theorem nonce_reuse_key_recovery
+    {F : Type*} [Field F]
+    {M : Type*} [AddCommGroup M] [Module F M]
+    (z₁ z₂ sk : M) (c₁ c₂ : F)
+    (hne : c₁ ≠ c₂)
+    (heq : z₁ - z₂ = (c₁ - c₂) • sk) :
+    sk = (c₁ - c₂)⁻¹ • (z₁ - z₂)
+```
+
+### Unforgeability Reduction to SIS
+
+Signature unforgeability reduces to the Short Integer Solution problem via special soundness.
+
+**Reduction outline:**
+1. Challenger generates SIS instance: matrix $A$, wants short $z$ with $Az = 0$
+2. Embed $A$ as the public key: $\mathsf{pk} = A$ (viewing pk as derived from A)
+3. Simulate signing oracle using random oracle programming
+4. When forger outputs $(m^*, \sigma^*)$, rewind to get second signature with same $w$
+5. Use special soundness to extract difference $z_1 - z_2$
+6. This difference is a short vector in ker(A) → SIS solution
+
+**Tightness:** The reduction loses a factor of $Q_h$ (hash queries) from rewinding.
+
+```lean
+structure EUFCMAtoSIS (S : Scheme) (p : SISParams) where
+  forgerAdvantage : Real
+  signingQueries : Nat
+  hashQueries : Nat
+  sisAdvantage : Real
+  reduction_bound : sisAdvantage ≥ forgerAdvantage / hashQueries
+```
+
+### Threshold Response Independence
+
+For threshold signatures, response independence holds for the aggregated response. If each party's response $z_i$ is independent of their share $s_i$ (by local rejection sampling), then the aggregate $z = \sum z_i$ is independent of the master secret $s = \sum s_i$.
+
+**Composition argument:**
+1. Each $z_i = y_i + c \cdot s_i$ where $y_i$ is the party's nonce
+2. Local rejection sampling ensures $z_i$ is statistically independent of $s_i$
+3. By linearity: $z = \sum z_i = \sum y_i + c \cdot \sum s_i = y + c \cdot s$
+4. Since each $z_i$ reveals nothing about $s_i$, and parties don't see each other's $s_i$, the aggregate reveals nothing about $s$
+
+This standard composition follows from Lyubashevsky's "Fiat-Shamir with Aborts" applied to each party individually.
+
+**Reference:** Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009.
 
 ### Axiom Index
 

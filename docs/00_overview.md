@@ -45,40 +45,53 @@ The implementation uses session types to enforce disciplined handling of secret 
 
 ## Module Organization
 
-The implementation is organized into focused modules:
+The implementation is organized into focused modules within subdirectories:
 
-**Protocol Core:**
-- `Protocol/Core.lean` - Scheme record, key shares, DKG messages, security documentation
-- `Protocol/SignTypes.lean` - Session tracking, signing messages, error types
-- `Protocol/SignCore.lean` - Challenge computation, n-of-n aggregation
-- `Protocol/SignThreshold.lean` - Coefficient strategies, threshold context
-- `Protocol/Sign.lean` - Re-exports from split modules for backward compatibility
-- `Protocol/SignSession.lean` - Session-typed API preventing nonce reuse
+**Protocol/Core/** - Foundation types and utilities:
+- `Core/Core.lean` - Scheme record, key shares, DKG messages, linear security wrappers
+- `Core/Security.lean` - Security markers (Zeroizable, ConstantTimeEq), SecretBox, NonceBox
+- `Core/Patterns.lean` - Reusable patterns: constraint aliases, commit-reveal framework, utilities
+- `Core/Error.lean` - BlameableError typeclass, error utilities
+- `Core/Lagrange.lean` - Unified Lagrange coefficient API
+- `Core/Serialize.lean` - Serialization API for network transport
 
-**VSS and DKG:**
-- `Protocol/VSSCore.lean` - Polynomial commitments, share verification
-- `Protocol/VSS.lean` - VSS transcript, complaint mechanism
-- `Protocol/DKGCore.lean` - Basic DKG protocol
-- `Protocol/DKGThreshold.lean` - Threshold DKG with exclusion
+**Protocol/Sign/** - Signing protocol:
+- `Sign/Types.lean` - Session tracking, signing messages, error types
+- `Sign/Core.lean` - Challenge computation, n-of-n aggregation
+- `Sign/Threshold.lean` - Coefficient strategies, threshold context
+- `Sign/Session.lean` - Session-typed API preventing nonce reuse
+- `Sign/Sign.lean` - Re-exports for backward compatibility
 
-**Share Management:**
-- `Protocol/Refresh.lean` - Share refresh with zero-sum masks
-- `Protocol/RefreshCoord.lean` - Coordinator-based refresh protocol
-- `Protocol/RefreshDKG.lean` - DKG-based distributed refresh (no coordinator)
-- `Protocol/Repair.lean` - Share repair protocol
-- `Protocol/RepairCoord.lean` - Repair coordination with commit-reveal
-- `Protocol/Rerandomize.lean` - Signature rerandomization
+**Protocol/DKG/** - Distributed key generation:
+- `DKG/Core.lean` - Basic DKG protocol
+- `DKG/Threshold.lean` - Threshold DKG with exclusion
+- `DKG/VSSCore.lean` - Polynomial commitments, share verification
+- `DKG/VSS.lean` - VSS transcript, complaint mechanism
+- `DKG/Dealer.lean` - Trusted dealer mode
 
-**Infrastructure:**
-- `Protocol/Phase.lean` - Phase state with MsgMap CRDT
-- `Protocol/PhaseIndexed.lean` - Type-indexed phase transitions
-- `Protocol/Lagrange.lean` - Unified Lagrange coefficient API
-- `Protocol/Error.lean` - BlameableError typeclass, error utilities
-- `Protocol/Serialize.lean` - Serialization API for network transport
+**Protocol/Shares/** - Share management:
+- `Shares/Refresh.lean` - Share refresh with zero-sum masks
+- `Shares/RefreshCoord.lean` - Coordinator-based refresh protocol
+- `Shares/RefreshDKG.lean` - DKG-based distributed refresh (no coordinator)
+- `Shares/RefreshState.lean` - Refresh state CRDT
+- `Shares/Repair.lean` - Share repair protocol
+- `Shares/RepairCoord.lean` - Repair coordination with commit-reveal
+- `Shares/Rerandomize.lean` - Signature rerandomization
 
-**Security:**
-- `Security/Assumptions.lean` - Cryptographic assumptions, axiom index
+**Protocol/State/** - Phase state and CRDT operations:
+- `State/Phase.lean` - Phase state with MsgMap CRDT
+- `State/PhaseIndexed.lean` - Type-indexed phase transitions
+- `State/PhaseHandlers.lean` - Phase transition handlers
+- `State/PhaseSig.lean` - Phase signatures
+- `State/PhaseMerge.lean` - Composite state merging
+- `State/StateProduct.lean` - Product semilattice
+- `State/ThresholdMerge.lean` - Threshold-aware merge operations
+
+**Security/** - Security proofs and threat models:
+- `Security/Assumptions.lean` - Cryptographic assumptions, axiom index, Dilithium parameters
 - `Security/Correctness.lean` - Verification theorems
+- `Security/Soundness.lean` - Special soundness, nonce reuse attack, SIS reduction
+- `Security/HighBits.lean` - HighBits specification for Dilithium error absorption
 - `Security/VSS.lean` - VSS security properties
 
 ## Lattice Cryptography
@@ -93,6 +106,37 @@ The security of Ice Nine reduces to standard lattice hardness assumptions:
 
 **Parameter Validation.** The implementation includes lightweight parameter validation to catch obviously insecure configurations. The standard parameter sets follow [NIST FIPS 204 (ML-DSA/Dilithium)](https://csrc.nist.gov/pubs/fips/204/final).
 
+## Linear Types for Security-Critical Values
+
+The implementation uses linear-style type discipline to prevent misuse of single-use values. While Lean doesn't have true linear types, private constructors and module-scoped access functions make violations visible and intentional.
+
+**Linear wrappers:**
+
+| Type | Purpose | Consequence of Misuse |
+|------|---------|----------------------|
+| `FreshNonce` | Signing nonces | Nonce reuse → key recovery |
+| `LinearMask` | Refresh masks | Double-apply → zero-sum violation |
+| `LinearDelta` | Repair deltas | Double-use → corrupted share |
+| `LinearOpening` | Commitment randomness | Reuse → equivocation possible |
+
+**Pattern:** Each wrapper has:
+1. Private constructor (`private mk`) - prevents arbitrary creation
+2. Private value field - prevents direct access outside module
+3. Public creation function - controlled entry point
+4. `consume` function - extracts value and produces consumption proof
+
+```lean
+structure LinearMask (S : Scheme) where
+  private mk ::
+  private partyId : S.PartyId
+  private maskValue : S.Secret
+  private publicImage : S.Public
+
+def LinearMask.consume (m : LinearMask S) : S.Secret × MaskConsumed S
+```
+
+The consumption proof (`MaskConsumed`, `DeltaConsumed`, `OpeningConsumed`) can be required by downstream functions to ensure the value was properly consumed.
+
 ## Nonce Safety
 
 **Critical property:** Nonce reuse completely breaks Schnorr-style signatures. If the same nonce $y$ is used with two different challenges $c_1, c_2$:
@@ -104,15 +148,15 @@ The session-typed signing protocol makes nonce reuse a compile-time error. Each 
 
 ## Implementation Security
 
-The implementation includes comprehensive security documentation in `Protocol/Core.lean`:
+The implementation includes comprehensive security documentation in `Protocol/Core/Security.lean`:
 
 **Randomness Requirements:** All secret values (shares, nonces, commitment openings) must be sampled from a CSPRNG. Nonce reuse is catastrophic—the session-typed API makes it a compile-time error.
 
-**Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives. The `ConstantTimeEq` typeclass marks types requiring constant-time equality comparison.
+**Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives. The `ConstantTimeEq` typeclass (in `Security.lean`) marks types requiring constant-time equality comparison.
 
-**Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust. The `Zeroizable` typeclass marks types requiring secure erasure.
+**Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust. The `Zeroizable` typeclass (in `Security.lean`) marks types requiring secure erasure.
 
-**Secret Wrappers:** The `SecretBox` and `NonceBox` types wrap sensitive values with private constructors, discouraging accidental duplication or exposure. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances.
+**Secret Wrappers:** The `SecretBox` and `NonceBox` types (in `Security.lean`) wrap sensitive values with private constructors, discouraging accidental duplication or exposure. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances.
 
 ## Docs Index
 
@@ -121,3 +165,4 @@ The implementation includes comprehensive security documentation in `Protocol/Co
 3. [Signing Protocol](03_signing.md): Two-round signing protocol with session types, rejection sampling
 4. [Verification](04_verification.md): Signature verification and threshold context
 5. [Extensions](05_extensions.md): Complaints, refresh/repair coordination, rerandomization, type-indexed phases
+6. [Protocol Integration](06_integration.md): External context binding, evidence piggybacking, fast-path signing, self-validating shares

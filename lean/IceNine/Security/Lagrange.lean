@@ -22,7 +22,7 @@ Mathlib provides:
 -/
 
 import Mathlib
-import IceNine.Protocol.Sign
+import IceNine.Protocol.Sign.Sign
 import IceNine.Instances
 
 namespace IceNine.Security

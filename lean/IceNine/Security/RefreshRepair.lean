@@ -9,9 +9,9 @@ These lemmas connect the extension protocols to the core security proofs,
 showing that refresh/rerand operations maintain protocol invariants.
 -/
 
-import IceNine.Protocol.Refresh
-import IceNine.Protocol.Repair
-import IceNine.Protocol.Rerandomize
+import IceNine.Protocol.Shares.Refresh
+import IceNine.Protocol.Shares.Repair
+import IceNine.Protocol.Shares.Rerandomize
 import IceNine.Security.Repair
 import IceNine.Security.Sign
 

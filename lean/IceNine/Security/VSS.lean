@@ -11,8 +11,8 @@ Security properties of Verifiable Secret Sharing:
 Secret Sharing", FOCS 1987.
 -/
 
-import IceNine.Protocol.VSS
-import IceNine.Protocol.VSSCore
+import IceNine.Protocol.DKG.VSS
+import IceNine.Protocol.DKG.VSSCore
 import IceNine.Security.Assumptions
 import Mathlib
 

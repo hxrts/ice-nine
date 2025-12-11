@@ -7,7 +7,7 @@ Validation lemmas and mask invariants for the signing protocol:
 - Threshold soundness: shares from active set produce correct Sset
 -/
 
-import IceNine.Protocol.Sign
+import IceNine.Protocol.Sign.Sign
 
 namespace IceNine.Security.Sign
 

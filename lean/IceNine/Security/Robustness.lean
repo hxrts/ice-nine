@@ -9,8 +9,8 @@ either Ok(result) or Error(reason), never diverge or panic.
 -/
 
 import Mathlib
-import IceNine.Protocol.Sign
-import IceNine.Protocol.DKGCore
+import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.DKG.Core
 
 namespace IceNine.Security
 

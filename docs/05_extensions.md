@@ -4,7 +4,7 @@ The core protocol supports several extensions. These extensions address operatio
 
 ## Error Handling
 
-The `Protocol/Error.lean` module provides unified error handling patterns across the protocol.
+The `Protocol/Core/Error.lean` module provides unified error handling patterns across the protocol.
 
 ### BlameableError Typeclass
 
@@ -77,7 +77,7 @@ def collectBlame (config : ProtocolConfig) (errors : List E) : BlameResult Party
 
 ## Security Markers
 
-The `Protocol/Core.lean` module provides typeclass markers for implementation security requirements. These markers document FFI implementation obligations.
+The `Protocol/Core/Security.lean` module provides typeclass markers for implementation security requirements. These markers document FFI implementation obligations.
 
 ### Zeroizable Typeclass
 
@@ -88,6 +88,9 @@ class Zeroizable (α : Type*) where
   needsZeroization : Bool := true
 
 instance : Zeroizable (SecretBox α)
+instance : Zeroizable (LinearMask S)
+instance : Zeroizable (LinearDelta S)
+instance : Zeroizable (LinearOpening S)
 ```
 
 **Implementation guidance:**
@@ -108,6 +111,8 @@ class ConstantTimeEq (α : Type*) where
   requiresConstantTime : Bool := true
 
 instance : ConstantTimeEq (SecretBox α)
+instance : ConstantTimeEq (LinearMask S)
+instance : ConstantTimeEq (LinearDelta S)
 ```
 
 **Implementation guidance:**
@@ -117,9 +122,235 @@ instance : ConstantTimeEq (SecretBox α)
 - Never use early-exit comparison loops
 - Avoid branching on secret-dependent values
 
+## Linear Security Wrappers
+
+The protocol uses linear-style type discipline to prevent misuse of single-use sensitive values. Private constructors and module-scoped access make violations visible.
+
+### LinearMask
+
+Refresh masks that must be applied exactly once to preserve the zero-sum invariant.
+
+```lean
+structure LinearMask (S : Scheme) where
+  private mk ::
+  private partyId : S.PartyId
+  private maskValue : S.Secret
+  private publicImage : S.Public
+
+def LinearMask.create (S : Scheme) (pid : S.PartyId) (mask : S.Secret) : LinearMask S
+def LinearMask.consume (m : LinearMask S) : S.Secret × MaskConsumed S
+```
+
+**Security**: If a mask is applied twice or not at all, the sum of masks will not be zero and the global secret changes.
+
+### LinearDelta
+
+Repair contributions that must be aggregated exactly once.
+
+```lean
+structure LinearDelta (S : Scheme) where
+  private mk ::
+  private senderId : S.PartyId
+  private targetId : S.PartyId
+  private deltaValue : S.Secret
+
+def LinearDelta.create (S : Scheme) (sender target : S.PartyId) (delta : S.Secret) : LinearDelta S
+def LinearDelta.consume (d : LinearDelta S) : S.Secret × DeltaConsumed S
+```
+
+**Security**: Using a delta twice adds its value twice to the reconstruction sum, corrupting the repaired share.
+
+### LinearOpening
+
+Commitment randomness that should be used exactly once to prevent equivocation.
+
+```lean
+structure LinearOpening (S : Scheme) where
+  private mk ::
+  private openingValue : S.Opening
+  private used : Bool := false
+
+def LinearOpening.fresh (S : Scheme) (opening : S.Opening) : LinearOpening S
+def LinearOpening.consume (o : LinearOpening S) : S.Opening × OpeningConsumed S
+```
+
+**Security**: Reusing an opening with different values could allow opening the same commitment to different values.
+
+### Consumption Proofs
+
+Each linear type produces a consumption proof when consumed:
+
+```lean
+structure MaskConsumed (S : Scheme) where
+  private mk ::
+  forParty : S.PartyId
+
+structure DeltaConsumed (S : Scheme) where
+  private mk ::
+  fromHelper : S.PartyId
+
+structure OpeningConsumed (S : Scheme) where
+  private mk ::
+  consumed : Unit := ()
+```
+
+Downstream functions can require these proofs to ensure proper consumption occurred.
+
+## Reusable Protocol Patterns
+
+The `Protocol/Core/Patterns.lean` module provides reusable abstractions for common protocol patterns. Scheme-specific versions are re-exported from `Protocol/Core/Core.lean`.
+
+### Constraint Aliases
+
+Standard constraint combinations are aliased for cleaner signatures. Generic versions in `Patterns.lean` work with any type, while `Core.lean` provides Scheme-specific aliases:
+
+```lean
+-- Generic (Patterns.lean):
+abbrev HashConstraints (PartyId : Type*) := BEq PartyId × Hashable PartyId
+abbrev StateConstraints (PartyId : Type*) := HashConstraints PartyId × DecidableEq PartyId
+abbrev FieldConstraints (Scalar : Type*) := Field Scalar × DecidableEq Scalar
+
+-- Scheme-specific (Core.lean):
+abbrev PartyIdHash (S : Scheme) := BEq S.PartyId × Hashable S.PartyId
+abbrev PartyIdState (S : Scheme) := PartyIdHash S × DecidableEq S.PartyId
+abbrev ScalarField (S : Scheme) := Field S.Scalar × DecidableEq S.Scalar
+```
+
+**Usage:**
+```lean
+-- Before (verbose):
+def foo (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] ...
+
+-- After (concise):
+def foo (S : Scheme) [PartyIdState S] ...
+```
+
+### Generic Share Verification
+
+The pattern `A(secret) = expectedPublic` is centralized:
+
+```lean
+def verifySecretPublic (S : Scheme) (secret : S.Secret) (expectedPublic : S.Public) : Prop :=
+  S.A secret = expectedPublic
+
+def verifySecretPublicBool (S : Scheme) [DecidableEq S.Public]
+    (secret : S.Secret) (expectedPublic : S.Public) : Bool :=
+  S.A secret = expectedPublic
+
+def verifyCommitmentOpening (S : Scheme) [DecidableEq S.Commitment]
+    (value : S.Public) (opening : S.Opening) (expectedCommit : S.Commitment) : Bool :=
+  S.commit value opening = expectedCommit
+```
+
+Used consistently across:
+- VSS share verification
+- Repair share reconstruction
+- Refresh share updates
+- DKG public key verification
+
+### Commit-Reveal Framework
+
+Generic types for commit-reveal protocol phases (in `Patterns.lean`):
+
+```lean
+/-- Generic validation error -/
+inductive CommitRevealError (PhaseType PartyId : Type*)
+  | wrongPhase (current : PhaseType)
+  | senderNotAuthorized (sender : PartyId)
+  | duplicateMessage (sender : PartyId)
+  | commitmentMismatch (sender : PartyId)
+  | missingCommit (sender : PartyId)
+  | verificationFailed (sender : PartyId) (reason : String)
+
+/-- Typeclass for messages with sender -/
+class HasSender (M : Type*) (PartyId : Type*) where
+  sender : M → PartyId
+
+def getSender [HasSender M PartyId] (m : M) : PartyId := HasSender.sender m
+```
+
+Scheme-specific verification (in `Core.lean`):
+
+```lean
+/-- Typeclass for verifiable commit-reveal pairs -/
+class CommitVerifiable (CommitMsg RevealMsg : Type*) (S : Scheme) where
+  verifyOpening : S → CommitMsg → RevealMsg → Bool
+```
+
+### Utility Functions
+
+These utilities are in `Patterns.lean`:
+
+```lean
+/-- Check party authorization -/
+def isAuthorized (authorizedParties : List PartyId) (party : PartyId) : Bool
+
+/-- Extract unique values by key (replaces map+dedup pattern) -/
+def extractUnique (key : α → β) (items : List α) : List β
+```
+
+## External Protocol Integration
+
+The `Protocol/Core/Core.lean` and `Protocol/Sign/Types.lean` modules provide integration points for external consensus and coordination protocols.
+
+### External Context
+
+All signing messages can carry optional context for binding to external protocol instances:
+
+```lean
+structure ExternalContext where
+  consensusId : Option ByteArray := none    -- external session identifier
+  resultId : Option ByteArray := none       -- what is being signed (e.g., H(op, prestate))
+  prestateHash : Option ByteArray := none   -- state validation
+  evidenceDelta : Option ByteArray := none  -- CRDT evidence for propagation
+```
+
+### Evidence Carrier Typeclass
+
+The `EvidenceCarrier` typeclass enables piggybacking CRDT evidence deltas on signing messages:
+
+```lean
+class EvidenceCarrier (M : Type*) where
+  attachEvidence : M → ByteArray → M
+  extractEvidence : M → Option ByteArray
+  hasEvidence : M → Bool := fun m => (extractEvidence m).isSome
+```
+
+Instances are provided for all signing message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`) and `Signature`.
+
+### Self-Validating Shares
+
+For gossip-based fallback protocols, `ValidatableShare` bundles a share with enough context for independent validation:
+
+```lean
+structure ValidatableShare (S : Scheme) where
+  share : SignShareMsg S
+  nonceCommit : S.Commitment
+  publicHiding : S.Public
+  publicBinding : S.Public
+  pkShare : S.Public
+```
+
+Recipients can validate the share without full session state using `ValidatableShare.isWellFormed`.
+
+### Context-Aware Aggregation
+
+When aggregating shares from multiple parties, context consistency can be validated:
+
+```lean
+def aggregateWithContextValidation (S : Scheme) (c : S.Challenge)
+    (Sset : List S.PartyId) (commits : List S.Commitment)
+    (shares : List (SignShareMsg S))
+    : Except String (Signature S)
+```
+
+This catches Byzantine behavior where a party signs different operations.
+
+See [Protocol Integration](06_integration.md) for detailed usage patterns.
+
 ## Serialization
 
-The `Protocol/Serialize.lean` module provides type-safe serialization for network transport.
+The `Protocol/Core/Serialize.lean` module provides type-safe serialization for network transport.
 
 ### Serialization Headers
 
@@ -329,7 +560,7 @@ A full refresh protocol runs as follows.
 
 ### Refresh Coordination Protocol
 
-The `Protocol/RefreshCoord.lean` module provides a distributed protocol for generating zero-sum masks without a trusted coordinator.
+The `Protocol/Shares/RefreshCoord.lean` module provides a distributed protocol for generating zero-sum masks without a trusted coordinator.
 
 **Phases:**
 1. **Commit**: Each party commits to their random mask
@@ -423,7 +654,7 @@ def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
 ### DKG-Based Refresh Protocol
 
-The `Protocol/RefreshDKG.lean` module provides a fully distributed refresh protocol without a trusted coordinator. Each party contributes a zero-polynomial (polynomial with constant term 0), ensuring the master secret remains unchanged while all shares are updated.
+The `Protocol/Shares/RefreshDKG.lean` module provides a fully distributed refresh protocol without a trusted coordinator. Each party contributes a zero-polynomial (polynomial with constant term 0), ensuring the master secret remains unchanged while all shares are updated.
 
 **Three-Round Protocol:**
 
@@ -688,7 +919,7 @@ def tryCompleteRepair
 
 ### Repair Coordination Protocol
 
-The `Protocol/RepairCoord.lean` module provides a commit-reveal protocol for coordinating repair contributions.
+The `Protocol/Shares/RepairCoord.lean` module provides a commit-reveal protocol for coordinating repair contributions.
 
 **Phases:**
 1. **Request**: Requester broadcasts repair request with known $pk_i$
@@ -766,7 +997,7 @@ structure HelperLocalState (S : Scheme) where
 ```
 
 **Lagrange Coefficient Computation:**
-Uses the unified `Protocol/Lagrange.lean` module:
+Uses the unified `Protocol/Core/Lagrange.lean` module:
 ```lean
 def lagrangeCoefficient [Field F] [DecidableEq F]
     (partyScalar : F) (otherScalars : List F) : F :=
@@ -1002,7 +1233,7 @@ inductive PhaseState (S : Scheme) : Phase → Type where
   | done    : DonePhaseData S → PhaseState S .done
 ```
 
-Each phase carries phase-specific data. The runtime phase state (`Protocol/Phase.lean`) uses `MsgMap` for conflict-free message storage, while the type-indexed version uses lists for simpler type signatures:
+Each phase carries phase-specific data. The runtime phase state (`Protocol/State/Phase.lean`) uses `MsgMap` for conflict-free message storage, while the type-indexed version uses lists for simpler type signatures:
 
 ```lean
 -- Type-indexed version (PhaseIndexed.lean) - simpler types

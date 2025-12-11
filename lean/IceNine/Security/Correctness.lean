@@ -10,8 +10,8 @@ So: A(z) - c·pk = w ✓
 -/
 
 import Mathlib
-import IceNine.Protocol.Core
-import IceNine.Protocol.Sign
+import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Sign.Sign
 import IceNine.Instances
 import IceNine.Norms
 

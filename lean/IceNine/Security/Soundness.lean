@@ -13,7 +13,7 @@ https://blog.cryptographyengineering.com/2023/11/30/to-schnorr-and-beyond-part-2
 -/
 
 import Mathlib
-import IceNine.Protocol.Core
+import IceNine.Protocol.Core.Core
 import IceNine.Security.Assumptions
 
 namespace IceNine.Security.Soundness

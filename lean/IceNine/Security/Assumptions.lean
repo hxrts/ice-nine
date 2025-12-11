@@ -32,9 +32,9 @@ This generalizes Ring-LWE to module lattices for flexible security/efficiency.
 for Module Lattices", Designs, Codes and Cryptography, 2015.
 -/
 
-import IceNine.Protocol.Core
-import IceNine.Protocol.Sign
-import IceNine.Protocol.DKGCore
+import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.DKG.Core
 import Mathlib
 
 namespace IceNine.Security

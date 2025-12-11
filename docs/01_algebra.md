@@ -104,6 +104,29 @@ def dilithiumScheme (params : DilithiumParams) : Scheme :=
 
 The error term $s_2$ is baked into the public key during key generation. The `normOK` predicate enforces both the coefficient bound $\|z\|_\infty < \gamma_1 - \beta$ and the HighBits consistency check. The `hash` function operates on truncated values as Dilithium requires.
 
+### HighBits Specification
+
+The HighBits function is formally specified in `Security/HighBits.lean`:
+
+```lean
+structure HighBitsSpec (P : Type*) [AddCommGroup P] where
+  highBits : P → P
+  gamma2 : Nat
+  isSmall : P → Prop
+  idempotent : ∀ x, highBits (highBits x) = highBits x
+  absorbs_small : ∀ (w e : P), isSmall e →
+    highBits (w + e) = highBits w ∨ highBits (w - e) = highBits w
+```
+
+The key property is **absorption**: small perturbations don't change HighBits. During verification:
+- Signer computes: $w_1 = \text{HighBits}(Ay)$
+- Verifier computes: $w_1' = \text{HighBits}(Az - c \cdot t)$
+
+Since $t = As_1 + s_2$ and $z = y + c \cdot s_1$:
+$$Az - c \cdot t = Ay - c \cdot s_2$$
+
+The absorption property ensures $\text{HighBits}(Ay) = \text{HighBits}(Ay - c \cdot s_2)$ when $\|c \cdot s_2\|_\infty < \gamma_2$.
+
 ## Challenges
 
 The challenge space is a separate type. In typical instantiations challenges are scalars from $R$ or a related ring. Challenges act on secrets and publics via scalar multiplication.
@@ -207,13 +230,30 @@ def dilithiumNormOK (p : DilithiumParams) (z : List Int) : Prop :=
   vecInfNorm z < p.gamma1 - p.tau * p.eta
 ```
 
-Standard parameter sets:
+Standard parameter sets (defined and validated in `Security/Assumptions.lean`):
 
-| Level | τ | η | γ₁ | β | Security |
-|-------|---|---|-----|---|----------|
-| Dilithium2 | 39 | 2 | 2¹⁷ | 78 | 128-bit |
-| Dilithium3 | 49 | 4 | 2¹⁹ | 196 | 192-bit |
-| Dilithium5 | 60 | 2 | 2¹⁹ | 120 | 256-bit |
+| Level | τ | η | γ₁ | γ₂ | β | Security |
+|-------|---|---|-----|-----|---|----------|
+| Dilithium2 | 39 | 2 | 2¹⁷ | 95232 | 78 | 128-bit |
+| Dilithium3 | 49 | 4 | 2¹⁹ | 261888 | 196 | 192-bit |
+| Dilithium5 | 60 | 2 | 2¹⁹ | 261888 | 120 | 256-bit |
+
+```lean
+structure DilithiumSigningParams where
+  tau : Nat           -- challenge weight
+  eta : Nat           -- secret coefficient bound
+  gamma1 : Nat        -- nonce coefficient range
+  gamma2 : Nat        -- low-bits truncation range
+
+def DilithiumSigningParams.beta (p : DilithiumSigningParams) : Nat :=
+  p.tau * p.eta
+
+-- Critical security constraints (proven for each parameter set):
+-- γ₁ > β ensures rejection sampling has room
+-- γ₂ > β ensures HighBits absorbs error
+theorem dilithiumL2_gamma1_ok : dilithiumL2.gamma1 > dilithiumL2.beta
+theorem dilithiumL2_gamma2_ok : dilithiumL2.gamma2 > dilithiumL2.beta
+```
 
 ## Concrete Scheme Instantiations
 
@@ -338,7 +378,7 @@ The protocol modules use consistent instance requirements:
 
 ## Lagrange Interpolation
 
-The `Protocol/Lagrange.lean` module provides a unified API for computing Lagrange interpolation coefficients used across threshold protocols.
+The `Protocol/Core/Lagrange.lean` module provides a unified API for computing Lagrange interpolation coefficients used across threshold protocols.
 
 ### Core Function
 

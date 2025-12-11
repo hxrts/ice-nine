@@ -14,8 +14,8 @@ Security properties for refresh and repair coordination protocols:
 3. **Privacy**: Individual contributions reveal nothing about helper shares
 -/
 
-import IceNine.Protocol.RefreshCoord
-import IceNine.Protocol.RepairCoord
+import IceNine.Protocol.Shares.RefreshCoord
+import IceNine.Protocol.Shares.RepairCoord
 import IceNine.Security.Assumptions
 import Mathlib
 

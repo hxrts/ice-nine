@@ -4,9 +4,9 @@
 Convenient `#eval` snippets to emit small honest transcripts for manual inspection.
 -/
 
-import IceNine.Protocol.Core
-import IceNine.Protocol.DKGCore
-import IceNine.Protocol.Sign
+import IceNine.Protocol.Core.Core
+import IceNine.Protocol.DKG.Core
+import IceNine.Protocol.Sign.Sign
 import IceNine.Instances
 import IceNine.Norms
 
