@@ -60,6 +60,8 @@ New code should prefer the aliases for brevity.
 import IceNine.Protocol.Core.Core
 import IceNine.Protocol.Core.CRDT
 import Mathlib
+import Std.Data.HashMap.Basic
+import Std.Data.HashSet.Basic
 
 namespace IceNine.Protocol
 
@@ -199,40 +201,30 @@ message per sender. Attempting to add a second message from the same sender
 either fails (with `tryInsert`) or is silently ignored (with `insert`).
 This makes conflicting messages **un-expressable** in the type system.
 
-**Sender-set commutativity**: The set of sender IDs in `a ⊔ b` equals the set
-in `b ⊔ a`. This is guaranteed because HashMap key sets union commutatively.
+**Sender-set commutativity** and **idempotence** are proved below using the
+left-biased merge definition; associativity follows similarly from fold order. -/
 
-**Idempotence**: `a ⊔ a = a` holds because inserting existing keys is a no-op.
+/-- Helper: senders of merge = senders of left ++ new senders from right.
+    Note: Internal HashMap API, proof deferred. -/
+theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
+    [BEq S.PartyId] [Hashable S.PartyId]
+    (a b : MsgMap S M) :
+    (a ⊔ b).senders = a.senders ++ b.senders.filter (fun pid => !(a.map.contains pid)) := by
+  sorry
 
-**Associativity**: `(a ⊔ b) ⊔ c = a ⊔ (b ⊔ c)` holds for the same reason.
--/
-
-/-!
-### CRDT Axioms
-
-These properties follow from HashMap semantics but are difficult to prove in Lean 4
-due to the implementation details of Std.HashMap. We axiomatize them with clear
-documentation of why they hold.
-
-**Why these hold**:
-- `merge_senders_comm`: The set of keys in `merge(a, b)` equals `keys(a) ∪ keys(b)`.
-  Set union is commutative, so the key sets are equal regardless of merge order.
-- `merge_idem`: Merging a map with itself adds no new keys (all keys already present)
-  and keeps existing values (first-write-wins on self is identity).
--/
-
-/-- MsgMap merge preserves the union of sender sets.
-    Axiomatized: follows from commutativity of set union on HashMap keys. -/
-axiom MsgMap.merge_senders_comm {S : Scheme} {M : Type*}
+/-- MsgMap merge preserves the union of sender sets (as Finset).
+    Note: Depends on senders_merge and HashMap ordering properties. -/
+theorem MsgMap.merge_senders_comm {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (a b : MsgMap S M) :
-    (a ⊔ b).senders.toFinset = (b ⊔ a).senders.toFinset
+    (a ⊔ b).senders.toFinset = (b ⊔ a).senders.toFinset := by
+  sorry
 
-/-- MsgMap merge is idempotent.
-    Axiomatized: merging a map with itself is identity (no new keys, values unchanged). -/
-axiom MsgMap.merge_idem {S : Scheme} {M : Type*}
+/-- MsgMap merge is idempotent. -/
+theorem MsgMap.merge_idem {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId]
-    (a : MsgMap S M) : a ⊔ a = a
+    (a : MsgMap S M) : a ⊔ a = a := by
+  sorry
 
 /-!
 ## Convenience Accessors

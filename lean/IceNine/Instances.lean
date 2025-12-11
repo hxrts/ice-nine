@@ -186,7 +186,8 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
       -- h : latticeCommit x1 o1 = latticeCommit x2 o2
       -- Unfold to get hash equality, then apply binding assumption
       simp only [latticeCommit, LatticeCommitment.mk.injEq] at h
-      exact @HashBinding.binding hashBindingAssumption _ _ _ _ x1 x2 o1 o2 h
+      -- Hash binding is assumed to hold by hashBindingAssumption
+      exact hashBindingAssumption.binding x1 x2 o1 o2 h
   , hashToScalar := fun domain data =>
       let h := hashBytes (domain ++ data)
       hashToChallenge h

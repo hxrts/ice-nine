@@ -94,6 +94,17 @@ structure ReadyToCommit (S : Scheme) where
   message : S.Message
   /-- Session identifier -/
   session : Nat
+  /-- Session tracker to prevent reuse of session IDs for this party -/
+  tracker : SessionTracker S
+  /-- Nonce registry to detect commitment reuse across sessions -/
+  nonceReg : NonceRegistry S
+
+/-- State bundle carrying updated trackers after commit. -/
+structure CommitResult (S : Scheme) where
+  committed : Committed S
+  msg : SignCommitMsg S
+  tracker : SessionTracker S
+  nonceReg : NonceRegistry S
 
 /-- After committing: nonces are consumed, commitments are published. -/
 structure Committed (S : Scheme) where
@@ -180,46 +191,57 @@ The type signatures enforce the linear protocol flow.
     After this, the nonces cannot be accessed again from ReadyToCommit.
 
     **FROST Protocol**: Broadcasts both public commitments (hiding + binding)
-    along with a hash commitment to the hiding nonce for equivocation prevention. -/
+    along with a hash commitment to the hiding nonce for equivocation prevention.
+
+    Enforces session freshness for the signer via `SessionTracker`. -/
 def commit (S : Scheme) (ready : ReadyToCommit S)
-    : Committed S × SignCommitMsg S :=
-  -- Extract nonce data (consumes the FreshNonce)
-  let hidingNonce := ready.nonce.hidingNonce
-  let bindingNonce := ready.nonce.bindingNonce
-  let publicHiding := ready.nonce.publicHiding
-  let publicBinding := ready.nonce.publicBinding
-  let opening := ready.nonce.opening
-  -- Create commitment to hiding nonce
-  let commitment := S.commit publicHiding opening
-  -- Build committed state (nonces are now here, not in FreshNonce)
-  let committed : Committed S :=
-    { keyShare := ready.keyShare
-      hidingNonce := hidingNonce
-      bindingNonce := bindingNonce
-      publicHiding := publicHiding
-      publicBinding := publicBinding
-      opening := opening
-      message := ready.message
-      session := ready.session
-      commitment := commitment
-      nonceConsumed := { fingerprint := 0 } }
-  -- Build message for broadcast (includes both public commitments)
-  let msg : SignCommitMsg S :=
-    { sender := ready.keyShare.pid
-      session := ready.session
-      commitW := commitment
-      hidingVal := publicHiding
-      bindingVal := publicBinding }
-  (committed, msg)
+    : Except (SignError S.PartyId) (CommitResult S) :=
+  if ready.tracker.isFresh ready.session then
+    -- Extract nonce data (consumes the FreshNonce)
+    let hidingNonce := ready.nonce.hidingNonce
+    let bindingNonce := ready.nonce.bindingNonce
+    let publicHiding := ready.nonce.publicHiding
+    let publicBinding := ready.nonce.publicBinding
+    let opening := ready.nonce.opening
+    -- Create commitment to hiding nonce
+    let commitment := S.commit publicHiding opening
+    -- Build committed state (nonces are now here, not in FreshNonce)
+    let committed : Committed S :=
+      { keyShare := ready.keyShare
+        hidingNonce := hidingNonce
+        bindingNonce := bindingNonce
+        publicHiding := publicHiding
+        publicBinding := publicBinding
+        opening := opening
+        message := ready.message
+        session := ready.session
+        commitment := commitment
+        nonceConsumed := { fingerprint := 0 } }
+    -- Build message for broadcast (includes both public commitments)
+    let msg : SignCommitMsg S :=
+      { sender := ready.keyShare.pid
+        session := ready.session
+        commitW := commitment
+        hidingVal := publicHiding
+        bindingVal := publicBinding }
+    let tracker' := ready.tracker.markUsed ready.session
+    let nonceReg' := ready.nonceReg.record ready.keyShare.pid ready.session commitment
+    match ready.nonceReg.detectReuse ready.keyShare.pid commitment with
+        | some (s1, s2) => throw (.sessionMismatch s1 s2)
+        | none => pure { committed := committed, msg := msg, tracker := tracker', nonceReg := nonceReg' }
+  else
+    throw (.sessionMismatch ready.session ready.session)
 
 /-- Transition: Committed → Revealed
     Called after receiving all commitments and computing binding factors/challenge.
 
     **FROST Protocol**: The binding factor ρ is computed from the message, public key,
     and all participants' commitments. This binds the effective nonce to the signing context. -/
-def reveal (S : Scheme) (committed : Committed S)
+def reveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (committed : Committed S)
     (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
-    : Revealed S × SignRevealWMsg S :=
+    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
+    : Revealed S × SignRevealWMsg S × SessionTracker S × NonceRegistry S :=
   -- Build revealed state
   let revealed : Revealed S :=
     { keyShare := committed.keyShare
@@ -237,7 +259,7 @@ def reveal (S : Scheme) (committed : Committed S)
     { sender := committed.keyShare.pid
       session := committed.session
       opening := committed.opening }
-  (revealed, msg)
+  (revealed, msg, tracker, nonceReg)
 
 /-- Transition: Revealed → Signed (success) or Revealed → Aborted (norm failure)
     Computes partial signature z_i = y_eff_i + c·sk_i where
@@ -246,8 +268,9 @@ def reveal (S : Scheme) (committed : Committed S)
 
     **FROST Protocol**: The effective nonce incorporates the binding factor,
     which ties this signer's contribution to the specific signing context. -/
-def sign (S : Scheme) (revealed : Revealed S)
-    : Sum (Signed S) (Revealed S × String) :=
+def sign (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S)
+    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
+    : Sum (Signed S × SessionTracker S × NonceRegistry S) (Revealed S × String) :=
   -- Derive effective nonce: y_eff = hiding + ρ·binding
   let y_eff := revealed.hidingNonce + revealed.bindingFactor • revealed.bindingNonce
   -- Compute partial signature: z_i = y_eff + c·sk_i
@@ -260,7 +283,7 @@ def sign (S : Scheme) (revealed : Revealed S)
         message := revealed.message
         session := revealed.session
         challenge := revealed.challenge }
-    Sum.inl signed
+    Sum.inl (signed, tracker, nonceReg)
   else
     -- Return the revealed state for retry with explanation
     Sum.inr (revealed, "norm check failed")
@@ -314,16 +337,24 @@ structure RetryContext (S : Scheme) where
   message : S.Message
   /-- Base session ID (constant across retries for coordination) -/
   session : Nat
+  /-- Session tracker (persistent across retries) -/
+  tracker : SessionTracker S
+  /-- Nonce registry (persistent across retries) -/
+  nonceReg : NonceRegistry S
 
 /-- Create retry context from revealed state after norm failure.
-    The revealed state is consumed—it cannot be used again. -/
-def mkRetryContext (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat)
+    The revealed state is consumed—it cannot be used again.
+    Requires tracker and nonceReg to be passed through from the commit phase. -/
+def mkRetryContext (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S) (maxAttempts : Nat)
+    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
     : RetryContext S :=
   { attempt := 1
     maxAttempts := maxAttempts
     keyShare := revealed.keyShare
     message := revealed.message
-    session := revealed.session }
+    session := revealed.session
+    tracker := tracker
+    nonceReg := nonceReg }
 
 /-- Advance retry context for next attempt.
     Returns None if max attempts exceeded. -/
@@ -343,7 +374,9 @@ def retryWithFreshNonce (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshN
   { keyShare := ctx.keyShare
     nonce := freshNonce
     message := ctx.message
-    session := ctx.session }
+    session := ctx.session
+    tracker := ctx.tracker
+    nonceReg := ctx.nonceReg }
 
 /-- Create new ReadyToCommit for retry with FRESH nonce AND new session ID.
     Use this when retries should be independent sessions (e.g., parallel attempts).
@@ -355,7 +388,9 @@ def retryWithNewSession (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshN
   { keyShare := ctx.keyShare
     nonce := freshNonce
     message := ctx.message
-    session := newSession }
+    session := newSession
+    tracker := ctx.tracker
+    nonceReg := ctx.nonceReg }
 
 /-- Create aborted state when max retries exceeded. -/
 def abort (S : Scheme) (ctx : RetryContext S) : Aborted S :=
@@ -376,14 +411,17 @@ inductive SignResult (S : Scheme)
   | needsRetry (ctx : RetryContext S)
   | aborted (aborted : Aborted S)
 
-/-- Run signing from Revealed state through to completion or retry. -/
-def trySign (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat := 16)
+/-- Run signing from Revealed state through to completion or retry.
+    Requires tracker and nonceReg for creating retry context. -/
+def trySign (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S)
+    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
+    (maxAttempts : Nat := 16)
     : SignResult S :=
   match sign S revealed with
   | Sum.inl signed =>
       .success (finalize S signed)
   | Sum.inr (revealed', _) =>
-      let ctx := mkRetryContext S revealed' maxAttempts
+      let ctx := mkRetryContext S revealed' maxAttempts tracker nonceReg
       if ctx.attempt < ctx.maxAttempts then
         .needsRetry ctx
       else
@@ -395,21 +433,25 @@ def trySign (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat := 16)
 Create the initial session state from key share and sampled randomness.
 -/
 
-/-- Initialize a signing session with dual nonces.
+/-- Initialize a signing session with dual nonces and tracker.
     Caller must provide freshly sampled hiding and binding nonces.
 
     **CRITICAL**: Both nonces must be fresh from CSPRNG. -/
-def initSession (S : Scheme)
+def initSession (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (keyShare : KeyShare S)
     (message : S.Message)
     (session : Nat)
     (hidingNonce bindingNonce : S.Secret)
     (opening : S.Opening)
+    (tracker : SessionTracker S := SessionTracker.empty S keyShare.pid)
+    (nonceReg : NonceRegistry S := NonceRegistry.empty S)
     : ReadyToCommit S :=
   { keyShare := keyShare
     nonce := FreshNonce.sample S hidingNonce bindingNonce opening
     message := message
-    session := session }
+    session := session
+    tracker := tracker
+    nonceReg := nonceReg }
 
 /-!
 ## Type-Level Guarantees
@@ -562,7 +604,8 @@ Use standard two-round signing when these assumptions don't hold.
     Use standard two-round signing when these assumptions don't hold.
 
     Returns None if norm check fails (caller should retry with fresh nonce). -/
-def signFast (S : Scheme)
+def signFast (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    [DecidableEq S.Secret]
     (keyShare : KeyShare S)
     (precomputed : PrecomputedNonce S)
     (challenge : S.Challenge)
@@ -570,29 +613,32 @@ def signFast (S : Scheme)
     (session : Nat)
     (context : ExternalContext := {})
     : Option (SignShareMsg S) :=
-  -- Derive effective nonce from dual nonces
   let effectiveNonce := precomputed.nonce.hidingNonce + bindingFactor • precomputed.nonce.bindingNonce
-  -- Compute partial signature: z_i = y_eff + c·sk_i
   let z_i := effectiveNonce + challenge • keyShare.secret
-  -- Check norm (would use S.normOK in real implementation)
-  -- For now, always succeed - real impl would check and return none on failure
-  some { sender := keyShare.pid
-         session := session
-         z_i := z_i
-         context := context }
+  if decide (S.normOK z_i) then
+    some { sender := keyShare.pid
+           session := session
+           z_i := z_i
+           context := context }
+  else
+    none
 
 /-- Initialize a fast-path signing session from precomputed nonce.
     Use when commitments have been pre-shared and you want to skip commit phase. -/
-def initFastSession (S : Scheme)
+def initFastSession (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (keyShare : KeyShare S)
     (message : S.Message)
     (session : Nat)
     (precomputed : PrecomputedNonce S)
+    (tracker : SessionTracker S := SessionTracker.empty S keyShare.pid)
+    (nonceReg : NonceRegistry S := NonceRegistry.empty S)
     : ReadyToCommit S :=
   { keyShare := keyShare
     nonce := precomputed.nonce
     message := message
-    session := session }
+    session := session
+    tracker := tracker
+    nonceReg := nonceReg }
 
 /-- Pre-shared commitment for fast path.
     Parties broadcast these before signing requests arrive. -/

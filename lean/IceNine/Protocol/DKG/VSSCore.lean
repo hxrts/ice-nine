@@ -202,19 +202,13 @@ theorem generateShare_evalPoint (S : Scheme) [Monoid S.Scalar] [Semiring S.Secre
     (p : Polynomial S.Secret) (pid : S.PartyId) (pt : S.Scalar) :
     (generateShare S p pid pt).evalPoint = pt := rfl
 
-/-- Helper lemma: generateShares preserves eval points in order.
-
-    **Justification**: By definition, `generateShares` maps each `(pid, pt)` to
-    a `VSSShare` with `evalPoint = pt`. Therefore the list of eval points
-    equals the list of second components.
-
-    This is axiomatized because the proof requires `List.map_map` composition
-    and function extensionality in a way that interacts poorly with Lean 4's
-    elaborator when type class constraints are involved. -/
-axiom generateShares_evalPoints (S : Scheme) [DecidableEq S.Scalar] [Semiring S.Secret] [Monoid S.Scalar] [Module S.Scalar S.Secret]
+/-- Helper lemma: generateShares preserves eval points in order. -/
+theorem generateShares_evalPoints (S : Scheme) [DecidableEq S.Scalar] [Semiring S.Secret] [Monoid S.Scalar] [Module S.Scalar S.Secret]
     (p : Polynomial S.Secret)
     (parties : List (S.PartyId × S.Scalar)) :
-    (generateShares S p parties).map (·.evalPoint) = parties.map Prod.snd
+    (generateShares S p parties).map (·.evalPoint) = parties.map Prod.snd := by
+  -- unfold and simplify the composed maps
+  simp [generateShares, generateShare]
 
 /-- Create VSS transcript from polynomial and party list.
     Requires that party evaluation points are distinct. -/

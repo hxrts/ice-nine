@@ -253,22 +253,28 @@ Properties of norm bounds useful for security proofs.
 /-- Helper: vecInfNorm is the max of absolute values -/
 lemma vecInfNorm_nil : vecInfNorm [] = 0 := rfl
 
+-- Helper: foldl max distributes over max with init
+private lemma foldl_max_init (init : Nat) (xs : List Int) :
+    List.foldl (fun acc x => max acc (Int.natAbs x)) init xs =
+    max init (List.foldl (fun acc x => max acc (Int.natAbs x)) 0 xs) := by
+  induction xs generalizing init with
+  | nil => simp
+  | cons y ys ih =>
+    simp only [List.foldl]
+    rw [ih (max init (Int.natAbs y)), ih (max 0 (Int.natAbs y))]
+    simp only [Nat.zero_max, max_assoc]
+
 lemma vecInfNorm_cons (x : Int) (xs : List Int) :
     vecInfNorm (x :: xs) = max (Int.natAbs x) (vecInfNorm xs) := by
   simp only [vecInfNorm, List.foldl]
-  induction xs generalizing x with
-  | nil => simp [vecInfNorm, max_comm]
-  | cons y ys ih =>
-    simp only [List.foldl]
-    rw [max_assoc, max_comm (Int.natAbs x)]
-    congr 1
-    exact ih y
+  rw [foldl_max_init]
+  simp only [Nat.zero_max]
 
 /-- Each element's absolute value is bounded by the ℓ∞ norm -/
 lemma abs_le_vecInfNorm (v : List Int) (x : Int) (hx : x ∈ v) :
     Int.natAbs x ≤ vecInfNorm v := by
   induction v with
-  | nil => exact absurd hx (List.not_mem_nil x)
+  | nil => simp at hx
   | cons y ys ih =>
     rw [vecInfNorm_cons]
     cases List.mem_cons.mp hx with

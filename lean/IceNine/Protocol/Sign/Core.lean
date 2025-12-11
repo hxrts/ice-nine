@@ -9,6 +9,7 @@ See Sign.lean for the full protocol documentation and API guidance.
 
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Core.Lagrange
+import IceNine.Protocol.Core.Serialize
 import Mathlib
 
 namespace IceNine.Protocol
@@ -367,7 +368,10 @@ structure ValidSignTranscript (S : Scheme)
     4. Commitment openings are valid
     5. All messages have consistent session ID -/
 def validateSigning
-  (S     : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [Inhabited S.PartyId]
+  (S     : Scheme)
+  [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Scalar]
+  [Serializable S.Message] [Serializable S.Public] [Serializable S.PartyId] [Serializable S.Commitment]
+  [Inhabited S.PartyId] [Inhabited S.Public]
   (pk    : S.Public)
   (m     : S.Message)
   (Sset  : List S.PartyId)
@@ -397,6 +401,13 @@ def validateSigning
     else throw (.participantMismatch c.sender)
   for sh in shares do
     if sh.session = sess then pure () else throw (.sessionMismatch sess sh.session)
+  -- Validate binding factors were provided and correctly derived
+  for cmsg in commits do
+    match bindingFactors.get cmsg.sender with
+    | some rho =>
+        let expected := computeBindingFactor S m pk commits cmsg.sender
+        if decide (rho = expected) then pure () else throw (.bindingMismatch cmsg.sender)
+    | none => throw (.missingBindingFactor cmsg.sender)
   -- Compute challenge using dual nonce structure
   let (c, _w) := computeChallenge S pk m Sset commits bindingFactors
   let sig := aggregateSignature S c Sset (commits.map (·.commitW)) shares

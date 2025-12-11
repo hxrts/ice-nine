@@ -60,7 +60,7 @@ lemma verify_happy_simple_lagrange
   let w  : Int := (coeffs.zipWith (·*·) ys).sum   -- Σ λ_i·y_i
   let c  : Int := simpleScheme.hash m pk Sset [] w
   let coeffStructs : List (LagrangeCoeff simpleScheme) :=
-    coeffs.map (fun λ => { pid := fromId, lambda := λ })
+    coeffs.map (fun coef => { pid := fromId, lambda := coef })
   let shares : List (SignShareMsg simpleScheme) :=
     List.zipWith (fun y s => { sender := fromId, session := session, z_i := y + c * s }) ys sks
   let sig : Signature simpleScheme :=
@@ -68,7 +68,7 @@ lemma verify_happy_simple_lagrange
   verify simpleScheme pk m sig := by
   intros pk w c coeffStructs shares sig
   simp [aggregateSignatureLagrange, verify, simpleScheme, normOKAlways,
-        smul_int_eq_mul, List.sum_zipWith3_scaled_add_mul, LinearMap.id_apply, List.zipWith, List.zipWith3, List.foldl_map] at *
+        smul_int_eq_mul, LinearMap.id_apply, List.zipWith, List.zipWith3, List.foldl_map] at *
   ring_nf
 
 /-!

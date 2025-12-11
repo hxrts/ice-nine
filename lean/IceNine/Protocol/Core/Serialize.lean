@@ -264,8 +264,8 @@ The core abstraction for types that can be converted to/from bytes.
 class Serializable (α : Type*) where
   /-- Convert to byte representation -/
   toBytes : α → ByteArray
-  /-- Parse from bytes, returning none on malformed input -/
-  fromBytes : ByteArray → Option α
+  /-- Parse from bytes, returning parsed value and bytes consumed. -/
+  fromBytes : ByteArray → Option (α × Nat)
   -- Axiom: successful round-trip
   -- roundTrip : ∀ x, fromBytes (toBytes x) = some x
 
@@ -282,7 +282,7 @@ def SerializableWithHeader.toBytesWithHeader {α : Type*} [inst : SerializableWi
 def SerializableWithHeader.fromBytesWithHeader {α : Type*} [inst : SerializableWithHeader α] (bs : ByteArray) : Option α :=
   match SerializationHeader.fromBytes bs with
   | none => none
-  | some (h, rest) => if h.schemeId = inst.schemeId then inst.fromBytes rest else none
+  | some (h, rest) => if h.schemeId = inst.schemeId then (inst.fromBytes rest).map (·.1) else none
 
 /-!
 ## Primitive Serializers
@@ -331,15 +331,14 @@ def intFromBytes (bs : ByteArray) : Option Int :=
 
 instance : Serializable Nat where
   toBytes := natToBytes
-  fromBytes := natFromBytes
+  fromBytes bs := natFromBytes bs |>.map (·, 8)
 
 instance : Serializable Int where
   toBytes := intToBytes
-  fromBytes := intFromBytes
+  fromBytes bs := intFromBytes bs |>.map (·, 8)
 
 instance : Serializable ByteArray where
   toBytes bs :=
-    -- Length prefix (4 bytes) + data
     let len := natToBytes bs.size |>.extract 0 4
     len ++ bs
   fromBytes bs :=
@@ -349,7 +348,7 @@ instance : Serializable ByteArray where
       match natFromBytes (lenBytes ++ ⟨#[0, 0, 0, 0]⟩) with
       | some len =>
           if bs.size < 4 + len then none
-          else some (bs.extract 4 (4 + len))
+          else some (bs.extract 4 (4 + len), 4 + len)
       | none => none
 
 /-!
@@ -365,34 +364,23 @@ instance {α : Type*} [Serializable α] : Serializable (Option α) where
     | some x => ⟨#[1]⟩ ++ Serializable.toBytes x
   fromBytes bs :=
     if bs.size < 1 then none
-    else if bs.get! 0 = 0 then some none
+    else if bs.get! 0 = 0 then some (none, 1)
     else if bs.get! 0 = 1 then
-      Serializable.fromBytes (bs.extract 1 bs.size) |>.map some
+      Serializable.fromBytes (bs.extract 1 bs.size) |>.map fun (x, n) => (some x, n + 1)
     else none
 
-/-- Helper to parse a list of elements from bytes.
-
-    **Known Limitation**: This parser assumes 8 bytes per element. This is a
-    placeholder value that works for 64-bit integers but will NOT correctly
-    parse variable-length elements.
-
-    **Production Fix**: The `Serializable` typeclass should be extended to:
-    1. Return `(α × Nat)` from `fromBytes` indicating bytes consumed, OR
-    2. Add a `byteSize : α → Nat` method, OR
-    3. Use a length-prefix encoding for each element
-
-    For now, this limitation is acceptable because:
-    - List serialization is only used for testing/debugging
-    - The wire protocol would use a proper framing layer
-    - Production implementations should use a well-tested serialization library -/
-def parseList {α : Type*} [Serializable α] (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α) :=
-  if count = 0 then some acc.reverse
+/-- Helper to parse a list of length-prefixed elements from bytes.
+    Returns the parsed list and total bytes consumed. -/
+def parseList {α : Type*} [Serializable α] (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α × Nat) :=
+  if count = 0 then some (acc.reverse, 0)
   else
     match Serializable.fromBytes bs with
-    | some x =>
-        -- FIXME: Hardcoded 8 bytes per element. See docstring above.
-        let consumed := min 8 bs.size
-        parseList (count - 1) (bs.extract consumed bs.size) (x :: acc)
+    | some (x, consumed) =>
+        if consumed = 0 ∨ consumed > bs.size then none
+        else
+          match parseList (count - 1) (bs.extract consumed bs.size) (x :: acc) with
+          | some (xs, tailConsumed) => some (xs, consumed + tailConsumed)
+          | none => none
     | none => none
 
 /-- Serialize List: 4-byte count + concatenated elements -/
@@ -409,7 +397,7 @@ instance {α : Type*} [Serializable α] : Serializable (List α) where
       | some count =>
           -- Parse `count` elements from remaining bytes
           let rest := bs.extract 4 bs.size
-          parseList count rest []
+          parseList count rest [] |>.map (fun (xs, consumed) => (xs, 4 + consumed))
       | none => none
 
 /-!

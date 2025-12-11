@@ -36,7 +36,7 @@ theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
 theorem take_eq_self_of_length_eq {α : Type*} (as bs : List α) (h : as.length = bs.length) :
     as.take bs.length = as := by
   rw [← h]
-  simp [take_length]
+  simp only [List.take_length]
 
 /-- Sum of zipWith add for equal-length lists.
     Σ(a_i + b_i) = Σa_i + Σb_i -/
@@ -60,16 +60,16 @@ lemma sum_zipWith_add_mul (c : Int) (ys sks : List Int) (hlen : ys.length = sks.
     (zipWith (fun y s => y + c * s) ys sks).sum = ys.sum + c * sks.sum := by
   induction ys generalizing sks with
   | nil =>
-    cases sks with
-    | nil => simp
-    | cons _ _ => simp at hlen
+    match sks with
+    | [] => simp
+    | _::_ => simp_all
   | cons y ys ih =>
-    cases sks with
-    | nil => simp at hlen
-    | cons s sks =>
+    match sks with
+    | [] => simp_all
+    | s::sks' =>
       simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons]
-      rw [ih sks hlen]
+      rw [ih sks' hlen]
       ring
 
 /-- Sum distributes over zipWith with addition and scalar multiplication (module version).
@@ -83,16 +83,16 @@ lemma sum_zipWith_add_smul
     (zipWith (fun y s => y + c • s) ys sks).sum = ys.sum + c • sks.sum := by
   induction ys generalizing sks with
   | nil =>
-    cases sks with
-    | nil => simp
-    | cons _ _ => simp at hlen
+    match sks with
+    | [] => simp
+    | _::_ => simp_all
   | cons y ys ih =>
-    cases sks with
-    | nil => simp at hlen
-    | cons s sks =>
+    match sks with
+    | [] => simp_all
+    | s::sks' =>
       simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons, smul_add]
-      rw [ih sks hlen]
+      rw [ih sks' hlen]
       abel
 
 /-!
@@ -102,22 +102,31 @@ For threshold signing: Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
 -/
 
 /-- Lagrange-weighted aggregation splits linearly.
-    Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i -/
-lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int) :
+    Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
+    Requires equal-length lists since zipWith3 truncates. -/
+lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int)
+    (hlen1 : coeffs.length = ys.length) (hlen2 : ys.length = sks.length) :
     (zipWith3 (fun coeff y s => coeff * y + coeff * (c * s)) coeffs ys sks).sum
       = (coeffs.zipWith (fun a b => a * b) ys).sum + c * (coeffs.zipWith (fun a b => a * b) sks).sum := by
   induction coeffs generalizing ys sks with
-  | nil => simp only [zipWith3_nil_left, zipWith_nil_left, sum_nil, zero_add, mul_zero]
+  | nil =>
+    -- coeffs = [] implies ys = [] by hlen1, and sks = [] by hlen2
+    match ys with
+    | [] =>
+      match sks with
+      | [] => simp
+      | _::_ => simp only [length_nil, length_cons] at hlen2; omega
+    | _::_ => simp only [length_nil, length_cons] at hlen1; omega
   | cons coeff coeffs' ih =>
-    cases ys with
-    | nil => simp only [zipWith3_nil_mid, zipWith_nil_right, sum_nil, zero_add, mul_zero]
-    | cons y ys =>
-      cases sks with
-      | nil => simp only [zipWith3_nil_right, zipWith_cons_cons, zipWith_nil_right,
-                         sum_cons, sum_nil, mul_zero, add_zero]
-      | cons s sks =>
-        simp only [zipWith3_cons_cons_cons, zipWith_cons_cons, sum_cons]
-        rw [ih ys sks]
+    match ys with
+    | [] => simp only [length_nil, length_cons] at hlen1; omega
+    | y::ys' =>
+      match sks with
+      | [] => simp only [length_nil, length_cons] at hlen2; omega
+      | s::sks' =>
+        simp only [length_cons, add_left_inj] at hlen1 hlen2
+        simp only [zipWith3, zipWith_cons_cons, sum_cons]
+        rw [ih ys' sks' hlen1 hlen2]
         ring
 
 end List

@@ -142,29 +142,33 @@ The local state contains:
 
 In round one each party commits to an ephemeral nonce. This commitment prevents adaptive attacks where an adversary chooses its nonce after seeing others.
 
-### Procedure
+### Procedure (session-typed API)
 
-The `signRound1` function produces the local state and commit message.
+The implementation no longer exposes raw `signRound1/2`. Use the linear, session-typed API in `Protocol/Sign/Session.lean`:
 
 ```lean
-def signRound1
-  (S : Scheme)
-  (ks      : KeyShare S)
-  (m       : S.Message)
-  (session : Nat)
-  (y_i     : S.Secret)
-  (openW   : S.Opening)
-  : SignLocalState S × SignCommitMsg S
+open IceNine.Protocol.SignSession
+
+-- caller supplies fresh randomness
+let ready := initSession S keyShare msg session hidingNonce bindingNonce opening
+match commit S ready with
+| .error err => -- session reuse or commitment reuse detected locally
+| .ok { committed, msg := commitMsg, tracker, nonceReg } =>
+  -- after collecting commits and computing challenge/binding factors:
+  let (revealed, revealMsg, tracker', nonceReg') :=
+    reveal S committed challenge bindingFactor aggregateW tracker nonceReg
+  match sign S revealed tracker' nonceReg' with
+  | .inl (signed, tracker'', nonceReg'') => finalize S signed
+  | .inr _      => -- retry with NEW FreshNonce via retryWithFreshNonce
 ```
 
-Each party $P_i \in S$ executes the following steps.
+Round‑1 message contents are identical: each `SignCommitMsg` carries the hash commitment plus both public nonce values.
 
-1. Sample a short ephemeral secret $y_i \in \mathcal{S}$.
-2. Compute the ephemeral public nonce $w_i = A(y_i)$.
-3. Sample a random opening $\rho_i \in \mathcal{O}$.
-4. Compute the commitment $\mathsf{Com}^{(w)}_i = \mathsf{Com}(w_i, \rho_i)$.
-5. Broadcast the commitment $\mathsf{Com}^{(w)}_i$ to all parties in $S$.
-6. Store the local state $(y_i, w_i, \rho_i)$.
+Each party $P_i \in S$ still samples fresh $(y_{\text{hiding}}, y_{\text{binding}})$, computes
+$W_{\text{hiding}} = A(y_{\text{hiding}})$, $W_{\text{binding}} = A(y_{\text{binding}})$,
+samples an opening $\rho_i$, and broadcasts the commitment to $W_{\text{hiding}}$ together with both public nonces. The implementation also:
+- marks the `session` as used in a per-party `SessionTracker`
+- records `commitW` in a per-party `NonceRegistry` and rejects if the same commitment was used in a different session for that party.
 
 ### Commit Phase State
 
@@ -188,7 +192,9 @@ After all commitments are received parties reveal their nonces and compute the s
 
 ### Reveal Phase
 
-Each party $P_i$ broadcasts the pair $(w_i, \rho_i)$.
+Each party $P_i$ broadcasts only the opening $\rho_i$ for its hiding commitment.
+The public nonces (`hidingVal`, `bindingVal`) were already sent in Round 1 inside `SignCommitMsg`.
+Trackers (`SessionTracker`, `NonceRegistry`) are threaded through; no additional updates occur in this phase.
 
 ### Verification
 
@@ -218,17 +224,8 @@ In round two each party produces its partial signature.
 
 ### n-of-n Case
 
-In the $n$-of-$n$ setting all parties must participate. The `signRound2` function computes the partial signature.
-
-```lean
-def signRound2
-  (S : Scheme)
-  (st : SignLocalState S)
-  (c  : S.Challenge)
-  : Option (SignShareMsg S)
-```
-
-Each party $P_i$ computes its partial signature as
+In the $n$-of-$n$ setting all parties must participate. The session transition `sign`
+in `SignSession` computes each partial signature as
 
 $$z_i = y_i + c \cdot s_i$$
 
@@ -480,6 +477,7 @@ This binding prevents cross-session attacks where an adversary reuses partial si
 ## Transcript Validation
 
 The `validateSigning` function checks the entire signing transcript before aggregation.
+Its current signature also requires precomputed binding factors (derived from the commit list):
 
 ```lean
 def validateSigning
@@ -489,9 +487,12 @@ def validateSigning
   (Sset  : List S.PartyId)
   (commits : List (SignCommitMsg S))
   (reveals : List (SignRevealWMsg S))
+  (bindingFactors : BindingFactors S)
   (shares  : List (SignShareMsg S))
   : Except (SignError S.PartyId) (Signature S)
 ```
+
+Callers must compute `bindingFactors` (e.g., via `computeBindingFactors`) and supply them; otherwise validation will not type-check.
 
 ### Error Types
 
@@ -904,7 +905,7 @@ def signFast (S : Scheme)
     : Option (SignShareMsg S)
 ```
 
-This function produces a signature share immediately using a precomputed nonce. It returns `none` if the norm check fails, requiring a fresh nonce.
+This function produces a signature share immediately using a precomputed nonce. It SHOULD return `none` if the norm check fails, requiring a fresh nonce. **Implementation note:** the current Lean code stubs out the norm check and always returns `some`; production code must call `S.normOK` here and propagate failure.
 
 ### Security Assumptions
 

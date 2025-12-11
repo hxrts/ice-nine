@@ -58,6 +58,8 @@ at protocol setup (DKG completion) and maintain the invariant.
 
 import IceNine.Protocol.Core.Core
 import Mathlib
+import Mathlib/RingTheory/Polynomial/Lagrange
+import Mathlib/Data/Finset
 
 namespace IceNine.Protocol.Lagrange
 
@@ -85,12 +87,9 @@ def coeffAtZero {F : Type*} [Field F] [DecidableEq F]
     (partyScalar : F)
     (allScalars : List F)
     : F :=
-  let others := allScalars.filter (· ≠ partyScalar)
-  -- Check for degeneracy: if any other scalar equals partyScalar, return 0
-  if others.length ≠ allScalars.length - 1 then
-    0  -- Multiple parties with same scalar
-  else
-    others.foldl (fun acc xj => acc * (xj / (xj - partyScalar))) 1
+  let s : Finset F := allScalars.toFinset
+  let denomZero := s.erase partyScalar
+  denomZero.product (fun xj => xj / (xj - partyScalar))
 
 /-- Compute Lagrange coefficient with explicit "others" list.
 
@@ -227,88 +226,5 @@ def buildPartyCoeffs (S : Scheme)
 
 Theorems about Lagrange coefficients.
 -/
-
-/-- Lagrange coefficients sum to 1 when evaluating at a point in the domain.
-    (This is the partition of unity property.)
-
-    **Mathematical justification**: The constant polynomial f(x) = 1 evaluated
-    at any point equals 1. By Lagrange interpolation:
-      1 = f(0) = Σ_i λ_i · f(x_i) = Σ_i λ_i · 1 = Σ_i λ_i
-
-    This is proven in Mathlib as `Polynomial.sum_lagrange_basis_eq_one` for
-    the general case. We state it as an axiom here because our list-based
-    representation requires conversion to Finset.
-
-    **Reference**: See Mathlib4 `Mathlib/RingTheory/Polynomial/Lagrange.lean`
-    for the formalized version using Finsets. -/
-axiom coeffs_sum_to_one {F : Type*} [Field F] [DecidableEq F]
-    (partyScalars : List F)
-    (hnodup : partyScalars.Nodup)
-    (hne : partyScalars ≠ []) :
-    ((allCoeffsAtZero partyScalars).map Prod.snd).sum = 1
-
-/-- Lagrange interpolation reconstructs the secret from shares.
-
-    If shares are evaluations of polynomial f at distinct points x_i,
-    then f(0) = Σ_i λ_i · f(x_i).
-
-    **Mathematical justification**: This is the defining property of
-    Lagrange interpolation. The basis polynomials L_i satisfy:
-      L_i(x_j) = δ_{ij} (Kronecker delta)
-
-    Therefore: f = Σ_i f(x_i) · L_i, and f(0) = Σ_i f(x_i) · L_i(0) = Σ_i λ_i · f(x_i)
-
-    **Reference**: Mathlib4 `Polynomial.interpolate_eq` -/
-axiom lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
-    (partyScalars : List F)
-    (values : List F)
-    (hnodup : partyScalars.Nodup)
-    (hlen : partyScalars.length = values.length) :
-    let coeffs := partyScalars.map fun p => coeffAtZero p partyScalars
-    (List.zipWith (· * ·) coeffs values).sum =
-      -- This equals the polynomial evaluated at 0
-      (List.zipWith (· * ·) coeffs values).sum
-
-/-- Zero coefficient when party not in set.
-
-    **Note**: When partyScalar ∉ allScalars, the filter keeps all elements,
-    so others.length = allScalars.length ≠ allScalars.length - 1, and the
-    function returns the foldl over all scalars (which still computes a
-    valid coefficient, just not one used in actual interpolation).
-
-    **Axiomatization rationale**: The proof involves careful case analysis
-    on list lengths and filter properties. We axiomatize for now.
-
-    TODO: Replace with proper proof using `split` tactic to handle the
-    if-then-else in coeffAtZero, then show that the filter condition
-    is satisfied when partyScalar ∉ allScalars. -/
-axiom coeff_zero_not_in {F : Type*} [Field F] [DecidableEq F]
-    (partyScalar : F)
-    (allScalars : List F)
-    (hnotin : partyScalar ∉ allScalars) :
-    coeffAtZero partyScalar allScalars =
-      allScalars.foldl (fun acc xj => acc * (xj / (xj - partyScalar))) 1
-
-/-- Coefficient is non-zero when party is in set with distinct scalars.
-
-    **Mathematical justification**: The Lagrange coefficient λ_i is a product of terms
-    x_j / (x_j - x_i) for j ≠ i. Each term is non-zero because:
-    1. x_j - x_i ≠ 0 (by Nodup: distinct scalars)
-    2. Division of non-zero by non-zero is non-zero in a field
-    3. Product of non-zero elements is non-zero in a field
-
-    **Axiomatization rationale**: The proof requires:
-    - `List.foldl` interaction with field multiplication
-    - Induction showing each factor is non-zero
-    - `Field.mul_ne_zero` from Mathlib
-
-    These are standard but verbose in Lean 4. We axiomatize with clear justification. -/
-axiom coeff_nonzero_in_set {F : Type*} [Field F] [DecidableEq F]
-    (partyScalar : F)
-    (allScalars : List F)
-    (hin : partyScalar ∈ allScalars)
-    (hnodup : allScalars.Nodup)
-    (hne : allScalars.length ≥ 1) :
-    coeffAtZero partyScalar allScalars ≠ 0
 
 end IceNine.Protocol.Lagrange

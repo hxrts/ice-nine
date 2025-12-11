@@ -138,7 +138,7 @@ noncomputable def mkThresholdCtxComputed
   have hlen : coeffs.length = active.toList.length := by simp [coeffs]
   have hpid : coeffs.map (fun (c : LagrangeCoeff S) => c.pid) = active.toList := by
     simp only [coeffs, List.map_map, Function.comp_def]
-    exact List.map_id _
+    simp only [List.map_id']
   mkThresholdCtx S active t coeffs hcard hpid hlen
 
 /-- Refresh context with fresh coefficients. -/
