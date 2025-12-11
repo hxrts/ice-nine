@@ -6,15 +6,15 @@ The signing protocol produces a threshold signature from partial contributions. 
 
 The signing implementation is split across focused modules for maintainability:
 
-- **`Protocol/SignTypes.lean`** - Core types: `SessionTracker`, `NonceRegistry`, message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`), error types (`SignError`, `AbortReason`), and output types (`Signature`, `SignatureDone`)
+- **`Protocol/Sign/Types.lean`** - Core types: `SessionTracker`, `NonceRegistry`, message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`), error types (`SignError`, `AbortReason`), and output types (`Signature`, `SignatureDone`)
 
-- **`Protocol/SignCore.lean`** - Core functions: `lagrangeCoeffAtZero`, `lagrangeCoeffs`, `computeChallenge`, `aggregateSignature`, `aggregateSignatureLagrange`, `ValidSignTranscript`, `validateSigning`
+- **`Protocol/Sign/Core.lean`** - Core functions: `lagrangeCoeffAtZero`, `lagrangeCoeffs`, `computeChallenge`, `aggregateSignature`, `aggregateSignatureLagrange`, `ValidSignTranscript`, `validateSigning`
 
-- **`Protocol/SignThreshold.lean`** - Threshold support: `CoeffStrategy`, `strategyOK`, `SignMode`, `ThresholdCtx`, context constructors (`mkAllCtx`, `mkThresholdCtx`, `mkThresholdCtxComputed`), and context-based aggregation
+- **`Protocol/Sign/Threshold.lean`** - Threshold support: `CoeffStrategy`, `strategyOK`, `SignMode`, `ThresholdCtx`, context constructors (`mkAllCtx`, `mkThresholdCtx`, `mkThresholdCtxComputed`), and context-based aggregation
 
 - **`Protocol/Sign/Sign.lean`** - Re-exports from all submodules for backward compatibility
 
-- **`Protocol/SignSession.lean`** - Session-typed API that makes nonce reuse a compile-time error
+- **`Protocol/Sign/Session.lean`** - Session-typed API that makes nonce reuse a compile-time error
 
 ## Phase-Indexed State
 
@@ -45,23 +45,25 @@ Each signing session requires the following inputs.
 The protocol uses three message types across its phases.
 
 ```lean
-structure SignCommitMsg (S : Scheme) :=
-  (sender   : S.PartyId)
-  (session  : Nat)
-  (commitW  : S.Commitment)  -- hash commitment to hiding nonce
-  (hiding   : S.Public)       -- public hiding commitment
-  (binding  : S.Public)       -- public binding commitment
+structure SignCommitMsg (S : Scheme) where
+  sender     : S.PartyId
+  session    : Nat
+  commitW    : S.Commitment  -- hash commitment to hiding nonce
+  hidingVal  : S.Public      -- public hiding commitment W_hiding = A(hiding nonce)
+  bindingVal : S.Public      -- public binding commitment W_binding = A(binding nonce)
+  context    : ExternalContext := {}  -- for external protocol binding
 
-structure SignRevealWMsg (S : Scheme) :=
-  (sender  : S.PartyId)
-  (session : Nat)
-  (opening : S.Opening)  -- opening for commitment verification
+structure SignRevealWMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  opening : S.Opening  -- opening for commitment verification
+  context : ExternalContext := {}
 
-structure SignShareMsg (S : Scheme) :=
-  (sender  : S.PartyId)
-  (session : Nat)
-  (z_i     : S.Secret)
-  (context : ExternalContext := {})  -- for external protocol binding
+structure SignShareMsg (S : Scheme) where
+  sender  : S.PartyId
+  session : Nat
+  z_i     : S.Secret
+  context : ExternalContext := {}  -- for external protocol binding
 ```
 
 All message types include an optional `context` field for binding to external protocols. See [Protocol Integration](06_integration.md) for details.
@@ -77,12 +79,12 @@ This provides stronger security against adaptive chosen-message attacks.
 
 ```lean
 structure SigningNonces (S : Scheme) where
-  hiding  : S.Secret   -- protects signer from adaptive adversaries
-  binding : S.Secret   -- commits to signing context
+  hidingVal  : S.Secret   -- protects signer from adaptive adversaries
+  bindingVal : S.Secret   -- commits to signing context
 
 structure SigningCommitments (S : Scheme) where
-  hiding  : S.Public   -- W_hiding = A(hiding nonce)
-  binding : S.Public   -- W_binding = A(binding nonce)
+  hidingVal  : S.Public   -- W_hiding = A(hiding nonce)
+  bindingVal : S.Public   -- W_binding = A(binding nonce)
 ```
 
 ### Domain-Separated Hash Functions (FROST H4, H5)
@@ -121,13 +123,13 @@ This prevents an adversary from adaptively choosing the message after seeing non
 Each party $P_i$ maintains local state during signing.
 
 ```lean
-structure SignLocalState (S : Scheme) :=
-  (share   : KeyShare S)
-  (msg     : S.Message)
-  (session : Nat)
-  (nonces  : SigningNonces S)      -- dual ephemeral nonces
-  (commits : SigningCommitments S) -- public nonce commitments
-  (openW   : S.Opening)
+structure SignLocalState (S : Scheme) where
+  share   : KeyShare S             -- party's long-term credential from DKG
+  msg     : S.Message              -- message being signed
+  session : Nat                    -- unique session identifier
+  nonces  : SigningNonces S        -- dual ephemeral nonces (NEVER reuse!)
+  commits : SigningCommitments S   -- public nonce commitments
+  openW   : S.Opening              -- commitment randomness for hiding commitment
 ```
 
 The local state contains:
@@ -563,7 +565,7 @@ If the same nonce $y$ is used with two different challenges $c_1, c_2$:
 
 The secret key can be recovered: $sk = (z_1 - z_2) / (c_1 - c_2)$
 
-This attack is formalized in `Security/Soundness.lean` as the `nonce_reuse_key_recovery` theorem. See [Verification: Special Soundness](04_verification.md#special-soundness) for the formal proof.
+This attack is formalized in `Proofs/Soundness/Soundness.lean` as the `nonce_reuse_key_recovery` theorem. See [Verification: Special Soundness](04_verification.md#special-soundness) for the formal proof.
 
 ### Session Tracker
 
@@ -714,17 +716,17 @@ This ensures a malicious minority cannot force repeated session aborts.
 
 ## Session-Typed Signing
 
-The `Protocol/SignSession.lean` module provides a session-typed API that makes nonce reuse a compile-time error rather than a runtime check. Each signing session progresses through states that consume the previous state, ensuring nonces are used exactly once.
+The `Protocol/Sign/Session.lean` module provides a session-typed API that makes nonce reuse a compile-time error rather than a runtime check. Each signing session progresses through states that consume the previous state, ensuring nonces are used exactly once.
 
 ### Session State Machine
 
 ```
-FreshNonce ──► ReadyToCommit ──► Committed ──► Revealed ──► Signed ──► Done
-                                                  │
-                                                  └──► Aborted (on retry failure)
+ReadyToCommit ──► Committed ──► Revealed ──► Signed ──► Done
+                                    │
+                                    └──► Aborted (on retry failure)
 ```
 
-Each transition consumes its input state. There is no way to "go back" or reuse a consumed state.
+Each transition consumes its input state. There is no way to "go back" or reuse a consumed state. The `ReadyToCommit` state contains a `FreshNonce` that gets consumed during the commit transition.
 
 ### Linear Nonce (Dual Nonce Version)
 
@@ -733,13 +735,13 @@ Following FROST, we use two nonces per signer:
 ```lean
 structure FreshNonce (S : Scheme) where
   private mk ::
-  private hidingNonce : S.Secret   -- secret hiding nonce
-  private bindingNonce : S.Secret  -- secret binding nonce
-  private publicHiding : S.Public  -- W_hiding = A(hiding)
-  private publicBinding : S.Public -- W_binding = A(binding)
-  private opening : S.Opening      -- commitment opening
+  private hidingNonce : S.Secret    -- secret hiding nonce
+  private bindingNonce : S.Secret   -- secret binding nonce
+  private publicHiding : S.Public   -- W_hiding = A(hiding)
+  private publicBinding : S.Public  -- W_binding = A(binding)
+  private opening : S.Opening       -- commitment opening
 
-def FreshNonce.sample (S : Scheme) (hiding binding : S.Secret) (opening : S.Opening) : FreshNonce S
+def FreshNonce.sample (S : Scheme) (h b : S.Secret) (opening : S.Opening) : FreshNonce S
 ```
 
 The private constructor prevents arbitrary creation. The only way to create a `FreshNonce` is via `sample` with fresh randomness for both hiding and binding nonces.
@@ -806,10 +808,10 @@ def reveal (S : Scheme) (committed : Committed S)
     (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
     : Revealed S × SignRevealWMsg S
 
--- Consumes Revealed, produces Signed or returns for retry
+-- Consumes Revealed, produces Signed (Left) or returns for retry (Right)
 -- Computes z_i = y_eff + c·sk_i where y_eff = hiding + ρ·binding
 def sign (S : Scheme) (revealed : Revealed S)
-    : Sum (Signed S) (Revealed S × String)
+    : Sum (Signed S) (Revealed S × String)  -- Left=success, Right=norm check failed
 
 -- Consumes Signed, produces Done
 def finalize (S : Scheme) (signed : Signed S) : Done S

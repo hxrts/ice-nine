@@ -22,7 +22,7 @@ The secret share is wrapped in a `SecretBox` with a private constructor. This pr
 /-- Create KeyShare from unwrapped secret (use during DKG). -/
 def KeyShare.create (S : Scheme) (pid : S.PartyId) (sk : S.Secret) (pk_i pk : S.Public)
     : KeyShare S :=
-  { pid := pid, sk_i := ⟨sk⟩, pk_i := pk_i, pk := pk }
+  { pid := pid, sk_i := SecretBox.wrap sk, pk_i := pk_i, pk := pk }
 
 /-- Get the unwrapped secret share for computation.
     **Security**: Only use when the secret is needed for cryptographic operations. -/
@@ -249,7 +249,7 @@ These coefficients satisfy $\sum_{i \in S} \lambda_i^S \cdot s_i = s$ when the s
 
 The base protocol uses additive shares where $\sum_i s_i = s$. For $n$-of-$n$ signing this is sufficient. For $t$-of-$n$ signing the shares must encode polynomial structure.
 
-One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials. The implementation provides Feldman VSS in `Protocol/VSSCore.lean` and `Protocol/VSS.lean`.
+One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials. The implementation provides Feldman VSS in `Protocol/DKG/VSSCore.lean` and `Protocol/DKG/VSS.lean`.
 
 An alternative approach uses additive shares with Lagrange adjustment at signing time. The Lagrange coefficients are computed over the active signer set $S$.
 

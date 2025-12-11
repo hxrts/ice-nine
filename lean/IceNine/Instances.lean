@@ -184,10 +184,9 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , commitBinding := by
       intro x1 x2 o1 o2 h
       -- h : latticeCommit x1 o1 = latticeCommit x2 o2
-      -- Extract the com field equality to get hash equality
-      have hcom : hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) :=
-        congrArg LatticeCommitment.com h
-      exact HashBinding.binding hcom
+      -- Unfold to get hash equality, then apply binding assumption
+      simp only [latticeCommit, LatticeCommitment.mk.injEq] at h
+      exact @HashBinding.binding hashBindingAssumption _ _ _ _ x1 x2 o1 o2 h
   , hashToScalar := fun domain data =>
       let h := hashBytes (domain ++ data)
       hashToChallenge h
@@ -201,11 +200,15 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , normOKDecidable := intVecInfLeqDecidable p.bound
 }
 
-abbrev LatticePartyId   : Type := (latticeScheme).PartyId
-abbrev LatticeMessage   : Type := (latticeScheme).Message
-abbrev LatticeSecret    : Type := (latticeScheme).Secret
-abbrev LatticePublic    : Type := (latticeScheme).Public
-abbrev LatticeChallenge : Type := (latticeScheme).Challenge
-abbrev LatticeBound     : Nat := ({} : LatticeParams).bound
+-- Type aliases for the lattice scheme
+-- These are convenience definitions for use with the default LatticeParams
+-- Note: defaultLatticeScheme is defined with explicit universe levels to avoid metavariables
+def defaultLatticeScheme : Scheme := @latticeScheme.{0, 0} {} hashBindingAssumption
+def LatticePartyId   : Type := Nat
+def LatticeMessage   : Type := ByteArray
+def LatticeSecret    : Type := Fin ({} : LatticeParams).n → Int
+def LatticePublic    : Type := Fin ({} : LatticeParams).n → Int
+def LatticeChallenge : Type := Int
+def LatticeBound     : Nat := ({} : LatticeParams).bound
 
 end IceNine.Instances

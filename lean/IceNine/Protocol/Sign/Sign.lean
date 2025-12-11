@@ -7,7 +7,7 @@ Two-round threshold signing following the Schnorr pattern:
   Aggregation: Combine partials into final signature
 
 Supports both n-of-n (all parties) and t-of-n (threshold) signing.
-Security proofs in `Security/Sign`.
+Security proofs in `Proofs/Correctness/Sign`.
 
 ## Module Structure
 

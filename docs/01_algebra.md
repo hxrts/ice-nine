@@ -37,9 +37,10 @@ structure Scheme where
   hash : Message → Public → List PartyId → List Commitment → Public → Challenge
 
   -- Optional identifier derivation
-  deriveIdentifier : ByteArray → Option PartyId
+  deriveIdentifier : ByteArray → Option PartyId := fun _ => none
 
   normOK : Secret → Prop
+  [normOKDecidable : DecidablePred normOK]
 ```
 
 ## Modules and Scalars
@@ -106,7 +107,7 @@ The error term $s_2$ is baked into the public key during key generation. The `no
 
 ### HighBits Specification
 
-The HighBits function is formally specified in `Security/HighBits.lean`:
+The HighBits function is formally specified in `Proofs/Core/HighBits.lean`:
 
 ```lean
 structure HighBitsSpec (P : Type*) [AddCommGroup P] where
@@ -230,7 +231,7 @@ def dilithiumNormOK (p : DilithiumParams) (z : List Int) : Prop :=
   vecInfNorm z < p.gamma1 - p.tau * p.eta
 ```
 
-Standard parameter sets (defined and validated in `Security/Assumptions.lean`):
+Standard parameter sets (defined and validated in `Proofs/Core/Assumptions.lean`):
 
 | Level | τ | η | γ₁ | γ₂ | β | Security |
 |-------|---|---|-----|-----|---|----------|
@@ -257,59 +258,40 @@ theorem dilithiumL2_gamma2_ok : dilithiumL2.gamma2 > dilithiumL2.beta
 
 ## Concrete Scheme Instantiations
 
-The implementation provides several concrete schemes:
+The implementation provides a lattice-friendly scheme in `Instances.lean`:
 
-### Simple Scheme (Testing)
+### Lattice Scheme
 
-Identity map over integers. For correctness proofs only.
-
-```lean
-def simpleScheme : Scheme :=
-  { Secret := Int, Public := Int, A := LinearMap.id, ... }
-```
-
-### ZMod Scheme (Field Arithmetic)
-
-Scalar multiplication over $\mathbb{Z}_q$.
+Integer vectors with hash-based commitments and Dilithium-style norm checking.
 
 ```lean
-def zmodScheme (q : ℕ) [Fact q.Prime] (a : ZMod q) : Scheme :=
-  { Secret := ZMod q, Public := ZMod q, A := LinearMap.lsmul _ _ a, ... }
-```
+structure LatticeParams where
+  n : Nat := 256          -- dimension
+  q : Nat := 8380417      -- modulus
+  bound : Nat := 1 <<< 19 -- ℓ∞ bound (approx Dilithium γ1)
 
-### Matrix Scheme (SIS/LWE)
-
-Matrix-vector multiplication: $A : \mathbb{Z}_q^m \to \mathbb{Z}_q^n$.
-
-```lean
-def matrixScheme (n m q : ℕ) (A : Matrix (Fin n) (Fin m) (ZMod q)) : Scheme :=
-  { Secret := Fin m → ZMod q
-  , Public := Fin n → ZMod q
-  , A := matrixMulVecLinear A  -- A(s) = A·s
+def latticeScheme (p : LatticeParams := {}) : Scheme :=
+  { PartyId   := Nat
+  , Message   := ByteArray
+  , Secret    := Fin p.n → Int
+  , Public    := Fin p.n → Int
+  , Challenge := Int
+  , Scalar    := Int
+  , A := LinearMap.id
+  , Commitment := LatticeCommitment (Fin p.n → Int) (Fin p.n → Int)
+  , Opening := Fin p.n → Int
+  , commit := latticeCommit  -- hash-based: H(encode(w, nonce))
+  , normOK := fun v => intVecInfLeq p.bound v
   , ... }
 ```
 
 This models the SIS/LWE structure:
-- Secret key: $s \in \mathbb{Z}_q^m$ (short vector)
-- Public key: $t = A \cdot s \in \mathbb{Z}_q^n$
-- Security reduces to SIS: forging requires finding short $z$ with $Az = 0$
+- Secret key: $s \in \mathbb{Z}^n$ (integer vector with bounded coefficients)
+- Public key: $t = A \cdot s$ (identity map for simplicity)
+- Norm bound: $\|z\|_\infty \leq \text{bound}$ for signature validity
+- Commitments: Hash-based with axiomatized binding
 
-### Polynomial Scheme (Ring-LWE)
-
-Polynomial multiplication in $R_q = \mathbb{Z}_q[X]/(X^n + 1)$.
-
-```lean
-def polyScheme (n q : ℕ) (a : Fin n → ZMod q) : Scheme :=
-  { Secret := Fin n → ZMod q   -- polynomial coefficients
-  , Public := Fin n → ZMod q
-  , A := polyMulLinear a       -- A(s) = a·s mod (X^n + 1)
-  , ... }
-```
-
-This models Ring-LWE structure:
-- Ring: $R_q = \mathbb{Z}_q[X]/(X^n + 1)$ for $n$ a power of 2
-- Multiplication uses negacyclic convolution ($X^n = -1$)
-- Efficient via Number Theoretic Transform (NTT)
+The hash-based commitment uses `hashBytes(encodePair(w, nonce))` where `encodePair` serializes the value and opening. Binding is axiomatized via `HashBinding` assumption.
 
 ## Semilattice Structure
 

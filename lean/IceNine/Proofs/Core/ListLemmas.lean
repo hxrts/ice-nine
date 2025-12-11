@@ -30,13 +30,13 @@ theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
   | a::as, b::bs => by
       simp only [zipWith_cons_cons, sum_cons, take_succ_cons, length_cons]
       rw [sum_zipWith_add as bs]
-      ring
+      abel
 
 /-- When lists have equal length, take is identity. -/
 theorem take_eq_self_of_length_eq {α : Type*} (as bs : List α) (h : as.length = bs.length) :
     as.take bs.length = as := by
-  rw [h]
-  exact take_length as
+  rw [← h]
+  simp [take_length]
 
 /-- Sum of zipWith add for equal-length lists.
     Σ(a_i + b_i) = Σa_i + Σb_i -/
@@ -54,35 +54,45 @@ For signature aggregation: Σ(y_i + c·s_i) = Σy_i + c·Σs_i
 -/
 
 /-- Sum distributes over zipWith with addition and scalar multiplication (Int version).
-    Σ(y_i + c·s_i) = Σy_i + c·Σs_i -/
-lemma sum_zipWith_add_mul (c : Int) (ys sks : List Int) :
+    Σ(y_i + c·s_i) = Σy_i + c·Σs_i
+    Requires equal-length lists since zipWith truncates. -/
+lemma sum_zipWith_add_mul (c : Int) (ys sks : List Int) (hlen : ys.length = sks.length) :
     (zipWith (fun y s => y + c * s) ys sks).sum = ys.sum + c * sks.sum := by
   induction ys generalizing sks with
-  | nil => simp only [zipWith_nil_left, sum_nil, zero_add, mul_zero]
+  | nil =>
+    cases sks with
+    | nil => simp
+    | cons _ _ => simp at hlen
   | cons y ys ih =>
     cases sks with
-    | nil => simp only [zipWith_nil_right, sum_nil, sum_cons, mul_zero, add_zero]
+    | nil => simp at hlen
     | cons s sks =>
+      simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons]
-      rw [ih sks]
+      rw [ih sks hlen]
       ring
 
 /-- Sum distributes over zipWith with addition and scalar multiplication (module version).
     Σ(y_i + c•s_i) = Σy_i + c•Σs_i
+    Requires equal-length lists since zipWith truncates.
 
     Uses `smul_add` from Mathlib module theory. -/
 lemma sum_zipWith_add_smul
     {R M : Type*} [Semiring R] [AddCommMonoid M] [Module R M]
-    (c : R) (ys sks : List M) :
+    (c : R) (ys sks : List M) (hlen : ys.length = sks.length) :
     (zipWith (fun y s => y + c • s) ys sks).sum = ys.sum + c • sks.sum := by
   induction ys generalizing sks with
-  | nil => simp only [zipWith_nil_left, sum_nil, zero_add, smul_zero]
+  | nil =>
+    cases sks with
+    | nil => simp
+    | cons _ _ => simp at hlen
   | cons y ys ih =>
     cases sks with
-    | nil => simp only [zipWith_nil_right, sum_nil, sum_cons, smul_zero, add_zero]
+    | nil => simp at hlen
     | cons s sks =>
+      simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons, smul_add]
-      rw [ih sks]
+      rw [ih sks hlen]
       abel
 
 /-!
@@ -94,11 +104,11 @@ For threshold signing: Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
 /-- Lagrange-weighted aggregation splits linearly.
     Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i -/
 lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int) :
-    (zipWith3 (fun λ_ y s => λ_ * y + λ_ * (c * s)) coeffs ys sks).sum
-      = (coeffs.zipWith (· * ·) ys).sum + c * (coeffs.zipWith (· * ·) sks).sum := by
+    (zipWith3 (fun coeff y s => coeff * y + coeff * (c * s)) coeffs ys sks).sum
+      = (coeffs.zipWith (fun a b => a * b) ys).sum + c * (coeffs.zipWith (fun a b => a * b) sks).sum := by
   induction coeffs generalizing ys sks with
   | nil => simp only [zipWith3_nil_left, zipWith_nil_left, sum_nil, zero_add, mul_zero]
-  | cons λ_ λs ih =>
+  | cons coeff coeffs' ih =>
     cases ys with
     | nil => simp only [zipWith3_nil_mid, zipWith_nil_right, sum_nil, zero_add, mul_zero]
     | cons y ys =>

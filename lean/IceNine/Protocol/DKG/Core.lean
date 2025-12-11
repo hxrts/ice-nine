@@ -3,7 +3,7 @@
 
 Distributed Key Generation protocol. Parties jointly generate a
 shared public key without any party learning the master secret.
-Security proofs are in `Security/DKG`.
+Security proofs are in `Proofs/Correctness/DKG`.
 -/
 
 import IceNine.Protocol.Core.Core

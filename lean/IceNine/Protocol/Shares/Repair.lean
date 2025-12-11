@@ -7,7 +7,7 @@ Helpers send masked deltas that sum to the lost sk_i via Lagrange.
 
 Privacy: Individual deltas reveal nothing about helper shares. Only the
 sum (the repaired share) is meaningful.
-Security proofs in `Security/Repair`.
+Security proofs in `Proofs/Extensions/Repair`.
 -/
 
 import IceNine.Protocol.Core.Core

@@ -4,7 +4,7 @@
 Complaint-based DKG for t-of-n threshold signing. Instead of aborting on
 first error, collects complaints against misbehaving parties. Enables
 exclusion of bad actors while continuing with honest majority.
-Security proofs in `Security/DKG`.
+Security proofs in `Proofs/Correctness/DKG`.
 -/
 
 import IceNine.Protocol.DKG.Core

@@ -13,6 +13,7 @@ The verifier receives the following inputs.
     c       : S.Challenge
     Sset    : List S.PartyId
     commits : List S.Commitment
+    context : ExternalContext := {}
   ```
 - **Message.** The message $m \in \mathcal{M}$ that was signed.
 - **Public key.** The global public key $\mathsf{pk}$.
@@ -198,49 +199,50 @@ This phase-based discipline ensures signatures are only produced after complete 
 
 ## Correctness Theorems
 
-The Lean implementation provides formal correctness proofs.
+The Lean implementation provides formal correctness proofs in `Proofs/Correctness/Correctness.lean`.
 
-### Happy-Path Correctness (Integer Scheme)
+### Generic Happy-Path Correctness
 
 ```lean
-theorem verify_happy_simple
-    (ys sks : List Int)
-    (m : ByteArray)
-    (Sset : List Nat)
-    (session fromId : Nat)
-    (B : Int := 1000) :
-  let scheme := simpleSchemeBounded B
-  let pk : Int := sks.sum
-  let w  : Int := ys.sum
-  let c  : Int := scheme.hash m pk Sset [] w
-  let shares : List (SignShareMsg scheme) := ...
-  let sig : Signature scheme := aggregateSignature scheme c Sset [] shares
-  verify scheme pk m sig
+theorem verify_happy_generic
+    (S : Scheme) [DecidableEq S.PartyId]
+    (pk : S.Public)
+    (m : S.Message)
+    (Sset : List S.PartyId)
+    (commits : List (SignCommitMsg S))
+    (reveals : List (SignRevealWMsg S))
+    (shares  : List (SignShareMsg S))
+    (hvalid : ValidSignTranscript S Sset commits reveals shares) :
+  let w := reveals.foldl (fun acc r => acc + r.w_i) (0 : S.Public)
+  let c := S.hash m pk Sset (commits.map (·.commitW)) w
+  verify S pk m (aggregateSignature S c Sset (commits.map (·.commitW)) shares)
 ```
 
-### Happy-Path Correctness (ZMod Vector Scheme)
+### Lattice Scheme Correctness
 
 ```lean
-theorem verify_happy_zmod_vec
-    {q n : Nat} [Fact q.Prime]
-    (ys sks : List (Fin n → ZMod q))
-    (m : ByteArray)
-    (Sset : List Nat)
-    (session fromId : Nat) :
-  let S := zmodVecScheme q n
-  -- ... similar structure ...
-  verify S pk m sig
+theorem verify_happy_lattice
+    (pk : latticeScheme.Public)
+    (m : latticeScheme.Message)
+    (Sset : List latticeScheme.PartyId)
+    (commits : List (SignCommitMsg latticeScheme))
+    (reveals : List (SignRevealWMsg latticeScheme))
+    (shares  : List (SignShareMsg latticeScheme))
+    (hvalid : ValidSignTranscript latticeScheme Sset commits reveals shares) :
+  let w := reveals.foldl (fun acc r => acc + r.w_i) (0 : latticeScheme.Public)
+  let c := latticeScheme.hash m pk Sset (commits.map (·.commitW)) w
+  verify latticeScheme pk m (aggregateSignature latticeScheme c Sset (commits.map (·.commitW)) shares)
 ```
 
 ### Core Linearity Lemma
 
+These lemmas are in `Proofs/Core/ListLemmas.lean`:
+
 ```lean
 lemma sum_zipWith_add_smul
     {R M : Type _} [Semiring R] [AddCommMonoid M] [Module R M]
-    (c : R) :
-  ∀ (ys sks : List M),
-    (List.zipWith (fun y s => y + c • s) ys sks).sum
-      = ys.sum + c • sks.sum
+    (c : R) (ys sks : List M) (hlen : ys.length = sks.length) :
+    (zipWith (fun y s => y + c • s) ys sks).sum = ys.sum + c • sks.sum
 ```
 
 ## Soundness
@@ -325,7 +327,7 @@ This standard composition follows from Lyubashevsky's "Fiat-Shamir with Aborts" 
 
 ### Axiom Index
 
-All axioms used throughout the codebase are documented in `Security/Assumptions.lean`. They fall into three categories:
+All axioms used throughout the codebase are documented in `Proofs/Core/Assumptions.lean`. They fall into three categories:
 
 1. **Mathlib-equivalent**: Properties provable with Mathlib but requiring significant integration work (e.g., `coeffs_sum_to_one` for Lagrange interpolation)
 
@@ -333,19 +335,20 @@ All axioms used throughout the codebase are documented in `Security/Assumptions.
 
 3. **Implementation details**: Properties about data structures requiring extensive formalization (e.g., `MsgMap.merge_idem`)
 
-Each axiom includes a justification and literature reference. See `Security/Assumptions.lean` for the complete index.
+Each axiom includes a justification and literature reference. See `Proofs/Core/Assumptions.lean` for the complete index.
 
 ### Security Assumptions Structure
 
 ```lean
 structure Assumptions (S : Scheme) where
-  hashRO : Prop                        -- hash modeled as random oracle (Fiat-Shamir)
-  commitCR : Prop                      -- commitment is collision resistant (implies binding)
-  commitHiding : HidingAssumption S    -- commitment hiding (requires ROM)
-  normLeakageBound : Prop              -- norm bounds prevent leakage
-  corruptionBound : Nat                -- max corrupted parties < threshold
-  sisParams : Option SISParams         -- SIS parameters for unforgeability
-  mlweParams : Option MLWEParams       -- MLWE parameters for key secrecy
+  hashRO            : Prop                    -- hash modeled as QROM (Fiat-Shamir)
+  commitCR          : Prop                    -- commitment collision resistant (implies binding)
+  hashBinding       : HashBinding             -- binding for hash-based commitment
+  commitHiding      : HidingAssumption S      -- commitment hiding (requires ROM; NOT formally proven)
+  normLeakageBound  : Prop                    -- norm bounds prevent leakage
+  corruptionBound   : Nat                     -- max corrupted parties < threshold
+  sisParams         : Option SISParams        -- SIS parameters for unforgeability
+  mlweParams        : Option MLWEParams       -- MLWE parameters for key secrecy
 
 def thresholdUFcma (S : Scheme) (A : Assumptions S) : Prop :=
   A.hashRO ∧ A.commitCR ∧ A.normLeakageBound
@@ -377,17 +380,21 @@ Given $A \in \mathbb{Z}_q^{n \times m}$, find short $z$ with $Az = 0 \mod q$.
 
 ```lean
 structure SISParams where
-  n : Nat              -- rows (dimension)
-  m : Nat              -- columns
+  n : Nat              -- lattice dimension (rows of A)
+  m : Nat              -- columns of A
   q : Nat              -- modulus
   beta : Nat           -- solution norm bound
-  m_large : m > n * Nat.log2 q  -- security requirement
+  m_large : m > n * Nat.log2 q := by decide  -- security requirement
+
+structure SISInstance (p : SISParams) where
+  A : Fin p.n → Fin p.m → ZMod p.q   -- public matrix
 
 structure SISSolution (p : SISParams) (inst : SISInstance p) where
   z : Fin p.m → Int
   z_short : ∀ i, Int.natAbs (z i) ≤ p.beta
   z_nonzero : ∃ i, z i ≠ 0
-  Az_zero : ∀ i, (Finset.univ.sum fun j => inst.A i j * (z j)) = 0
+  Az_zero : ∀ i : Fin p.n,
+    (Finset.univ.sum fun j => inst.A i j * (z j : ZMod p.q)) = 0
 
 def SISHard (p : SISParams) : Prop := True  -- axiomatized
 ```
@@ -400,10 +407,20 @@ Distinguish $(A, As + e)$ from $(A, u)$ where $s, e$ are small.
 
 ```lean
 structure MLWEParams where
-  n : Nat    -- ring dimension (power of 2)
-  k : Nat    -- module rank
+  n : Nat    -- ring dimension (degree of R_q = Z_q[X]/(X^n + 1))
+  k : Nat    -- module rank (number of ring elements in secret)
   q : Nat    -- modulus
-  eta : Nat  -- error bound
+  eta : Nat  -- error distribution parameter
+
+structure MLWEInstance (p : MLWEParams) where
+  A : Fin p.k → Fin p.k → (Fin p.n → ZMod p.q)  -- public matrix
+  b : Fin p.k → (Fin p.n → ZMod p.q)            -- public vector b = As + e
+
+structure MLWESecret (p : MLWEParams) where
+  s : Fin p.k → (Fin p.n → Int)                 -- secret vector
+  e : Fin p.k → (Fin p.n → Int)                 -- error vector
+  s_short : ∀ i j, Int.natAbs (s i j) ≤ p.eta
+  e_short : ∀ i j, Int.natAbs (e i j) ≤ p.eta
 
 def MLWEHard (p : MLWEParams) : Prop := True  -- axiomatized
 ```
@@ -414,32 +431,36 @@ def MLWEHard (p : MLWEParams) : Prop := True  -- axiomatized
 
 ```lean
 structure LatticeAssumptions (S : Scheme) extends Assumptions S where
-  sisInst : SISParams
-  mlweInst : MLWEParams
-  sis_hard : SISHard sisInst
-  mlwe_hard : MLWEHard mlweInst
+  sisInst   : SISParams           -- SIS instance derived from scheme
+  mlweInst  : MLWEParams          -- MLWE instance derived from scheme
+  sis_hard  : SISHard sisInst     -- SIS is hard for these parameters
+  mlwe_hard : MLWEHard mlweInst   -- MLWE is hard for these parameters
 
 def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
   A.mlwe_hard
+
+def livenessOrAbort (S : Scheme) (A : Assumptions S) : Prop := True
 ```
 
 ## Parameter Validation
 
-Lightweight checks catch obviously insecure parameters:
+Lightweight checks catch obviously insecure parameters. These are necessary conditions, not sufficient for security - real analysis requires the [lattice estimator](https://lattice-estimator.readthedocs.io/).
 
 ```lean
+def minSecureDimension : Nat := 256
+
 def SISParams.isSecure (p : SISParams) : Prop :=
-  p.n ≥ 256 ∧ p.m ≥ 2 * p.n ∧ p.beta < p.q / 2
+  p.n ≥ minSecureDimension ∧
+  p.m ≥ 2 * p.n ∧
+  p.beta < p.q / 2
 
 def MLWEParams.isSecure (p : MLWEParams) : Prop :=
-  p.n ≥ 256 ∧ isPowerOf2 p.n ∧ p.k ≥ 1 ∧ p.eta ≤ 4
+  p.n ≥ minSecureDimension ∧
+  p.k ≥ 1 ∧
+  p.eta ≤ 4
 
-structure SecuritySummary where
-  sisValid : Bool
-  mlweValid : Bool
-  sisSecurityBits : Nat
-  mlweSecurityBits : Nat
-  overallSecurityBits : Nat
+def isPowerOf2 (n : Nat) : Bool :=
+  n > 0 && (n &&& (n - 1)) = 0
 ```
 
 The implementation uses standard [NIST FIPS 204 (ML-DSA/Dilithium)](https://csrc.nist.gov/pubs/fips/204/final) parameter sets which provide 128, 192, and 256 bits of security.

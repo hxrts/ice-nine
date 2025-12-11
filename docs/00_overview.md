@@ -8,7 +8,7 @@ The design supports both $n$-of-$n$ and $t$-of-$n$ threshold configurations. In 
 
 The implementation uses a semilattice/CRDT architecture for protocol state. Each protocol phase (commit, reveal, shares, done) carries state that forms a join-semilattice. The join operation (⊔) merges states from different replicas or out-of-order message arrivals.
 
-**Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
+**Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/State/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
 
 **Conflict-free message maps.** Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender un-expressable in the type system. Each party can contribute at most one message per phase.
 
@@ -25,7 +25,7 @@ The implementation uses a semilattice/CRDT architecture for protocol state. Each
 
 The implementation uses session types to enforce disciplined handling of secret material, making certain classes of errors impossible to express.
 
-**Session-typed signing.** The signing protocol (`Protocol/SignSession.lean`) uses linear session types where each state transition consumes the previous state. Nonces are wrapped in `FreshNonce` structures that can only be consumed once—nonce reuse is a compile-time error, not a runtime check.
+**Session-typed signing.** The signing protocol (`Protocol/Sign/Session.lean`) uses linear session types where each state transition consumes the previous state. Nonces are wrapped in `FreshNonce` structures that can only be consumed once—nonce reuse is a compile-time error, not a runtime check.
 
 **Threshold context.** Signature extraction requires a `ThresholdCtx` that pairs the active signer set with a proof that $|S| \geq t$. This prevents signatures from being produced without sufficient participation.
 
@@ -39,7 +39,7 @@ The implementation uses session types to enforce disciplined handling of secret 
 
 **Verification.** A verifier checks the aggregated signature against the public key. The check uses the linear map $A$ and the hash function. The signature is valid if the recomputed challenge matches and the norm bound is satisfied.
 
-**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join; two refresh modes are available: a coordinator-based protocol (`Protocol/RefreshCoord.lean`) and a fully distributed DKG-based protocol (`Protocol/RefreshDKG.lean`) where parties contribute zero-polynomials without a trusted coordinator. Share repair combines helper deltas via append-based bundles; a coordination protocol (`Protocol/RepairCoord.lean`) handles Lagrange coefficient computation and contribution verification. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
+**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join; two refresh modes are available: a coordinator-based protocol (`Protocol/Shares/RefreshCoord.lean`) and a fully distributed DKG-based protocol (`Protocol/Shares/RefreshDKG.lean`) where parties contribute zero-polynomials without a trusted coordinator. Share repair combines helper deltas via append-based bundles; a coordination protocol (`Protocol/Shares/RepairCoord.lean`) handles Lagrange coefficient computation and contribution verification. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
 
 **Security.** The protocol assumes binding commitments and models the hash as a random oracle. Under these assumptions it achieves threshold unforgeability. Formal proofs reside in the Lean verification modules. Totality theorems ensure that validation functions always return either success or a structured error.
 
@@ -86,14 +86,36 @@ The implementation is organized into focused modules within subdirectories:
 - `State/PhaseHandlers.lean` - Phase transition handlers
 - `State/PhaseSig.lean` - Phase signatures
 - `State/PhaseMerge.lean` - Composite state merging
-- `State/StateProduct.lean` - Product semilattice
 
-**Security/** - Security proofs and threat models:
-- `Security/Assumptions.lean` - Cryptographic assumptions, axiom index, Dilithium parameters
-- `Security/Correctness.lean` - Verification theorems
-- `Security/Soundness.lean` - Special soundness, nonce reuse attack, SIS reduction
-- `Security/HighBits.lean` - HighBits specification for Dilithium error absorption
-- `Security/VSS.lean` - VSS security properties
+**Top-level modules:**
+- `Crypto.lean` - Cryptographic primitives (hash, commitment)
+- `Instances.lean` - Concrete scheme instantiations (Int, ZMod)
+- `Norms.lean` - Norm bounds for lattice parameters
+- `Samples.lean` - Sample transcript generation for testing
+
+**Proofs/** - Formal verification (separate from protocol):
+
+*Proofs/Core/* - Foundation for proofs:
+- `Proofs/Core/Assumptions.lean` - Cryptographic assumptions, axiom index, Dilithium parameters
+- `Proofs/Core/ListLemmas.lean` - Reusable lemmas for list operations and sums
+- `Proofs/Core/HighBits.lean` - HighBits specification for Dilithium error absorption
+
+*Proofs/Correctness/* - Happy-path proofs:
+- `Proofs/Correctness/Correctness.lean` - Verification theorems
+- `Proofs/Correctness/DKG.lean` - DKG correctness proofs
+- `Proofs/Correctness/Sign.lean` - Signing correctness proofs
+- `Proofs/Correctness/Lagrange.lean` - Lagrange interpolation correctness
+
+*Proofs/Soundness/* - Security proofs:
+- `Proofs/Soundness/Soundness.lean` - Special soundness, nonce reuse attack, SIS reduction
+- `Proofs/Soundness/VSS.lean` - VSS security properties
+- `Proofs/Soundness/Robustness.lean` - Protocol robustness properties
+
+*Proofs/Extensions/* - Extension protocol proofs:
+- `Proofs/Extensions/Phase.lean` - Phase handler monotonicity (CRDT safety)
+- `Proofs/Extensions/Coordination.lean` - Refresh/repair coordination security
+- `Proofs/Extensions/Repair.lean` - Share repair correctness
+- `Proofs/Extensions/RefreshRepair.lean` - Refresh invariants, rerandomization
 
 ## Lattice Cryptography
 

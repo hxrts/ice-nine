@@ -748,13 +748,13 @@ Axioms are kept in their respective modules for locality but indexed here.
 
 | Axiom | Module | Purpose |
 |-------|--------|---------|
-| `vss_correctness` | Security/VSS | Honest shares verify against commitments |
-| `vss_soundness` | Security/VSS | Invalid shares are detected |
-| `vss_hiding` | Security/VSS | Commitments hide polynomial coefficients |
-| `reconstruction_unique` | Security/VSS | Unique polynomial from sufficient shares |
-| `refresh_privacy` | Security/Coordination | Refresh masks hide original shares |
-| `repair_privacy` | Security/Coordination | Repair contributions hide helper shares |
-| `dilithium_acceptance_probability` | Security/Correctness | Rejection sampling acceptance rate |
+| `vss_correctness` | Proofs/Soundness/VSS | Honest shares verify against commitments |
+| `vss_soundness` | Proofs/Soundness/VSS | Invalid shares are detected |
+| `vss_hiding` | Proofs/Soundness/VSS | Commitments hide polynomial coefficients |
+| `reconstruction_unique` | Proofs/Soundness/VSS | Unique polynomial from sufficient shares |
+| `refresh_privacy` | Proofs/Extensions/Coordination | Refresh masks hide original shares |
+| `repair_privacy` | Proofs/Extensions/Coordination | Repair contributions hide helper shares |
+| `dilithium_acceptance_probability` | Proofs/Correctness/Correctness | Rejection sampling acceptance rate |
 
 ### Justifications
 

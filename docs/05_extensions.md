@@ -72,8 +72,12 @@ def collectBlame (config : ProtocolConfig) (errors : List E) : BlameResult Party
 |--------|------|----------|-------------|
 | DKGCore | `DkgError` | Fatal | Protocol abort required |
 | DKGThreshold | `Complaint` | Recoverable | Party exclusion possible |
+| DKGThreshold | `ExclusionResult` | Result | Quorum check outcome |
 | VSS | `VSSError` | Fatal/Recoverable | Depends on complaint count |
-| RepairCoord | `ContribCommitResult` | Result | Processing outcome |
+| RefreshCoord | `CommitValidationError` | Validation | Commit validation outcome |
+| RefreshCoord | `RevealValidationError` | Validation | Reveal validation outcome |
+| RepairCoord | `ContribCommitValidationError` | Validation | Commit validation outcome |
+| RepairCoord | `ContribRevealValidationError` | Validation | Reveal validation outcome |
 
 ## Security Markers
 
@@ -521,9 +525,9 @@ def refreshShares
   (m : MaskFn S)
   (shares : List (KeyShare S)) : List (KeyShare S) :=
   shares.map (fun ks =>
-    let sk' := ks.sk_i + m.mask ks.pid
+    let sk' := ks.secret + m.mask ks.pid
     let pk' := S.A sk'
-    { ks with sk_i := sk', pk_i := pk' })
+    KeyShare.create S ks.pid sk' pk' ks.pk)
 ```
 
 ### Mask Generation
@@ -793,7 +797,7 @@ def repairShare
   (S : Scheme)
   (msgs : List (RepairMsg S))
   : S.Secret :=
-  msgs.foldl (fun acc m => acc + m.delta) (0 : S.Secret)
+  (msgs.map (·.delta)).sum
 ```
 
 ### Correctness
@@ -863,9 +867,9 @@ def helperContribution
   (requester : S.PartyId)
   (coefficient : S.Scalar)
   : RepairMsg S :=
-  { from  := helper.pid
-  , to    := requester
-  , delta := coefficient • helper.sk_i }
+  { sender := helper.pid
+  , target := requester
+  , delta  := coefficient • helper.secret }
 ```
 
 ### Verification
@@ -1040,16 +1044,23 @@ Rerandomization adds privacy by masking shares and nonces. It prevents linking b
 
 ### Rerandomization Masks Structure
 
-Holds zero-sum masks for both shares and nonces. Masks merge by pointwise addition.
+Holds zero-sum masks for both shares and nonces over a specific signer set. Masks merge by pointwise addition.
 
 ```lean
-structure RerandMasks (S : Scheme) :=
+/-- Raw mask functions without zero-sum proof. -/
+structure RawRerandMasks (S : Scheme) :=
   (shareMask : S.PartyId → S.Secret)
   (nonceMask : S.PartyId → S.Secret)
-  (shareSumZero : ∀ (Sset : List S.PartyId), (Sset.map shareMask).sum = 0)
-  (nonceSumZero : ∀ (Sset : List S.PartyId), (Sset.map nonceMask).sum = 0)
 
-instance (S : Scheme) : Join (RerandMasks S)
+instance (S : Scheme) : Join (RawRerandMasks S)
+
+/-- Zero-sum masks for rerandomizing signatures over a specific signer set. -/
+structure RerandMasks (S : Scheme) (Sset : List S.PartyId) :=
+  (masks : RawRerandMasks S)
+  (shareSumZero : (Sset.map masks.shareMask).sum = 0)
+  (nonceSumZero : (Sset.map masks.nonceMask).sum = 0)
+
+instance (S : Scheme) (Sset : List S.PartyId) : Join (RerandMasks S Sset)
 ```
 
 ### Motivation
@@ -1061,16 +1072,25 @@ Without rerandomization the same shares produce related signatures. An observer 
 Applies masks to both the nonce and share within a signing state.
 
 ```lean
-def rerandState
+/-- Apply raw rerandomization masks to signing local state. -/
+def rerandStateRaw
   (S : Scheme)
-  (masks : RerandMasks S)
+  (masks : RawRerandMasks S)
   (st : SignLocalState S) : SignLocalState S :=
+let newSk := st.share.secret + masks.shareMask st.share.pid
+let newPk := S.A newSk
 { st with
   y_i := st.y_i + masks.nonceMask st.share.pid,
   w_i := S.A (st.y_i + masks.nonceMask st.share.pid),
-  share := { st.share with
-    sk_i := st.share.sk_i + masks.shareMask st.share.pid,
-    pk_i := S.A (st.share.sk_i + masks.shareMask st.share.pid) } }
+  share := KeyShare.create S st.share.pid newSk newPk st.share.pk }
+
+/-- Apply zero-sum rerandomization masks to signing local state. -/
+def rerandState
+  (S : Scheme)
+  (Sset : List S.PartyId)
+  (masks : RerandMasks S Sset)
+  (st : SignLocalState S) : SignLocalState S :=
+  rerandStateRaw S masks.masks st
 ```
 
 ### Share Rerandomization
@@ -1219,7 +1239,7 @@ The merge must prove that `max(t_a, t_b) ≤ |a.active ∪ b.active|`. This foll
 
 ## Type-Indexed Phase Transitions
 
-The `Protocol/PhaseIndexed.lean` module encodes protocol phases at the type level. Invalid phase transitions become compile-time errors rather than runtime failures.
+The `Protocol/State/PhaseIndexed.lean` module encodes protocol phases at the type level. Invalid phase transitions become compile-time errors rather than runtime failures.
 
 ### Phase-Indexed State
 
@@ -1233,7 +1253,7 @@ inductive PhaseState (S : Scheme) : Phase → Type where
   | done    : DonePhaseData S → PhaseState S .done
 ```
 
-Each phase carries phase-specific data. The runtime phase state (`Protocol/State/Phase.lean`) uses `MsgMap` for conflict-free message storage, while the type-indexed version uses lists for simpler type signatures:
+Each phase carries phase-specific data. The runtime phase state (`Protocol/State/Phase.lean`) uses `MsgMap` for conflict-free message storage, while the type-indexed version (`Protocol/State/PhaseIndexed.lean`) uses lists for simpler type signatures:
 
 ```lean
 -- Type-indexed version (PhaseIndexed.lean) - simpler types

@@ -4,7 +4,7 @@
 Alternative to DKG: a trusted dealer generates all shares and distributes
 them to parties. Simpler but requires trust in the dealer. Useful for
 bootstrapping or when a trusted setup is acceptable.
-Security proofs in `Security/DKG`.
+Security proofs in `Proofs/Correctness/DKG`.
 -/
 
 import IceNine.Protocol.DKG.Core
