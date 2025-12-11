@@ -218,8 +218,12 @@ inductive CommitProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | wrongPhase
 
 /-- Process mask commitment with conflict detection.
-    Returns conflict indicator if sender already has a commit. -/
-def processCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    Returns conflict indicator if sender already has a commit.
+
+    **Design choice**: We use strict conflict detection rather than CRDT-style
+    silent merging because detecting duplicate/conflicting messages is security-critical
+    in cryptographic protocols. A duplicate commit could indicate an attack. -/
+def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) (msg : MaskCommitMsg S)
     : CommitProcessResult S :=
   if st.phase = .commit then
@@ -233,18 +237,6 @@ def processCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     | .conflict existing => .conflict existing
   else .wrongPhase
 
-/-- Process mask commitment (CRDT mode: ignores duplicate senders). -/
-def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
-    : RefreshRoundState S :=
-  if st.phase = .commit then
-    let newSt := { st with maskCommits := st.maskCommits.insert maskCommitSender msg }
-    -- Transition to reveal phase if all committed
-    if newSt.allCommitted then
-      { newSt with phase := .reveal }
-    else newSt
-  else st
-
 /-- Result of processing a reveal message. -/
 inductive RevealProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | success (newSt : RefreshRoundState S)
@@ -253,8 +245,12 @@ inductive RevealProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | noCommit
   | wrongPhase
 
-/-- Process mask reveal with conflict detection. -/
-def processRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+/-- Process mask reveal with conflict detection.
+
+    **Design choice**: We use strict conflict detection rather than CRDT-style
+    silent merging because detecting duplicate/conflicting messages is security-critical
+    in cryptographic protocols. A duplicate reveal could indicate an attack. -/
+def processReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
     (st : RefreshRoundState S) (msg : MaskRevealMsg S)
     : RevealProcessResult S :=
   if st.phase = .reveal then
@@ -273,24 +269,6 @@ def processRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decid
         else .invalidOpening
     | none => .noCommit
   else .wrongPhase
-
-/-- Process mask reveal (CRDT mode). -/
-def processReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
-    (st : RefreshRoundState S) (msg : MaskRevealMsg S)
-    : RefreshRoundState S :=
-  if st.phase = .reveal then
-    -- Verify commitment opens correctly
-    match st.maskCommits.get? msg.sender with
-    | some c =>
-        if S.commit (S.A msg.mask) msg.opening = c.maskCommit then
-          let newSt := { st with maskReveals := st.maskReveals.insert maskRevealSender msg }
-          -- Transition to adjust phase if all revealed
-          if newSt.allRevealed then
-            { newSt with phase := .adjust }
-          else newSt
-        else st  -- Invalid opening
-    | none => st  -- No commit found
-  else st
 
 /-- Coordinator computes adjustment to achieve zero-sum.
     adjustment = -Σ_{i≠coord} m_i -/

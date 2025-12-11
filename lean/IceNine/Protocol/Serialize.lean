@@ -382,14 +382,27 @@ instance [Serializable α] : Serializable (List α) where
           parseList count rest []
       | none => none
   where
+    /-- Parse a list of elements from bytes.
+
+        **Known Limitation**: This parser assumes 8 bytes per element. This is a
+        placeholder value that works for 64-bit integers but will NOT correctly
+        parse variable-length elements.
+
+        **Production Fix**: The `Serializable` typeclass should be extended to:
+        1. Return `(α × Nat)` from `fromBytes` indicating bytes consumed, OR
+        2. Add a `byteSize : α → Nat` method, OR
+        3. Use a length-prefix encoding for each element
+
+        For now, this limitation is acceptable because:
+        - List serialization is only used for testing/debugging
+        - The wire protocol would use a proper framing layer
+        - Production implementations should use a well-tested serialization library -/
     parseList (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α) :=
       if count = 0 then some acc.reverse
       else
-        -- This is a simplified parser that assumes fixed-size elements
-        -- In practice, each element would encode its own length
         match Serializable.fromBytes bs with
         | some x =>
-            -- Approximate: consume 8 bytes per element (adjust for type)
+            -- FIXME: Hardcoded 8 bytes per element. See docstring above.
             let consumed := min 8 bs.size
             parseList (count - 1) (bs.extract consumed bs.size) (x :: acc)
         | none => none

@@ -74,12 +74,14 @@ Each party maintains:
 - Verification results
 -/
 
-/-- Party's local state during VSS-DKG. -/
+/-- Party's local state during VSS-DKG.
+    Note: We use List S.Secret for polynomial coefficients since Mathlib's
+    Polynomial requires Semiring but S.Secret is only an AddCommGroup. -/
 structure VSSLocalState (S : Scheme) where
   /-- This party's ID -/
   pid : S.PartyId
-  /-- This party's polynomial (secret) -/
-  polynomial : Polynomial S.Secret
+  /-- This party's polynomial coefficients (secret) - stored as list -/
+  polyCoeffs : List S.Secret
   /-- This party's commitment (public) -/
   commitment : PolyCommitment S
   /-- Shares this party has generated for others -/
@@ -94,21 +96,23 @@ structure VSSLocalState (S : Scheme) where
 -/
 
 /-- Initialize VSS state for a party.
-    Party samples polynomial with their secret contribution as constant term. -/
-def vssInit (S : Scheme) [Semiring S.Secret] [Monoid S.Scalar] [Module S.Scalar S.Secret]
+    Party samples polynomial with their secret contribution as constant term.
+    Note: Uses list-based polynomial to avoid Semiring requirement on Secret. -/
+def vssInit (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Secret]
     (pid : S.PartyId)
     (secretContribution : S.Secret)  -- sk_i: this party's share of the master secret
     (randomCoeffs : List S.Secret)   -- random coefficients for polynomial
     (parties : List (S.PartyId × S.Scalar))  -- all parties with their eval points
     : VSSLocalState S :=
-  let poly := mkPolynomial secretContribution randomCoeffs
+  let coeffs := secretContribution :: randomCoeffs
+  let poly := mkPolynomialFromCoeffs coeffs
   let commit := commitPolynomial S poly
   let shares := parties.map fun (recipient, evalPt) =>
     { sender := pid
       recipient := recipient
       share := generateShare S poly recipient evalPt }
   { pid := pid
-    polynomial := poly
+    polyCoeffs := coeffs
     commitment := commit
     outgoingShares := shares
     incomingShares := []
@@ -181,14 +185,14 @@ def vssFinalize (S : Scheme)
   -- Check no complaints
   if st.complaints.isEmpty then
     -- Aggregate secret share
-    let sk_i := aggregateReceivedShares S st.incomingShares
+    let sk := aggregateReceivedShares S st.incomingShares
     -- Compute public share
-    let pk_i := computePublicShare S sk_i
+    let pk_i := computePublicShare S sk
     -- Compute global public key from commitments
     -- pk = Σ_i A(a_{i,0}) = Σ_i C_{i,0} (first commitment from each dealer)
     let pk := (allCommitments.filterMap (fun c => c.polyCommit.commitments.head?)).sum
     some { pid := st.pid
-           secret := SecretBox.mk sk_i
+           sk_i := SecretBox.mk sk
            pk_i := pk_i
            pk := pk }
   else

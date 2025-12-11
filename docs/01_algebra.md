@@ -347,14 +347,22 @@ structure SecretBox (α : Type*) where
   private mk ::
   val : α
 
+/-- Wrap a secret value. -/
+def SecretBox.wrap (secret : α) : SecretBox α := ⟨secret⟩
+
 /-- Wrapper for nonces to highlight their ephemeral nature.
     Nonce reuse is catastrophic: treat these as single-use. -/
 structure NonceBox (α : Type*) where
   private mk ::
   val : α
+
+/-- Create from a freshly sampled nonce. -/
+def NonceBox.fresh (nonce : α) : NonceBox α := ⟨nonce⟩
 ```
 
-The `private` constructors prevent arbitrary creation of wrapped values. This lightweight discipline signals intent—code that accesses the `val` field must explicitly acknowledge it is handling secret material.
+The `private` constructors prevent arbitrary creation of wrapped values. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances. This lightweight discipline signals intent—code that accesses the `val` field must explicitly acknowledge it is handling secret material.
+
+Both types have `Zeroizable` and `ConstantTimeEq` marker instances to indicate security requirements for production implementations.
 
 **Key Share Integration:**
 

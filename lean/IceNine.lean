@@ -34,7 +34,6 @@ import IceNine.Protocol.PhaseSig
 import IceNine.Protocol.PhaseMerge
 import IceNine.Protocol.StateProduct
 import IceNine.Protocol.ThresholdMerge
-import IceNine.Protocol.Secret
 import IceNine.Protocol.VSSCore
 import IceNine.Protocol.VSS
 import IceNine.Protocol.RefreshCoord

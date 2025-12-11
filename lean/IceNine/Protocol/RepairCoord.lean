@@ -18,6 +18,7 @@ This provides:
 
 import IceNine.Protocol.Repair
 import IceNine.Protocol.Phase
+import IceNine.Protocol.Lagrange
 import Mathlib
 
 namespace IceNine.Protocol.RepairCoord
@@ -151,8 +152,12 @@ inductive ContribCommitResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | notHelper
   | wrongPhase
 
-/-- Process a commit from a helper with conflict detection. -/
-def processContribCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+/-- Process a commit from a helper with conflict detection.
+
+    **Design choice**: We use strict conflict detection rather than CRDT-style
+    silent merging because detecting duplicate/conflicting messages is security-critical
+    in cryptographic protocols. A duplicate commit could indicate an attack. -/
+def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RepairCoordState S) (msg : ContribCommitMsg S)
     : ContribCommitResult S :=
   if st.phase = .commit then
@@ -169,21 +174,6 @@ def processContribCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     else .notHelper
   else .wrongPhase
 
-/-- Process a commit from a helper (CRDT mode: ignores duplicates). -/
-def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
-    (st : RepairCoordState S) (msg : ContribCommitMsg S)
-    : RepairCoordState S :=
-  if st.phase = .commit then
-    -- Verify sender is a valid helper
-    if st.helpers.contains msg.sender then
-      let newSt := { st with commits := st.commits.insert contribCommitSender msg }
-      -- Transition to reveal phase if enough commits
-      if newSt.enoughCommits then
-        { newSt with phase := .reveal }
-      else newSt
-    else st  -- Ignore non-helper
-  else st
-
 /-- Result of processing a contribution reveal. -/
 inductive ContribRevealResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | success (newSt : RepairCoordState S)
@@ -192,8 +182,12 @@ inductive ContribRevealResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | noCommit
   | wrongPhase
 
-/-- Process a reveal from a helper with conflict detection. -/
-def processContribRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+/-- Process a reveal from a helper with conflict detection.
+
+    **Design choice**: We use strict conflict detection rather than CRDT-style
+    silent merging because detecting duplicate/conflicting messages is security-critical
+    in cryptographic protocols. A duplicate reveal could indicate an attack. -/
+def processContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
     (st : RepairCoordState S) (msg : ContribRevealMsg S)
     : ContribRevealResult S :=
   if st.phase = .reveal then
@@ -212,24 +206,6 @@ def processContribRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
         else .invalidOpening
     | none => .noCommit
   else .wrongPhase
-
-/-- Process a reveal from a helper (CRDT mode). -/
-def processContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
-    (st : RepairCoordState S) (msg : ContribRevealMsg S)
-    : RepairCoordState S :=
-  if st.phase = .reveal then
-    -- Verify commitment opens correctly
-    match st.commits.get? msg.sender with
-    | some c =>
-        if S.commit (S.A msg.contribution) msg.opening = c.contribCommit then
-          let newSt := { st with reveals := st.reveals.insert contribRevealSender msg }
-          -- Transition to verify phase if all revealed
-          if newSt.allRevealed then
-            { newSt with phase := .verify }
-          else newSt
-        else st  -- Invalid opening
-    | none => st  -- No commit found
-  else st
 
 /-- Aggregate revealed contributions to recover share. -/
 def aggregateContributions (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
@@ -282,7 +258,7 @@ def initHelper (S : Scheme)
     (lagrangeCoeff : S.Scalar)
     (randomness : S.Opening)  -- for commitment
     : HelperLocalState S :=
-  let contrib := lagrangeCoeff • keyShare.secret.val
+  let contrib := lagrangeCoeff • keyShare.secret  -- use KeyShare.secret accessor
   let pubContrib := S.A contrib
   let commitment := S.commit pubContrib randomness
   { helperId := keyShare.pid
@@ -337,23 +313,23 @@ def createTranscript (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
 Helpers need to compute their Lagrange coefficients for the interpolation.
 λ_j = Π_{m∈S, m≠j} (m / (m - j))
+
+**Note**: Core Lagrange computation is in `Protocol/Lagrange.lean`.
+These are convenience re-exports for repair-specific use.
 -/
 
 /-- Compute Lagrange coefficient for a party over a set of parties.
-    Assumes party IDs can be converted to scalars. -/
+    Delegates to `Lagrange.coeffAtZero`. -/
 def lagrangeCoefficient [Field F] [DecidableEq F]
-    (partyScalar : F)           -- this party's scalar representation
-    (otherScalars : List F)     -- other parties' scalars
+    (partyScalar : F)
+    (allScalars : List F)
     : F :=
-  otherScalars.foldl (fun acc m =>
-    if m = partyScalar then acc
-    else acc * (m / (m - partyScalar))) 1
+  Lagrange.coeffAtZero partyScalar allScalars
 
-/-- Compute all Lagrange coefficients for a set of parties. -/
+/-- Compute all Lagrange coefficients for a set of parties.
+    Delegates to `Lagrange.allCoeffsAtZero`. -/
 def allLagrangeCoeffs [Field F] [DecidableEq F]
-    (partyScalars : List F) : List (F × F) :=  -- (party, coefficient) pairs
-  partyScalars.map fun p =>
-    let others := partyScalars
-    (p, lagrangeCoefficient p others)
+    (partyScalars : List F) : List (F × F) :=
+  Lagrange.allCoeffsAtZero partyScalars
 
 end IceNine.Protocol.RepairCoord

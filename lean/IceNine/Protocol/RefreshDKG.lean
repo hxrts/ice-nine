@@ -6,7 +6,26 @@ Each party generates a zero-polynomial and distributes shares.
 The sum of all zero-shares updates each party's share while
 preserving the master secret.
 
-This is more distributed than the coordinator-based refresh in RefreshCoord.lean.
+## Comparison: RefreshDKG vs RefreshCoord
+
+| Aspect | RefreshDKG (this module) | RefreshCoord |
+|--------|--------------------------|--------------|
+| **Trust model** | Fully distributed, no coordinator | Single coordinator computes adjustment |
+| **Communication** | O(n²) messages (each party sends to all) | O(n) messages (all to/from coordinator) |
+| **Rounds** | 3 rounds (commit, share, aggregate) | 4 phases (commit, reveal, adjust, apply) |
+| **Verifiability** | Each share verifiable against commitment | Relies on coordinator honesty |
+| **Fault tolerance** | Can identify malicious parties | Coordinator is single point of failure |
+| **Use case** | High security, trustless environments | Lower latency, trusted coordinator available |
+
+**When to use RefreshDKG**:
+- No party should learn all refresh masks
+- Need to identify malicious parties during refresh
+- Participants don't trust each other
+
+**When to use RefreshCoord**:
+- A trusted coordinator exists (e.g., the dealer)
+- Lower communication overhead is important
+- Simpler integration with existing coordinator infrastructure
 
 ## Protocol Overview
 
@@ -95,7 +114,9 @@ def refreshRound1
   let coeffs := generateZeroPolynomial S randomCoeffs
   -- Create polynomial commitment: [A(0), A(a₁), A(a₂), ...]
   let polyCommit : VSS.PolyCommitment S := {
-    coeffCommits := coeffs.map S.A
+    commitments := coeffs.map S.A
+    threshold := coeffs.length
+    consistent := by simp [List.length_map]
   }
   let st : RefreshLocalState S := {
     pid := pid
@@ -168,7 +189,7 @@ def verifyRefreshShare
   | some commitMsg =>
       -- Compute expected public value at recipient's point
       let x := pidToScalar shareMsg.recipient
-      let expectedPub := commitMsg.polyCommit.coeffCommits.reverse.foldl
+      let expectedPub := commitMsg.polyCommit.commitments.reverse.foldl
         (fun acc c => c + x • acc) 0
       -- Verify A(share) = expected
       S.A shareMsg.share = expectedPub

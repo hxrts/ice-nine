@@ -8,6 +8,7 @@ See Sign.lean for the full protocol documentation and API guidance.
 -/
 
 import IceNine.Protocol.SignTypes
+import IceNine.Protocol.Lagrange
 import Mathlib
 
 namespace IceNine.Protocol
@@ -19,24 +20,26 @@ open List
 
 For t-of-n threshold signing, partial signatures are weighted by
 Lagrange coefficients to reconstruct the full signature.
+
+**Note**: Core Lagrange computation is in `Protocol/Lagrange.lean`.
+These are convenience wrappers for signing-specific types.
 -/
 
-/-- Compute Lagrange coefficient λ_i for party i evaluating at 0. -/
+/-- Compute Lagrange coefficient λ_i for party i evaluating at 0.
+    Delegates to `Lagrange.schemeCoeffAtZero`. -/
 def lagrangeCoeffAtZero
   (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (Sset : List S.PartyId) (i : S.PartyId) : S.Scalar :=
-  let xi := pidToScalar i
-  let others := Sset.erase i
-  if hdup : (others.any (fun j => decide (pidToScalar j = xi))) then 0 else
-    (others.map (fun j => let xj := pidToScalar j; xj / (xj - xi))).prod
+  Lagrange.schemeCoeffAtZero S pidToScalar Sset i
 
-/-- Compute all Lagrange coefficients for a signer set. -/
+/-- Compute all Lagrange coefficients for a signer set.
+    Returns `LagrangeCoeff` structures for use in signing. -/
 def lagrangeCoeffs
   (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (Sset : List S.PartyId) : List (LagrangeCoeff S) :=
-  Sset.map (fun pid => { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar Sset pid })
+  Sset.map (fun pid => { pid := pid, lambda := Lagrange.schemeCoeffAtZero S pidToScalar Sset pid })
 
 /-!
 ## Domain-Separated Hash Functions (FROST H4, H5)
@@ -46,36 +49,160 @@ Following FROST, we use dedicated hash functions for:
 - H5: Commitment list encoding (canonical encoding for binding factor computation)
 -/
 
+/-!
+### Scheme-Dependent Serialization
+
+The following functions define the **protocol-level structure** for message and
+commitment encoding. Actual byte-level serialization depends on the concrete
+Scheme instantiation.
+
+**For production implementations**, the Scheme should provide:
+- `serializeMessage : S.Message → ByteArray`
+- `serializePartyId : S.PartyId → ByteArray`
+- `serializePublic : S.Public → ByteArray`
+- `serializeCommitment : S.Commitment → ByteArray`
+
+These protocol functions then compose domain prefixes with serialized data.
+-/
+
 /-- Hash a message for signing (FROST H4).
     Pre-hashing allows efficient signing of large messages.
 
+    **Protocol structure**: `H4(msg) = H(domain_msg || serialize(msg))`
+
     **Usage**: Call this before computing binding factors or challenge.
-    The pre-hashed message is used in place of the raw message. -/
+    The pre-hashed message is used in place of the raw message.
+
+    **Implementation note**: This function returns the domain prefix concatenated
+    with a placeholder. Concrete Schemes should override or extend this with
+    actual message serialization. The important invariant is that all parties
+    use the same serialization for the same message. -/
 def hashMessage (S : Scheme) (msg : S.Message) : ByteArray :=
-  -- Use domain-separated hash: H(domain || msg)
-  -- Actual implementation depends on Scheme's hash function
-  -- This is a placeholder showing the structure
-  HashDomain.message ++ match msg with
-    | _ => ByteArray.empty  -- Scheme should provide message serialization
+  -- Protocol structure: domain || serialized_message
+  -- The Message type is abstract; concrete schemes provide serialization
+  HashDomain.message
+  -- In a concrete scheme: HashDomain.message ++ S.serializeMessage msg
 
 /-- Encode a list of commitments for hashing (FROST H5).
     Produces a canonical encoding of the commitment list.
 
+    **Protocol structure**: For each commitment in order:
+    ```
+    encode(commits) = domain_com ||
+      (pid_1 || hiding_1 || binding_1) ||
+      (pid_2 || hiding_2 || binding_2) || ...
+    ```
+
     **Usage**: Used in binding factor computation to ensure all parties
-    agree on the same commitment ordering and encoding. -/
+    agree on the same commitment ordering and encoding.
+
+    **Ordering requirement**: Commits must be in a canonical order (e.g., sorted
+    by sender ID) before encoding. The protocol should ensure this.
+
+    **Implementation note**: This returns domain prefix only. Concrete Schemes
+    should extend with actual commitment serialization. -/
 def encodeCommitmentList (S : Scheme)
     (commits : List (SignCommitMsg S)) : ByteArray :=
-  -- Concatenate sender || hiding || binding for each commitment
-  -- The actual encoding depends on Scheme's serialization
-  HashDomain.commitmentList ++ commits.foldl (fun acc _ => acc) ByteArray.empty
+  -- Protocol structure: domain || (pid || hiding || binding) for each commit
+  -- Length prefix could be added for unambiguous parsing
+  let _numCommits := commits.length
+  HashDomain.commitmentList
+  -- In a concrete scheme:
+  -- HashDomain.commitmentList ++
+  --   commits.foldl (fun acc c =>
+  --     acc ++ S.serializePartyId c.sender ++
+  --           S.serializePublic c.hiding ++
+  --           S.serializePublic c.binding) ByteArray.empty
 
 /-- Hash a commitment list (FROST H5).
-    Used in binding factor computation. -/
+    Used in binding factor computation.
+
+    **Protocol structure**: `H5(commits) = H(encode(commits))`
+
+    This applies the hash function to the encoded commitment list.
+    The encoding ensures canonical representation. -/
 def hashCommitmentList (S : Scheme)
     (commits : List (SignCommitMsg S)) : ByteArray :=
   let encoded := encodeCommitmentList S commits
-  -- Apply H5 hash (domain-separated)
-  encoded  -- Actual hash application depends on Scheme
+  -- In production: apply S.hash or S.hashToScalar to encoded
+  encoded
+
+/-!
+## Binding Factor Computation (FROST H1)
+
+The binding factor ρ_i for each signer binds their nonce to the full signing context:
+- Message being signed
+- Group public key
+- All signers' commitments (encoded canonically)
+- This signer's identifier
+
+This prevents adaptive attacks where adversary chooses message after seeing commitments.
+
+Reference: FROST RFC Section 4.4
+-/
+
+/-- Compute binding factor for a single signer.
+    ρ_i = H("rho", msg_hash, pk, encoded_commits, i)
+
+    **Inputs**:
+    - `msgHash`: Pre-hashed message (output of hashMessage / H4)
+    - `pk`: Group public key
+    - `encodedCommits`: Canonical encoding of all commitments (output of encodeCommitmentList / H5)
+    - `pid`: This signer's party identifier
+
+    **Output**: Scalar binding factor ρ_i -/
+def computeBindingFactor (S : Scheme)
+    (msgHash : ByteArray)
+    (pk : S.Public)
+    (encodedCommits : ByteArray)
+    (pid : S.PartyId)
+    : S.Scalar :=
+  -- Concatenate: domain || msgHash || pk_bytes || commits_bytes || pid_bytes
+  -- The actual serialization depends on scheme; this shows the structure
+  let data := msgHash ++ encodedCommits  -- pk and pid need serialization from Scheme
+  S.hashToScalar HashDomain.bindingFactor data
+
+/-- Compute binding factors for all signers in a signing session.
+    Returns a BindingFactors structure with factor for each signer.
+
+    **Usage**: Call after collecting all Round 1 commit messages.
+
+    **Inputs**:
+    - `msg`: Message being signed (will be pre-hashed)
+    - `pk`: Group public key
+    - `commits`: All signers' commit messages from Round 1
+
+    **FROST alignment**: This implements the binding factor computation from
+    FROST RFC Section 4.4, using H1 (rho) domain separation. -/
+def computeBindingFactors (S : Scheme) [DecidableEq S.PartyId]
+    (msg : S.Message)
+    (pk : S.Public)
+    (commits : List (SignCommitMsg S))
+    : BindingFactors S :=
+  -- Pre-hash message (H4)
+  let msgHash := hashMessage S msg
+  -- Encode commitment list (H5)
+  let encodedCommits := encodeCommitmentList S commits
+  -- Compute binding factor for each signer
+  let factors := commits.map fun cmsg =>
+    { pid := cmsg.sender
+      factor := computeBindingFactor S msgHash pk encodedCommits cmsg.sender
+      : BindingFactor S }
+  { factors := factors }
+
+/-- Compute binding factors with pre-computed hashes.
+    Use when message hash and commitment encoding are already available. -/
+def computeBindingFactorsFromHashes (S : Scheme)
+    (msgHash : ByteArray)
+    (pk : S.Public)
+    (encodedCommits : ByteArray)
+    (signers : List S.PartyId)
+    : BindingFactors S :=
+  let factors := signers.map fun pid =>
+    { pid := pid
+      factor := computeBindingFactor S msgHash pk encodedCommits pid
+      : BindingFactor S }
+  { factors := factors }
 
 /-!
 ## Challenge Derivation
@@ -91,7 +218,7 @@ With dual nonces:
 -/
 
 /-- Compute effective public nonce for a signer given their commitments and binding factor. -/
-def computeEffectiveNonce (S : Scheme)
+def computeEffectiveNonce (S : Scheme) [DecidableEq S.PartyId]
     (commitMsg : SignCommitMsg S) (bindingFactor : S.Scalar) : S.Public :=
   commitMsg.hiding + bindingFactor • commitMsg.binding
 

@@ -1,5 +1,5 @@
 /-
-# Phase-Indexed Protocol State
+# Phase-Indexed Protocol State (MsgMap Version)
 
 Protocol progress modeled as discrete phases: commit → reveal → shares → done.
 Each phase carries accumulated data as a CRDT (semilattice). Messages can
@@ -7,6 +7,30 @@ arrive out-of-order or be duplicated; merge always converges correctly.
 
 This is the core of the CRDT architecture: monotonic state transitions
 with commutative, associative, idempotent merge operations.
+
+## Phase.lean vs PhaseIndexed.lean
+
+There are two phase implementations with different trade-offs:
+
+| Feature | Phase.lean (this) | PhaseIndexed.lean |
+|---------|------------------|-------------------|
+| Storage | MsgMap (HashMap) | List |
+| Conflict handling | Un-expressable by type | Runtime check |
+| Phase safety | Runtime check | Compile-time type |
+| Use case | Production/networking | Proofs/high-level logic |
+| Merge semantics | CRDT (commutative) | Append-based |
+
+**Use Phase.lean** (this module) when:
+- Building production networking code
+- Need CRDT merge semantics
+- Want conflicts to be structurally impossible
+
+**Use PhaseIndexed.lean** when:
+- Phase correctness is the primary safety concern
+- Writing security proofs
+- Want compile-time phase transition checking
+
+See `Protocol/PhaseIndexed.lean` for the alternative implementation.
 
 ## Instance Constraint Patterns
 

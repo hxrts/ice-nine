@@ -361,18 +361,19 @@ structure RefreshRoundState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] wh
 - Consistency with DKG (which commits to public shares)
 - Simple zero-sum verification via `A(Σ m_i)`
 
-**Processing Variants:**
+**Processing Functions:**
 ```lean
--- Strict mode: returns conflict indicator
-def processCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+-- Returns result type with conflict detection (security-critical)
+def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) (msg : MaskCommitMsg S)
     : CommitProcessResult S  -- success | conflict | wrongPhase
 
--- CRDT mode: ignores duplicates
-def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
-    : RefreshRoundState S
+def processReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskRevealMsg S)
+    : RevealProcessResult S  -- success | conflict | invalidOpening | noCommit | wrongPhase
 ```
+
+**Design Choice:** We use strict conflict detection rather than CRDT-style silent merging because detecting duplicate/conflicting messages is security-critical in cryptographic protocols.
 
 **Coordinator Selection:**
 ```lean
@@ -694,18 +695,19 @@ structure RepairCoordState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] whe
   repairedShare : Option S.Secret
 ```
 
-**Processing Variants:**
+**Processing Functions:**
 ```lean
--- Strict mode: returns conflict indicator
-def processContribCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-    (st : RepairCoordState S) (msg : ContribCommitMsg S)
-    : ContribCommitProcessResult S  -- success | conflict | wrongPhase
-
--- CRDT mode: ignores duplicates
+-- Returns result type with conflict detection (security-critical)
 def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RepairCoordState S) (msg : ContribCommitMsg S)
-    : RepairCoordState S
+    : ContribCommitResult S  -- success | conflict | notHelper | wrongPhase
+
+def processContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribRevealMsg S)
+    : ContribRevealResult S  -- success | conflict | invalidOpening | noCommit | wrongPhase
 ```
+
+**Design Choice:** We use strict conflict detection rather than CRDT-style silent merging because detecting duplicate/conflicting messages is security-critical in cryptographic protocols.
 
 **Helper State:**
 Each helper maintains local state for participation:

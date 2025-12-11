@@ -3,6 +3,52 @@
 
 Core algebraic definitions for the Ice Nine threshold signature protocol.
 Defines the abstract Scheme record and basic message types for DKG.
+
+## Module Hierarchy
+
+The Protocol modules are organized in layers:
+
+```
+                    Core.lean (Scheme, KeyShare, HashDomain)
+                         ↓
+    ┌────────────────────┼────────────────────┐
+    ↓                    ↓                    ↓
+VSSCore.lean         Error.lean          Lagrange.lean
+(polynomials,        (BlameableError,    (coefficient
+ commitments)        error types)         computation)
+    ↓                    ↓                    ↓
+    └────────────────────┼────────────────────┘
+                         ↓
+         ┌───────────────┼───────────────┐
+         ↓               ↓               ↓
+    DKGCore.lean   SignTypes.lean   Phase.lean
+    (basic DKG)    (signing types)  (MsgMap CRDT)
+         ↓               ↓               ↓
+    DKGThreshold   SignCore.lean   PhaseIndexed
+    (with VSS)     (aggregation)   (type-safe)
+         ↓               ↓
+         └───────┬───────┘
+                 ↓
+         SignThreshold.lean
+         (coefficient strategies)
+                 ↓
+         SignSession.lean
+         (linear session types)
+```
+
+**Share Management (extensions)**:
+- `Refresh.lean` → `RefreshCoord.lean` (coordinator-based)
+- `Refresh.lean` → `RefreshDKG.lean` (distributed)
+- `Repair.lean` → `RepairCoord.lean`
+- `Rerandomize.lean`
+
+**Composition**:
+- `StateProduct.lean` (product semilattice)
+- `PhaseMerge.lean` (composite CRDT state)
+- `ThresholdMerge.lean` (threshold-aware merge)
+
+**Serialization**:
+- `Serialize.lean` (wire format)
 -/
 
 import Mathlib
@@ -226,6 +272,58 @@ namespace HashDomain
 end HashDomain
 
 /-!
+## Instance Constraint Patterns
+
+Protocol modules use consistent instance requirements. This section documents
+the standard patterns to ensure consistency across the codebase.
+
+### HashMap-Based Structures (MsgMap, NonceRegistry)
+
+For `Std.HashMap`-based structures:
+```
+[BEq S.PartyId] [Hashable S.PartyId]
+```
+
+These are required for HashMap key operations. Always use together.
+
+### Decidable Equality (conditionals, find, filter)
+
+For if-then-else, `List.find?`, `List.filter`:
+```
+[DecidableEq S.PartyId]
+```
+
+This is Prop-valued equality with a decision procedure. Required when
+comparing party IDs in conditional expressions.
+
+### Field Arithmetic (Lagrange coefficients)
+
+For Lagrange interpolation:
+```
+[Field S.Scalar] [DecidableEq S.Scalar]
+```
+
+Field is required for division in λ_i = Π x_j / (x_j - x_i).
+DecidableEq is needed to check for degenerate cases.
+
+### Combined Pattern
+
+Functions using both HashMap and conditionals need all three:
+```
+[BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+```
+
+**Note**: `BEq` and `DecidableEq` are distinct:
+- `BEq`: Boolean equality for HashMap (computational)
+- `DecidableEq`: Prop equality with decision (for proofs)
+
+In practice, if you have `DecidableEq`, you can derive `BEq`:
+```lean
+instance [DecidableEq α] : BEq α := ⟨fun a b => decide (a = b)⟩
+```
+-/
+
+/-!
 ## Identifier Derivation
 
 Party identifiers can be derived from arbitrary data (usernames, emails, etc.)
@@ -440,6 +538,10 @@ structure SecretBox (α : Type*) where
   private mk ::
   val : α
 
+/-- Wrap a secret value in a SecretBox.
+    **Security**: The secret value should have been generated securely. -/
+def SecretBox.wrap {α : Type*} (secret : α) : SecretBox α := ⟨secret⟩
+
 /-- SecretBox requires zeroization. -/
 instance {α : Type*} : Zeroizable (SecretBox α) where
   needsZeroization := true
@@ -448,11 +550,40 @@ instance {α : Type*} : Zeroizable (SecretBox α) where
 instance {α : Type*} : ConstantTimeEq (SecretBox α) where
   requiresConstantTime := true
 
+/-!
+## Nonce Box
+
+Wrapper for ephemeral nonces. Critical: nonces must NEVER be reused.
+The wrapper makes nonce handling more visible in code.
+-/
+
+/-- Wrapper for nonces to highlight their ephemeral nature.
+    Nonce reuse is catastrophic: treat these as single-use.
+
+    **Security Note**: Reusing a nonce across signing sessions allows
+    trivial secret key recovery. See Randomness Requirements section. -/
+structure NonceBox (α : Type*) where
+  private mk ::
+  val : α
+
+/-- Create a NonceBox from a fresh nonce.
+    **Security**: The nonce MUST be freshly sampled from a CSPRNG. -/
+def NonceBox.fresh {α : Type*} (nonce : α) : NonceBox α := ⟨nonce⟩
+
+/-- NonceBox requires zeroization. -/
+instance {α : Type*} : Zeroizable (NonceBox α) where
+  needsZeroization := true
+
+/-- NonceBox requires constant-time equality. -/
+instance {α : Type*} : ConstantTimeEq (NonceBox α) where
+  requiresConstantTime := true
+
 /-- A party's credential after DKG completes. Contains the secret share
     sk_i, public share pk_i = A(sk_i), and global key pk = Σ pk_i.
 
     **Security Note**: The `sk_i` field is wrapped in SecretBox to discourage
-    accidental exposure. Access via `share.sk_i.val` when computation requires it.
+    accidental exposure. Use `share.secret` accessor when computation requires it.
+    This creates a clear audit trail for secret access.
     Never print, log, or serialize the secret share directly. -/
 structure KeyShare (S : Scheme) where
   pid  : S.PartyId           -- this party's identifier
