@@ -22,13 +22,16 @@ Error types in Ice Nine follow these principles:
 | DKGThreshold | `Complaint` | Recoverable | Party exclusion possible |
 | DKGThreshold | `ExclusionResult` | Result | Quorum check outcome |
 | VSS | `VSSError` | Fatal/Recoverable | Depends on complaint count |
-| RepairCoord | `ContribCommitResult` | Result | Commit processing outcome |
-| RepairCoord | `ContribRevealResult` | Result | Reveal processing outcome |
+| RefreshCoord | `CommitValidationError` | Validation | Commit validation outcome |
+| RefreshCoord | `RevealValidationError` | Validation | Reveal validation outcome |
+| RepairCoord | `ContribCommitValidationError` | Validation | Commit validation outcome |
+| RepairCoord | `ContribRevealValidationError` | Validation | Reveal validation outcome |
 -/
 
 import IceNine.Protocol.DKGCore
 import IceNine.Protocol.DKGThreshold
 import IceNine.Protocol.VSS
+import IceNine.Protocol.RefreshCoord
 import IceNine.Protocol.RepairCoord
 
 namespace IceNine.Protocol.Error

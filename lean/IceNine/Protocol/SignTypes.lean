@@ -30,11 +30,11 @@ structure SessionTracker (S : Scheme) where
   partyId : S.PartyId
 
 /-- Check if a session ID is fresh (not previously used) -/
-def SessionTracker.isFresh (tracker : SessionTracker S) (session : Nat) : Bool :=
+def SessionTracker.isFresh {S : Scheme} (tracker : SessionTracker S) (session : Nat) : Bool :=
   session ∉ tracker.usedSessions
 
 /-- Mark a session as used (call after committing to nonce) -/
-def SessionTracker.markUsed (tracker : SessionTracker S) (session : Nat)
+def SessionTracker.markUsed {S : Scheme} (tracker : SessionTracker S) (session : Nat)
     : SessionTracker S :=
   { tracker with usedSessions := tracker.usedSessions.insert session }
 
@@ -50,7 +50,7 @@ inductive SessionCheckResult
 deriving DecidableEq, Repr
 
 /-- Validate session before starting signing -/
-def checkSession (tracker : SessionTracker S) (session : Nat)
+def checkSession {S : Scheme} (tracker : SessionTracker S) (session : Nat)
     : SessionCheckResult :=
   if tracker.isFresh session then .ok
   else .alreadyUsed session
@@ -215,7 +215,7 @@ structure BindingFactors (S : Scheme) where
 /-- Look up binding factor for a specific party. -/
 def BindingFactors.get {S : Scheme} [DecidableEq S.PartyId]
     (bf : BindingFactors S) (pid : S.PartyId) : Option S.Scalar :=
-  (bf.factors.find? (·.pid = pid)).map (·.factor)
+  (bf.factors.find? (fun b => decide (b.pid = pid))).map (·.factor)
 
 /-!
 ## State and Message Types
@@ -383,7 +383,7 @@ def SigningPackage.create {S : Scheme} [DecidableEq S.PartyId]
 /-- Get a specific signer's commitments from the package. -/
 def SigningPackage.getCommitment {S : Scheme} [DecidableEq S.PartyId]
     (pkg : SigningPackage S) (pid : S.PartyId) : Option (SignCommitMsg S) :=
-  pkg.commitments.find? (·.sender = pid)
+  pkg.commitments.find? (fun c => decide (c.sender = pid))
 
 /-- Get binding factor for a specific signer. -/
 def SigningPackage.getBindingFactor {S : Scheme} [DecidableEq S.PartyId]
@@ -394,7 +394,7 @@ def SigningPackage.getBindingFactor {S : Scheme} [DecidableEq S.PartyId]
 def SigningPackage.isComplete {S : Scheme} [DecidableEq S.PartyId]
     (pkg : SigningPackage S) : Bool :=
   pkg.signerSet.all fun pid =>
-    pkg.commitments.any (·.sender = pid)
+    pkg.commitments.any (fun c => decide (c.sender = pid))
 
 /-- Number of signers in this package. -/
 def SigningPackage.signerCount {S : Scheme} (pkg : SigningPackage S) : Nat :=

@@ -194,12 +194,12 @@ def verifyCommitPoK
     means we verify during the reveal phase when pk_i becomes available.
     For early verification, implementations may include pk_i in the commit. -/
 def verifyAllCommitPoKs
-  (S : Scheme) [DecidableEq S.Public]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (publicKeys : List (S.PartyId × S.Public)) :
   Except (DkgError S.PartyId) Unit :=
   commits.forM fun c =>
-    match publicKeys.find? (fun (pid, _) => pid = c.sender) with
+    match publicKeys.find? (fun (pid, _) => decide (pid = c.sender)) with
     | some (_, pk) => verifyCommitPoK S c pk
     | none => pure ()  -- pk not yet known, verify later
 

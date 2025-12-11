@@ -336,7 +336,7 @@ def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidab
   if st.phase = .adjust then
     let coord := st.coordinator
     -- Sum all revealed masks except coordinator's
-    let otherMasks := st.maskReveals.toList.filter (fun r => r.sender ≠ coord)
+    let otherMasks := st.maskReveals.toList.filter (fun r => decide (r.sender ≠ coord))
     let sumOthers := (otherMasks.map (·.mask)).sum
     -- Adjustment is negation of sum
     some (-sumOthers)
@@ -374,7 +374,7 @@ def zeroSumProp (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S
 /-- Decidable zero-sum check. -/
 def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) : Bool :=
-  (computeFinalMasks S st).sum = 0
+  decide ((computeFinalMasks S st).sum = 0)
 
 /-- verifyZeroSum reflects zeroSumProp. -/
 theorem verifyZeroSum_spec (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
@@ -412,7 +412,7 @@ theorem makeMaskFn_eq_finalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyI
     Returns None if not in apply phase or zero-sum check fails. -/
 def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) : Option (MaskFn S) :=
-  if st.phase = .apply ∧ verifyZeroSum S st then
+  if decide (st.phase = .apply) && verifyZeroSum S st then
     some (makeMaskFn S st)
   else none
 
