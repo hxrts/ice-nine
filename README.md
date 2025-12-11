@@ -1,6 +1,6 @@
 # Ice Nine
 
-A threshold signature scheme using lattice cryptography. The protocol adapts Schnorr signatures to lattice assumptions for post-quantum security. Multiple parties hold secret shares and collaborate to sign messages without reconstructing the full key.
+A threshold signature scheme using lattice cryptography. As [Matthew Green explains](https://blog.cryptographyengineering.com/2023/11/30/to-schnorr-and-beyond-part-2/), Dilithium follows the Schnorr pattern adapted to lattice assumptions for post-quantum security. This protocol extends that structure to the threshold setting where multiple parties hold secret shares and collaborate to sign messages without reconstructing the full key.
 
 The implementation is written in Lean with proofs of correctness. Security reduces to the Short Integer Solution and Module Learning With Errors problems. The protocol supports distributed key generation, proactive refresh, and share repair.
 
