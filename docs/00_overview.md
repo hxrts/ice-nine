@@ -1,4 +1,4 @@
-# Ice Nine Protocol Specification
+# Ice Nine Protocol Specification Overview
 
 Ice Nine is a threshold signature scheme in the lattice setting. It follows the Schnorr pattern adapted for post-quantum security. The protocol operates in two rounds. Parties hold additive shares of a master secret. They produce partial signatures that aggregate into a single valid signature.
 

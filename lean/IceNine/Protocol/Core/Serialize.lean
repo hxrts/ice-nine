@@ -266,7 +266,7 @@ class Serializable (α : Type*) where
   toBytes : α → ByteArray
   /-- Parse from bytes, returning none on malformed input -/
   fromBytes : ByteArray → Option α
-  /-- Axiom: successful round-trip -/
+  -- Axiom: successful round-trip
   -- roundTrip : ∀ x, fromBytes (toBytes x) = some x
 
 /-- Typeclass for types that serialize with a header. -/
@@ -275,13 +275,14 @@ class SerializableWithHeader (α : Type*) extends Serializable α where
   schemeId : SchemeId
 
 /-- Serialize with header prefix -/
-def SerializableWithHeader.toBytesWithHeader [inst : SerializableWithHeader α] (x : α) : ByteArray :=
+def SerializableWithHeader.toBytesWithHeader {α : Type*} [inst : SerializableWithHeader α] (x : α) : ByteArray :=
   (SerializationHeader.default inst.schemeId).toBytes ++ inst.toBytes x
 
 /-- Parse with header validation -/
-def SerializableWithHeader.fromBytesWithHeader [inst : SerializableWithHeader α] (bs : ByteArray) : Option α := do
-  let (h, rest) ← SerializationHeader.fromBytes bs
-  if h.schemeId = inst.schemeId then inst.fromBytes rest else none
+def SerializableWithHeader.fromBytesWithHeader {α : Type*} [inst : SerializableWithHeader α] (bs : ByteArray) : Option α :=
+  match SerializationHeader.fromBytes bs with
+  | none => none
+  | some (h, rest) => if h.schemeId = inst.schemeId then inst.fromBytes rest else none
 
 /-!
 ## Primitive Serializers

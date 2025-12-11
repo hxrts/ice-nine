@@ -135,10 +135,9 @@ noncomputable def mkThresholdCtxComputed
   (hcard : t ≤ active.card) : ThresholdCtx S :=
   let coeffs := active.toList.map (fun pid =>
     { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar active.toList pid })
-  have hlen : coeffs.length = active.toList.length := List.length_map _ _
-  have hpid : coeffs.map (fun c => c.pid) = active.toList := by
-    simp only [List.map_map, Function.comp_def]
-    conv_rhs => rw [← List.map_id active.toList]
+  have hlen : coeffs.length = active.toList.length := by simp [coeffs]
+  have hpid : coeffs.map (fun (c : LagrangeCoeff S) => c.pid) = active.toList := by
+    simp only [coeffs, List.map_map, Function.comp_def]
     rfl
   mkThresholdCtx S active t coeffs hcard hpid hlen
 

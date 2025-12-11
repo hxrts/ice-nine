@@ -183,8 +183,11 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , commit := latticeCommit
   , commitBinding := by
       intro x1 x2 o1 o2 h
-      have hb := HashBinding.binding (x1 := x1) (x2 := x2) (o1 := o1) (o2 := o2) h
-      exact hb
+      -- h : latticeCommit x1 o1 = latticeCommit x2 o2
+      -- Extract the com field equality to get hash equality
+      have hcom : hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) :=
+        congrArg LatticeCommitment.com h
+      exact HashBinding.binding hcom
   , hashToScalar := fun domain data =>
       let h := hashBytes (domain ++ data)
       hashToChallenge h
@@ -198,11 +201,11 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , normOKDecidable := intVecInfLeqDecidable p.bound
 }
 
-abbrev LatticePartyId   := (latticeScheme).PartyId
-abbrev LatticeMessage   := (latticeScheme).Message
-abbrev LatticeSecret    := (latticeScheme).Secret
-abbrev LatticePublic    := (latticeScheme).Public
-abbrev LatticeChallenge := (latticeScheme).Challenge
+abbrev LatticePartyId   : Type := (latticeScheme).PartyId
+abbrev LatticeMessage   : Type := (latticeScheme).Message
+abbrev LatticeSecret    : Type := (latticeScheme).Secret
+abbrev LatticePublic    : Type := (latticeScheme).Public
+abbrev LatticeChallenge : Type := (latticeScheme).Challenge
 abbrev LatticeBound     : Nat := ({} : LatticeParams).bound
 
 end IceNine.Instances

@@ -11,6 +11,7 @@ Correctness and robustness for Distributed Key Generation:
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.DKG.Dealer
+import IceNine.Proofs.Core.ListLemmas
 
 namespace IceNine.Proofs.Correctness.DKG
 
@@ -64,14 +65,18 @@ lemma forM_zip_ok_forall2
   | nil =>
     cases reveals with
     | nil => exact List.Forall₂.nil
-    | cons _ _ => exact List.Forall₂.nil
+    | cons _ _ => simp [List.zip] at h; exact List.Forall₂.nil
   | cons c cs ih =>
     cases reveals with
-    | nil => exact List.Forall₂.nil
+    | nil => simp [List.zip] at h; exact List.Forall₂.nil
     | cons r rs =>
-      simp only [List.zip_cons_cons, List.forM_cons, Except.bind_ok] at h
-      obtain ⟨h_head, h_tail⟩ := h
-      exact List.Forall₂.cons (checkPair_ok_pred S c r h_head) (ih rs h_tail)
+      simp only [List.zip_cons_cons, List.forM_cons] at h
+      -- h : checkPair S c r >>= (fun _ => forM ...) = Except.ok ()
+      cases hcp : checkPair S c r with
+      | error e => simp [hcp] at h
+      | ok _ =>
+        simp [hcp] at h
+        exact List.Forall₂.cons (checkPair_ok_pred S c r hcp) (ih rs h)
 
 /-- checkPairs success → Forall₂ validity on pairs.
     Each commit/reveal pair has matching IDs and correct opening. -/
@@ -107,9 +112,15 @@ lemma dkgAggregateChecked_sound
   (h : dkgAggregateChecked S commits reveals = Except.ok pk) :
   pk = (reveals.map (·.pk_i)).sum := by
   unfold dkgAggregateChecked at h
-  simp only [Except.bind_eq_ok, Except.pure_eq_ok] at h
-  obtain ⟨_, ⟨_, h1⟩, h2⟩ := h
-  exact h2.symm
+  split_ifs at h with hlen hdup
+  · -- Both checks passed, now we need to extract the result
+    cases hcheck : checkPairs S commits reveals with
+    | error e => simp [hcheck] at h
+    | ok _ =>
+      simp [hcheck] at h
+      exact h.symm
+  · simp at h
+  · simp at h
 
 /-- Ok result → dkgValid predicate holds.
     Uses checkPairs_ok_forall2 to establish the validity predicate. -/
@@ -120,11 +131,9 @@ lemma dkgAggregateChecked_ok_valid
   (pk : S.Public)
   (h : dkgAggregateChecked S commits reveals = Except.ok pk) :
   dkgValid S commits reveals := by
-  simp only [dkgAggregateChecked] at h
+  unfold dkgAggregateChecked at h
   split_ifs at h with hlen hdup
   · -- Both checks passed
-    simp only [Except.bind_ok] at h
-    -- Extract the checkPairs success
     cases hcheck : checkPairs S commits reveals with
     | error e => simp [hcheck] at h
     | ok _ =>
@@ -197,10 +206,15 @@ lemma dealerKeygen_wellFormed
     -- shares are constructed with commitPk := S.commit pk_i op
     intro sh hsh
     unfold DealerShare.wellFormed
-    -- sh is in the zipWith3 result
-    simp only [List.mem_zipWith3] at hsh
-    obtain ⟨i, hi, pid, sk, op, _, _, _, hsh_eq⟩ := hsh
-    simp only [hsh_eq]
+    -- sh is in the zipWith3 result - use our custom membership lemma
+    obtain ⟨i, _, pid, sk, op, hpid, hsk, hop, hsh_eq⟩ := List.mem_zipWith3 hsh
+    -- The share was constructed as: { commitPk := S.commit (S.A sk) op, pk_i := S.A sk, opening := op, ... }
+    simp only [getElem?_eq_some_iff] at hpid hsk hop
+    obtain ⟨_, hpid'⟩ := hpid
+    obtain ⟨_, hsk'⟩ := hsk
+    obtain ⟨_, hop'⟩ := hop
+    -- Substitute into hsh_eq to see the structure
+    simp only [← hsh_eq]
     rfl
   · simp at h
 

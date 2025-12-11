@@ -24,7 +24,7 @@ Core lemma: Σ(a_i + b_i) = Σa_i + Σb_i (when lengths match).
     Handles the general case where list lengths may differ. -/
 theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
     ∀ (as bs : List α),
-      (zipWith (· + ·) as bs).sum = as.take bs.length |>.sum + bs.take as.length |>.sum
+      (zipWith (· + ·) as bs).sum = (as.take bs.length).sum + (bs.take as.length).sum
   | [], _ => by simp
   | _, [] => by simp
   | a::as, b::bs => by
@@ -35,7 +35,8 @@ theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
 /-- When lists have equal length, take is identity. -/
 theorem take_eq_self_of_length_eq {α : Type*} (as bs : List α) (h : as.length = bs.length) :
     as.take bs.length = as := by
-  simp [take_length_le, h]
+  rw [h]
+  exact take_length as
 
 /-- Sum of zipWith add for equal-length lists.
     Σ(a_i + b_i) = Σa_i + Σb_i -/
@@ -57,10 +58,10 @@ For signature aggregation: Σ(y_i + c·s_i) = Σy_i + c·Σs_i
 lemma sum_zipWith_add_mul (c : Int) (ys sks : List Int) :
     (zipWith (fun y s => y + c * s) ys sks).sum = ys.sum + c * sks.sum := by
   induction ys generalizing sks with
-  | nil => simp
+  | nil => simp only [zipWith_nil_left, sum_nil, zero_add, mul_zero]
   | cons y ys ih =>
     cases sks with
-    | nil => simp
+    | nil => simp only [zipWith_nil_right, sum_nil, sum_cons, mul_zero, add_zero]
     | cons s sks =>
       simp only [zipWith_cons_cons, sum_cons]
       rw [ih sks]
@@ -75,10 +76,10 @@ lemma sum_zipWith_add_smul
     (c : R) (ys sks : List M) :
     (zipWith (fun y s => y + c • s) ys sks).sum = ys.sum + c • sks.sum := by
   induction ys generalizing sks with
-  | nil => simp
+  | nil => simp only [zipWith_nil_left, sum_nil, zero_add, smul_zero]
   | cons y ys ih =>
     cases sks with
-    | nil => simp
+    | nil => simp only [zipWith_nil_right, sum_nil, sum_cons, smul_zero, add_zero]
     | cons s sks =>
       simp only [zipWith_cons_cons, sum_cons, smul_add]
       rw [ih sks]
@@ -93,16 +94,17 @@ For threshold signing: Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
 /-- Lagrange-weighted aggregation splits linearly.
     Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i -/
 lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int) :
-    (zipWith3 (fun λ y s => λ * y + λ * (c * s)) coeffs ys sks).sum
-      = (coeffs.zipWith (·*·) ys).sum + c * (coeffs.zipWith (·*·) sks).sum := by
+    (zipWith3 (fun λ_ y s => λ_ * y + λ_ * (c * s)) coeffs ys sks).sum
+      = (coeffs.zipWith (· * ·) ys).sum + c * (coeffs.zipWith (· * ·) sks).sum := by
   induction coeffs generalizing ys sks with
-  | nil => simp
-  | cons λ λs ih =>
+  | nil => simp only [zipWith3_nil_left, zipWith_nil_left, sum_nil, zero_add, mul_zero]
+  | cons λ_ λs ih =>
     cases ys with
-    | nil => simp
+    | nil => simp only [zipWith3_nil_mid, zipWith_nil_right, sum_nil, zero_add, mul_zero]
     | cons y ys =>
       cases sks with
-      | nil => simp
+      | nil => simp only [zipWith3_nil_right, zipWith_cons_cons, zipWith_nil_right,
+                         sum_cons, sum_nil, mul_zero, add_zero]
       | cons s sks =>
         simp only [zipWith3_cons_cons_cons, zipWith_cons_cons, sum_cons]
         rw [ih ys sks]
