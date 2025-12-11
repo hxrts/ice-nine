@@ -8,11 +8,11 @@ The verifier receives the following inputs.
 
 - **Signature.** The `Signature` structure containing:
   ```lean
-  structure Signature (S : Scheme) :=
-    (z       : S.Secret)
-    (c       : S.Challenge)
-    (Sset    : List S.PartyId)
-    (commits : List S.Commitment)
+  structure Signature (S : Scheme) where
+    z       : S.Secret
+    c       : S.Challenge
+    Sset    : List S.PartyId
+    commits : List S.Commitment
   ```
 - **Message.** The message $m \in \mathcal{M}$ that was signed.
 - **Public key.** The global public key $\mathsf{pk}$.

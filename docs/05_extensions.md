@@ -32,6 +32,25 @@ instance : BlameableError (VSS.VSSError PartyId) PartyId where
     | .duplicateDealer p => some p
 ```
 
+### Cheater Detection Modes
+
+Following FROST, we provide configurable cheater detection:
+
+```lean
+inductive CheaterDetectionMode
+  | disabled      -- No blame tracking (best performance)
+  | firstCheater  -- Stop after finding one cheater (good balance)
+  | allCheaters   -- Exhaustively identify all cheaters (complete but slower)
+
+structure ProtocolConfig where
+  cheaterDetection : CheaterDetectionMode := .firstCheater
+  maxErrors : Nat := 0  -- 0 = unlimited
+
+def ProtocolConfig.default : ProtocolConfig
+def ProtocolConfig.highSecurity : ProtocolConfig   -- allCheaters mode
+def ProtocolConfig.performance : ProtocolConfig    -- disabled mode
+```
+
 ### Error Aggregation
 
 Utilities for collecting and analyzing errors across protocol execution:
@@ -42,6 +61,9 @@ def countBlame (errors : List E) (party : PartyId) : Nat
 
 /-- Get all unique blamed parties from a list of errors -/
 def allBlamedParties (errors : List E) : List PartyId
+
+/-- Collect blame respecting detection mode -/
+def collectBlame (config : ProtocolConfig) (errors : List E) : BlameResult PartyId
 ```
 
 ### Error Categories
@@ -56,6 +78,29 @@ def allBlamedParties (errors : List E) : List PartyId
 ## Serialization
 
 The `Protocol/Serialize.lean` module provides type-safe serialization for network transport.
+
+### Serialization Headers
+
+Messages include headers for version and scheme identification:
+
+```lean
+inductive SchemeId
+  | mlDsa44 | mlDsa65 | mlDsa87 | custom (id : ByteArray)
+
+structure SerializationHeader where
+  version : UInt8       -- protocol version (currently 1)
+  schemeId : SchemeId   -- parameter set identifier
+
+class SerializableWithHeader (α : Type*) extends Serializable α where
+  header : SerializationHeader
+  toBytesWithHeader : α → ByteArray
+  fromBytesWithHeader : ByteArray → Option α
+```
+
+This enables:
+- **Version negotiation**: Detect incompatible protocol versions
+- **Parameter validation**: Verify scheme compatibility before deserializing
+- **Safe upgrades**: Add new schemes without breaking existing deployments
 
 ### Serializable Typeclass
 
@@ -358,10 +403,10 @@ structure RepairRequest (S : Scheme) :=
   (requester : S.PartyId)
   (knownPk_i : S.Public)  -- The public share is still known
 
-structure RepairMsg (S : Scheme) :=
-  (from   : S.PartyId)
-  (to     : S.PartyId)
-  (delta  : S.Secret)
+structure RepairMsg (S : Scheme) where
+  sender : S.PartyId  -- helper party
+  target : S.PartyId  -- requester (for routing)
+  delta  : S.Secret   -- weighted share contribution
 
 structure RepairBundle (S : Scheme) :=
   (msgs : List (RepairMsg S))
@@ -693,9 +738,9 @@ lemma rerand_preserves_sig
   (c : S.Challenge)
   (commits : List S.Commitment)
   (shares : List (SignShareMsg S)) :
-  (shares.map (fun sh => masks.shareMask sh.from)).sum = 0 →
+  (shares.map (fun sh => masks.shareMask sh.sender)).sum = 0 →
   aggregateSignature S c Sset commits
-    (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.from }))
+    (shares.map (fun sh => { sh with z_i := sh.z_i + masks.shareMask sh.sender }))
     = aggregateSignature S c Sset commits shares
 ```
 

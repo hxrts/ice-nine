@@ -476,6 +476,9 @@ inductive SignError (PartyId : Type) where
   | duplicateParticipants : SignError PartyId
   | commitMismatch : PartyId → SignError PartyId
   | sessionMismatch : Nat → Nat → SignError PartyId
+  | normCheckFailed : PartyId → SignError PartyId
+  | maxRetriesExceeded : PartyId → SignError PartyId
+  | sessionAborted : Nat → SignError PartyId
 ```
 
 ### Valid Transcript Predicate
@@ -485,13 +488,13 @@ structure ValidSignTranscript (S : Scheme)
   (Sset : List S.PartyId)
   (commits : List (SignCommitMsg S))
   (reveals : List (SignRevealWMsg S))
-  (shares  : List (SignShareMsg S)) : Prop :=
-  (len_comm_reveal : commits.length = reveals.length)
-  (len_reveal_share : reveals.length = shares.length)
-  (pids_nodup : (commits.map (·.from)).Nodup)
-  (pids_eq : commits.map (·.from) = Sset)
-  (commit_open_ok : ...)
-  (sessions_ok : ...)
+  (shares  : List (SignShareMsg S)) : Prop where
+  len_comm_reveal : commits.length = reveals.length
+  len_reveal_share : reveals.length = shares.length
+  pids_nodup : (commits.map (·.sender)).Nodup
+  pids_eq : commits.map (·.sender) = Sset
+  commit_open_ok : List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit c.hiding r.opening = c.commitW) commits reveals
+  sessions_ok : let sess := (commits.head?.map (·.session)).getD 0; ∀ sh ∈ shares, sh.session = sess
 ```
 
 ## Monotonic Step Functions
@@ -683,20 +686,6 @@ def SignAbortState.isAborted (state : SignAbortState S) (threshold totalParties 
 
 This ensures a malicious minority cannot force repeated session aborts.
 
-### Extended Error Types
-
-```lean
-inductive SignError (PartyId : Type) where
-  | lengthMismatch : SignError PartyId
-  | participantMismatch : PartyId → SignError PartyId
-  | duplicateParticipants : SignError PartyId
-  | commitMismatch : PartyId → SignError PartyId
-  | sessionMismatch : Nat → Nat → SignError PartyId
-  | normCheckFailed : PartyId → SignError PartyId      -- NEW
-  | maxRetriesExceeded : PartyId → SignError PartyId   -- NEW
-  | sessionAborted : Nat → SignError PartyId           -- NEW
-```
-
 ## Session-Typed Signing
 
 The `Protocol/SignSession.lean` module provides a session-typed API that makes nonce reuse a compile-time error rather than a runtime check. Each signing session progresses through states that consume the previous state, ensuring nonces are used exactly once.
@@ -711,37 +700,41 @@ FreshNonce ──► ReadyToCommit ──► Committed ──► Revealed ──
 
 Each transition consumes its input state. There is no way to "go back" or reuse a consumed state.
 
-### Linear Nonce
+### Linear Nonce (Dual Nonce Version)
 
-A nonce is wrapped in a structure that can only be consumed once:
+Following FROST, we use two nonces per signer:
 
 ```lean
 structure FreshNonce (S : Scheme) where
   private mk ::
-  private value : S.Secret
-  private publicNonce : S.Public
-  private opening : S.Opening
+  private hidingNonce : S.Secret   -- secret hiding nonce
+  private bindingNonce : S.Secret  -- secret binding nonce
+  private publicHiding : S.Public  -- W_hiding = A(hiding)
+  private publicBinding : S.Public -- W_binding = A(binding)
+  private opening : S.Opening      -- commitment opening
 
-def FreshNonce.sample (S : Scheme) (y : S.Secret) (opening : S.Opening) : FreshNonce S
+def FreshNonce.sample (S : Scheme) (hiding binding : S.Secret) (opening : S.Opening) : FreshNonce S
 ```
 
-The private constructor prevents arbitrary creation. The only way to create a `FreshNonce` is via `sample` with fresh randomness.
+The private constructor prevents arbitrary creation. The only way to create a `FreshNonce` is via `sample` with fresh randomness for both hiding and binding nonces.
 
 ### Session States
 
-Each state carries the data accumulated up to that point:
+Each state carries the data accumulated up to that point (dual nonce version):
 
 ```lean
 structure ReadyToCommit (S : Scheme) where
   keyShare : KeyShare S
-  nonce : FreshNonce S      -- will be consumed on commit
+  nonce : FreshNonce S      -- dual nonces, will be consumed on commit
   message : S.Message
   session : Nat
 
 structure Committed (S : Scheme) where
   keyShare : KeyShare S
-  private secretNonce : S.Secret  -- moved from FreshNonce
-  publicNonce : S.Public
+  private hidingNonce : S.Secret   -- moved from FreshNonce
+  private bindingNonce : S.Secret  -- moved from FreshNonce
+  publicHiding : S.Public
+  publicBinding : S.Public
   opening : S.Opening
   message : S.Message
   session : Nat
@@ -750,12 +743,15 @@ structure Committed (S : Scheme) where
 
 structure Revealed (S : Scheme) where
   keyShare : KeyShare S
-  private secretNonce : S.Secret
-  publicNonce : S.Public
+  private hidingNonce : S.Secret
+  private bindingNonce : S.Secret
+  publicHiding : S.Public
+  publicBinding : S.Public
   message : S.Message
   session : Nat
   challenge : S.Challenge
-  aggregateNonce : S.Public
+  bindingFactor : S.Scalar     -- ρ for this signer
+  aggregateNonce : S.Public    -- w = Σ (W_hiding_i + ρ_i·W_binding_i)
 
 structure Signed (S : Scheme) where
   keyShare : KeyShare S
@@ -779,11 +775,13 @@ def commit (S : Scheme) (ready : ReadyToCommit S)
     : Committed S × SignCommitMsg S
 
 -- Consumes Committed, produces Revealed
+-- Receives challenge, binding factor, and aggregate nonce from coordinator
 def reveal (S : Scheme) (committed : Committed S)
-    (challenge : S.Challenge) (aggregateW : S.Public)
+    (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
     : Revealed S × SignRevealWMsg S
 
 -- Consumes Revealed, produces Signed or returns for retry
+-- Computes z_i = y_eff + c·sk_i where y_eff = hiding + ρ·binding
 def sign (S : Scheme) (revealed : Revealed S)
     : Sum (Signed S) (Revealed S × String)
 

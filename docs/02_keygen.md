@@ -89,14 +89,14 @@ Distributed key generation removes the need for a trusted dealer. Parties jointl
 The DKG protocol uses commit and reveal messages.
 
 ```lean
-structure DkgCommitMsg (S : Scheme) :=
-  (from     : S.PartyId)
-  (commitPk : S.Commitment)
+structure DkgCommitMsg (S : Scheme) where
+  sender   : S.PartyId
+  commitPk : S.Commitment
 
-structure DkgRevealMsg (S : Scheme) :=
-  (from    : S.PartyId)
-  (pk_i    : S.Public)
-  (opening : S.Opening)
+structure DkgRevealMsg (S : Scheme) where
+  sender  : S.PartyId
+  pk_i    : S.Public
+  opening : S.Opening
 ```
 
 ### Party State
@@ -195,8 +195,8 @@ def dkgValid
   (S : Scheme)
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S)) : Prop :=
-  List.Forall2
-    (fun c r => c.from = r.from ∧ S.commit r.pk_i r.opening = c.commitPk)
+  List.Forall₂
+    (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk)
     commits reveals
 ```
 
