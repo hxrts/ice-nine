@@ -82,18 +82,16 @@ This ensures:
 structure MsgMap (S : Scheme) (M : Type*) [BEq S.PartyId] [Hashable S.PartyId] where
   /-- Map from sender to message -/
   map : Std.HashMap S.PartyId M
-deriving Repr
 
 /-- Empty message map. -/
 def MsgMap.empty {S : Scheme} {M : Type*} [BEq S.PartyId] [Hashable S.PartyId]
     : MsgMap S M :=
-  { map := Std.HashMap.empty }
+  { map := {} }
 
 /-- Result of attempting to insert a message. -/
 inductive InsertResult (S : Scheme) (M : Type*)  [BEq S.PartyId] [Hashable S.PartyId]
   | success (newMap : MsgMap S M)
   | conflict (existing : M)
-deriving Repr
 
 /-- Try to insert a message. Returns conflict if sender already has a message.
     This makes conflicts **un-expressable** - you cannot silently overwrite. -/
@@ -281,12 +279,12 @@ instance (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] : LE (RevealState S) 
   ⟨fun a b => a.commits ≤ b.commits ∧ a.reveals ≤ b.reveals⟩
 
 /-- ShareState merge: union of all maps, union active party set. -/
-instance (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] : Join (ShareState S) :=
+instance (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] : Join (ShareState S) :=
   ⟨fun a b => { commits := a.commits ⊔ b.commits,
                 reveals := a.reveals ⊔ b.reveals,
                 shares  := a.shares ⊔ b.shares,
                 active  := a.active ∪ b.active }⟩
-instance (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] : LE (ShareState S) :=
+instance (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] : LE (ShareState S) :=
   ⟨fun a b => a.commits ≤ b.commits ∧ a.reveals ≤ b.reveals ∧ a.shares ≤ b.shares ∧ a.active ⊆ b.active⟩
 
 /-!
@@ -328,7 +326,7 @@ documentation of why they hold.
 /-- MsgMap merge preserves the union of sender sets.
     Axiomatized: follows from commutativity of set union on HashMap keys. -/
 axiom MsgMap.merge_senders_comm {S : Scheme} {M : Type*}
-    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (a b : MsgMap S M) :
     (a ⊔ b).senders.toFinset = (b ⊔ a).senders.toFinset
 

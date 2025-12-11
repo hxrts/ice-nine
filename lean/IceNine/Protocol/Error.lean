@@ -36,6 +36,44 @@ namespace IceNine.Protocol.Error
 open IceNine.Protocol
 
 /-!
+## Cheater Detection Configuration
+
+Following FROST, we provide configurable cheater detection modes.
+Different deployments may prioritize performance vs. completeness.
+-/
+
+/-- Cheater detection mode determines how thoroughly we identify misbehaving parties.
+
+    - `disabled`: No blame tracking (best performance, no accountability)
+    - `firstCheater`: Stop at first identified cheater (good balance)
+    - `allCheaters`: Exhaustively identify all cheaters (complete but slower) -/
+inductive CheaterDetectionMode
+  | disabled      -- No blame tracking
+  | firstCheater  -- Stop after finding one cheater
+  | allCheaters   -- Find all cheaters
+  deriving DecidableEq, Repr
+
+/-- Protocol configuration for error handling. -/
+structure ProtocolConfig where
+  /-- How thoroughly to identify cheaters -/
+  cheaterDetection : CheaterDetectionMode := .firstCheater
+  /-- Maximum errors to collect before aborting (0 = unlimited) -/
+  maxErrors : Nat := 0
+  deriving Repr
+
+/-- Default protocol configuration. -/
+def ProtocolConfig.default : ProtocolConfig :=
+  { cheaterDetection := .firstCheater, maxErrors := 0 }
+
+/-- High-security configuration: find all cheaters. -/
+def ProtocolConfig.highSecurity : ProtocolConfig :=
+  { cheaterDetection := .allCheaters, maxErrors := 0 }
+
+/-- Performance configuration: no blame tracking. -/
+def ProtocolConfig.performance : ProtocolConfig :=
+  { cheaterDetection := .disabled, maxErrors := 1 }
+
+/-!
 ## Common Error Interface
 
 Type class for errors that identify a faulty party.
@@ -84,6 +122,50 @@ def countBlame {E PartyId : Type*} [DecidableEq PartyId] [BlameableError E Party
 def allBlamedParties {E PartyId : Type*} [DecidableEq PartyId] [BlameableError E PartyId]
     (errors : List E) : List PartyId :=
   (errors.filterMap BlameableError.blamedParty).dedup
+
+/-- Result of blame collection respecting detection mode. -/
+structure BlameResult (PartyId : Type*) where
+  /-- Identified cheaters (may be partial based on mode) -/
+  cheaters : List PartyId
+  /-- Whether collection was exhaustive -/
+  isComplete : Bool
+  /-- Number of errors processed -/
+  errorsProcessed : Nat
+  deriving Repr
+
+/-- Collect blame from errors respecting the detection mode.
+    Returns early for `firstCheater` mode, exhaustively for `allCheaters`. -/
+def collectBlame {E PartyId : Type*} [DecidableEq PartyId] [BlameableError E PartyId]
+    (config : ProtocolConfig) (errors : List E) : BlameResult PartyId :=
+  match config.cheaterDetection with
+  | .disabled =>
+      { cheaters := [], isComplete := true, errorsProcessed := 0 }
+  | .firstCheater =>
+      -- Find first blamed party and stop
+      match errors.findSome? BlameableError.blamedParty with
+      | some p => { cheaters := [p], isComplete := false, errorsProcessed := 1 }
+      | none => { cheaters := [], isComplete := true, errorsProcessed := errors.length }
+  | .allCheaters =>
+      -- Exhaustively collect all blamed parties
+      let cheaters := allBlamedParties errors
+      { cheaters := cheaters, isComplete := true, errorsProcessed := errors.length }
+
+/-- Collect blame with early termination based on maxErrors. -/
+def collectBlameWithLimit {E PartyId : Type*} [DecidableEq PartyId] [BlameableError E PartyId]
+    (config : ProtocolConfig) (errors : List E) : BlameResult PartyId :=
+  let limitedErrors :=
+    if config.maxErrors > 0 then errors.take config.maxErrors
+    else errors
+  let result := collectBlame config limitedErrors
+  { result with isComplete := result.isComplete && (config.maxErrors = 0 || errors.length ≤ config.maxErrors) }
+
+/-- Check if we should continue collecting errors based on config. -/
+def shouldContinueCollecting (config : ProtocolConfig) (result : BlameResult PartyId) : Bool :=
+  match config.cheaterDetection with
+  | .disabled => false
+  | .firstCheater => result.cheaters.isEmpty
+  | .allCheaters =>
+      config.maxErrors = 0 || result.errorsProcessed < config.maxErrors
 
 /-!
 ## Result Conversion

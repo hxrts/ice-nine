@@ -37,7 +37,6 @@ structure VSSCommitMsg (S : Scheme) where
   sender : S.PartyId
   /-- Commitment to polynomial coefficients -/
   polyCommit : PolyCommitment S
-deriving Repr
 
 /-- VSS share message: party sends share privately to recipient. -/
 structure VSSShareMsg (S : Scheme) where
@@ -45,7 +44,6 @@ structure VSSShareMsg (S : Scheme) where
   recipient : S.PartyId
   /-- The share value f_sender(recipient) -/
   share : VSSShare S
-deriving Repr
 
 /-- VSS complaint: party j complains that party i's share is invalid. -/
 structure VSSComplaint (S : Scheme) where
@@ -57,7 +55,6 @@ structure VSSComplaint (S : Scheme) where
   badShare : VSSShare S
   /-- The commitment it should verify against -/
   commitment : PolyCommitment S
-deriving Repr
 
 /-- VSS error types. -/
 inductive VSSError (PartyId : Type*) where
@@ -91,7 +88,6 @@ structure VSSLocalState (S : Scheme) where
   incomingShares : List (VSSShareMsg S)
   /-- Complaints filed by this party -/
   complaints : List (VSSComplaint S)
-deriving Repr
 
 /-!
 ## VSS-DKG Protocol Functions
@@ -99,7 +95,7 @@ deriving Repr
 
 /-- Initialize VSS state for a party.
     Party samples polynomial with their secret contribution as constant term. -/
-def vssInit (S : Scheme) [Module S.Scalar S.Secret]
+def vssInit (S : Scheme) [Semiring S.Secret] [Monoid S.Scalar] [Module S.Scalar S.Secret]
     (pid : S.PartyId)
     (secretContribution : S.Secret)  -- sk_i: this party's share of the master secret
     (randomCoeffs : List S.Secret)   -- random coefficients for polynomial
@@ -192,7 +188,7 @@ def vssFinalize (S : Scheme)
     -- pk = Σ_i A(a_{i,0}) = Σ_i C_{i,0} (first commitment from each dealer)
     let pk := (allCommitments.filterMap (fun c => c.polyCommit.commitments.head?)).sum
     some { pid := st.pid
-           sk_i := sk_i
+           secret := SecretBox.mk sk_i
            pk_i := pk_i
            pk := pk }
   else
@@ -215,7 +211,6 @@ structure VSSDKGTranscript (S : Scheme) where
   complaints : List (VSSComplaint S)
   /-- Threshold (degree + 1) -/
   threshold : Nat
-deriving Repr
 
 /-- Check if VSS-DKG succeeded (no valid complaints). -/
 def vssDKGSuccess (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Public]

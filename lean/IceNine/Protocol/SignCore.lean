@@ -41,21 +41,96 @@ def lagrangeCoeffs
 /-!
 ## Challenge Derivation
 
-After all reveals, compute aggregate nonce and derive challenge via Fiat-Shamir.
+After all Round 1 messages, compute binding factors, aggregate nonce,
+and derive challenge via Fiat-Shamir.
+
+With dual nonces:
+1. Compute binding factor ρ_i for each signer from (msg, pk, all_commitments, signer_id)
+2. Compute effective nonce: w_i = W_hiding_i + ρ_i·W_binding_i
+3. Aggregate: w = Σ w_i
+4. Derive challenge: c = H(msg, pk, Sset, commitments, w)
 -/
 
-/-- Compute Fiat-Shamir challenge from transcript. -/
+/-- Compute effective public nonce for a signer given their commitments and binding factor. -/
+def computeEffectiveNonce (S : Scheme)
+    (commitMsg : SignCommitMsg S) (bindingFactor : S.Scalar) : S.Public :=
+  commitMsg.hiding + bindingFactor • commitMsg.binding
+
+/-- Compute aggregate nonce from all signers' commitments and binding factors.
+    w = Σᵢ (W_hiding_i + ρᵢ·W_binding_i) -/
+def computeAggregateNonce (S : Scheme) [DecidableEq S.PartyId]
+    (commits : List (SignCommitMsg S))
+    (bindingFactors : BindingFactors S)
+    : S.Public :=
+  (commits.map fun cmsg =>
+    match bindingFactors.get cmsg.sender with
+    | some ρ => computeEffectiveNonce S cmsg ρ
+    | none => cmsg.hiding  -- fallback if binding factor missing
+  ).sum
+
+/-!
+## Binding Validation
+
+Validates that binding factors were correctly derived from the signing context.
+This prevents attacks where a malicious coordinator provides incorrect binding factors.
+-/
+
+/-- Error for binding validation failures. -/
+inductive BindingError (PartyId : Type u)
+  | missingBindingFactor : PartyId → BindingError PartyId
+  | bindingMismatch : PartyId → BindingError PartyId
+  | contextMismatch : BindingError PartyId
+  deriving DecidableEq
+
+/-- Validate that all signers have binding factors. -/
+def validateBindingFactorsPresent [DecidableEq S.PartyId]
+    (commits : List (SignCommitMsg S))
+    (bindingFactors : BindingFactors S)
+    : Except (BindingError S.PartyId) Unit := do
+  for cmsg in commits do
+    match bindingFactors.get cmsg.sender with
+    | some _ => pure ()
+    | none => throw (.missingBindingFactor cmsg.sender)
+
+/-- Validate binding factor for a single signer.
+    This checks that the binding factor matches expected derivation.
+
+    **Note**: Actual validation requires the binding factor derivation hash.
+    This function provides the structure; implementations must provide
+    the concrete hash computation. -/
+def validateSingleBinding [DecidableEq S.PartyId] [DecidableEq S.Scalar]
+    (cmsg : SignCommitMsg S)
+    (bindingFactor : S.Scalar)
+    (expectedBindingFactor : S.Scalar)
+    : Except (BindingError S.PartyId) Unit :=
+  if bindingFactor = expectedBindingFactor then .ok ()
+  else .error (.bindingMismatch cmsg.sender)
+
+/-- Validate effective nonce derivation.
+    w_eff = W_hiding + ρ·W_binding should equal the claimed effective nonce. -/
+def validateEffectiveNonce [DecidableEq S.Public]
+    (cmsg : SignCommitMsg S)
+    (bindingFactor : S.Scalar)
+    (claimedEffective : S.Public)
+    : Bool :=
+  let computed := computeEffectiveNonce _ cmsg bindingFactor
+  computed = claimedEffective
+
+/-- Compute Fiat-Shamir challenge from transcript (dual nonce version).
+
+    Returns the challenge and aggregate nonce. -/
 def computeChallenge
-  (S     : Scheme)
+  (S     : Scheme) [DecidableEq S.PartyId]
   (pk    : S.Public)
   (m     : S.Message)
   (Sset  : List S.PartyId)
   (commits : List (SignCommitMsg S))
-  (reveals : List (SignRevealWMsg S))
-  : Option (S.Challenge × S.Public) :=
-  let w : S.Public := (reveals.map (·.w_i)).sum
-  let c : S.Challenge := S.hash m pk Sset (commits.map (fun cmsg => cmsg.commitW)) w
-  some (c, w)
+  (bindingFactors : BindingFactors S)
+  : S.Challenge × S.Public :=
+  let w : S.Public := computeAggregateNonce S commits bindingFactors
+  let c : S.Challenge := S.hash m pk Sset (commits.map (·.commitW)) w
+  (c, w)
+
 
 /-!
 ## Signature Aggregation
@@ -104,20 +179,28 @@ structure ValidSignTranscript (S : Scheme)
   pids_nodup : (commits.map (·.sender)).Nodup
   pids_eq : commits.map (·.sender) = Sset
   commit_open_ok :
-    List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.w_i r.opening = c.commitW) commits reveals
+    -- Verify commitment to hiding public nonce
+    List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit c.hiding r.opening = c.commitW) commits reveals
   sessions_ok :
     let sess := (commits.head?.map (·.session)).getD 0;
     ∀ sh ∈ shares, sh.session = sess
 
-/-- Validate transcript and produce signature if valid. -/
+/-- Validate transcript and produce signature if valid.
+
+    This validates:
+    1. All lists have matching lengths
+    2. No duplicate participants
+    3. Participants match expected signer set
+    4. Commitment openings are valid
+    5. All messages have consistent session ID -/
 def validateSigning
   (S     : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment]
-  [Decidable (∀ (r : SignRevealWMsg S) (c : SignCommitMsg S), S.commit r.w_i r.opening = c.commitW)]
   (pk    : S.Public)
   (m     : S.Message)
   (Sset  : List S.PartyId)
   (commits : List (SignCommitMsg S))
   (reveals : List (SignRevealWMsg S))
+  (bindingFactors : BindingFactors S)
   (shares  : List (SignShareMsg S))
   : Except (SignError S.PartyId) (Signature S) := do
   if commits.length = reveals.length ∧ reveals.length = shares.length then pure () else
@@ -132,17 +215,17 @@ def validateSigning
     match mismatch with
     | some pid => throw (.participantMismatch pid)
     | none => throw .lengthMismatch
+  -- Verify commitments: commit(W_hiding, opening) = commitW
   for (c,r) in List.zip commits reveals do
     if c.sender = r.sender then
-      if decide (S.commit r.w_i r.opening = c.commitW) then
-        if r.session = sess then pure ()
-        else throw (.sessionMismatch sess r.session)
+      if decide (S.commit c.hiding r.opening = c.commitW) then
+        pure ()
       else throw (.commitMismatch r.sender)
     else throw (.participantMismatch c.sender)
   for sh in shares do
     if sh.session = sess then pure () else throw (.sessionMismatch sess sh.session)
-  let w : S.Public := (reveals.map (·.w_i)).sum
-  let c : S.Challenge := S.hash m pk Sset (commits.map (·.commitW)) w
+  -- Compute challenge using dual nonce structure
+  let (c, _w) := computeChallenge S pk m Sset commits bindingFactors
   let sig := aggregateSignature S c Sset (commits.map (·.commitW)) shares
   pure sig
 

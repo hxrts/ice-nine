@@ -84,7 +84,6 @@ structure MaskCommitMsg (S : Scheme) where
   sender : S.PartyId
   /-- Commitment to A(mask), not mask directly -/
   maskCommit : S.Commitment
-deriving Repr
 
 /-- Mask reveal message.
 
@@ -96,7 +95,6 @@ structure MaskRevealMsg (S : Scheme) where
   mask : S.Secret
   /-- Opening for commitment verification -/
   opening : S.Opening
-deriving Repr
 
 /-- Adjustment message from coordinator. -/
 structure AdjustmentMsg (S : Scheme) where
@@ -106,7 +104,6 @@ structure AdjustmentMsg (S : Scheme) where
   adjustment : S.Secret
   /-- Proof that adjustment achieves zero-sum (commitment to 0) -/
   zeroSumProof : S.Commitment
-deriving Repr
 
 /-!
 ## Message Maps for Refresh Coordination
@@ -141,7 +138,6 @@ inductive CoordinatorStrategy (PartyId : Type*)
   | fixed (pid : PartyId)           -- always same coordinator
   | roundRobin (round : Nat)        -- rotate based on round number
   | random (seed : Nat)             -- pseudo-random selection
-deriving Repr
 
 /-- Select coordinator from party list. -/
 def selectCoordinator [Inhabited PartyId]
@@ -181,7 +177,6 @@ structure RefreshRoundState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] wh
   maskReveals : MaskRevealMap S
   /-- Adjustment from coordinator -/
   adjustment : Option (AdjustmentMsg S)
-deriving Repr
 
 /-- Create initial refresh round state. -/
 def initRefreshRound (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
@@ -221,7 +216,6 @@ inductive CommitProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | success (newSt : RefreshRoundState S)
   | conflict (existing : MaskCommitMsg S)
   | wrongPhase
-deriving Repr
 
 /-- Process mask commitment with conflict detection.
     Returns conflict indicator if sender already has a commit. -/
@@ -258,7 +252,6 @@ inductive RevealProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | invalidOpening
   | noCommit
   | wrongPhase
-deriving Repr
 
 /-- Process mask reveal with conflict detection. -/
 def processRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]

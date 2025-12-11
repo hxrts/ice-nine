@@ -33,6 +33,6 @@ structure NonceBox (α : Type*) where
 
 /-- Create a NonceBox from a fresh nonce.
     **Security**: The nonce MUST be freshly sampled from a CSPRNG. -/
-def NonceBox.fresh (nonce : α) : NonceBox α := ⟨nonce⟩
+def NonceBox.fresh {α : Type*} (nonce : α) : NonceBox α := ⟨nonce⟩
 
 end IceNine.Protocol

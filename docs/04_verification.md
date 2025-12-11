@@ -371,3 +371,194 @@ structure SecuritySummary where
 ```
 
 The implementation uses standard [NIST FIPS 204 (ML-DSA/Dilithium)](https://csrc.nist.gov/pubs/fips/204/final) parameter sets which provide 128, 192, and 256 bits of security.
+
+## Batch Verification Implementation
+
+This section provides implementation guidance for batch verification in Rust.
+
+### Mathematical Foundation
+
+For $k$ signatures with random weights $\alpha_1, \ldots, \alpha_k$, batch verification checks:
+
+$$\sum_{j=1}^{k} \alpha_j \cdot (A(z_j) - c_j \cdot \mathsf{pk}_j) = \sum_{j=1}^{k} \alpha_j \cdot w_j$$
+
+This can be rewritten as a single multiscalar multiplication:
+
+$$\sum_{j=1}^{k} \alpha_j \cdot A(z_j) - \sum_{j=1}^{k} \alpha_j c_j \cdot \mathsf{pk}_j = \sum_{j=1}^{k} \alpha_j \cdot w_j$$
+
+When using the same public key for all signatures:
+
+$$A\left(\sum_{j=1}^{k} \alpha_j z_j\right) - \left(\sum_{j=1}^{k} \alpha_j c_j\right) \cdot \mathsf{pk} = \sum_{j=1}^{k} \alpha_j \cdot w_j$$
+
+### Security Requirements
+
+Random weights prevent an adversary from constructing signatures that cancel each other out. With 128-bit random weights, the probability of a forgery passing batch verification is negligible ($2^{-128}$).
+
+- Weights MUST be cryptographically random (CSPRNG)
+- Weights MUST be at least 128 bits for security
+- Weights MUST be generated fresh for each batch verification
+
+### Rust Data Structures
+
+```rust
+/// Entry for batch verification
+pub struct BatchEntry<S: Scheme> {
+    pub message: S::Message,
+    pub signature: Signature<S>,
+    pub public_key: S::Public,
+}
+
+/// Batch verification context
+pub struct BatchContext<S: Scheme> {
+    entries: Vec<BatchEntry<S>>,
+}
+
+/// Batch verification result
+pub enum BatchResult {
+    /// All signatures verified
+    AllValid,
+    /// Batch failed - need individual verification
+    BatchFailed,
+    /// Individual failures identified
+    Failures(Vec<usize>),
+}
+```
+
+### Batch Verification Algorithm
+
+```rust
+impl<S: Scheme> BatchContext<S> {
+    pub fn verify(&self, rng: &mut impl CryptoRng) -> BatchResult {
+        if self.entries.len() < 2 {
+            // For single entry, verify individually
+            return self.verify_individual();
+        }
+
+        // Generate random 128-bit weights
+        let weights: Vec<S::Scalar> = self.entries
+            .iter()
+            .map(|_| S::Scalar::random_128bit(rng))
+            .collect();
+
+        // Compute LHS: Σ αⱼ·A(zⱼ) - Σ αⱼcⱼ·pkⱼ
+        let mut lhs = S::Public::zero();
+        for (entry, weight) in self.entries.iter().zip(&weights) {
+            let az = S::A(&entry.signature.z);
+            let c_pk = entry.signature.c * entry.public_key;
+            lhs += weight * (az - c_pk);
+        }
+
+        // Compute RHS: Σ αⱼ·wⱼ
+        let mut rhs = S::Public::zero();
+        for (entry, weight) in self.entries.iter().zip(&weights) {
+            let w = recover_nonce(&entry.signature, &entry.public_key);
+            rhs += weight * w;
+        }
+
+        // Check equation
+        if lhs == rhs {
+            BatchResult::AllValid
+        } else {
+            // Fall back to individual verification
+            self.identify_failures()
+        }
+    }
+
+    fn identify_failures(&self) -> BatchResult {
+        let failures: Vec<usize> = self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !verify_single(e))
+            .map(|(i, _)| i)
+            .collect();
+
+        if failures.is_empty() {
+            // Rare case: batch failed but all individual pass
+            // Could indicate implementation bug
+            BatchResult::AllValid
+        } else {
+            BatchResult::Failures(failures)
+        }
+    }
+}
+```
+
+### Performance Optimizations
+
+#### Single Multiscalar Multiplication
+
+For best performance, use a single multiscalar multiplication (MSM) operation:
+
+```rust
+// Instead of computing each term separately:
+// for each j: lhs += weight[j] * (A(z[j]) - c[j] * pk[j])
+
+// Collect all scalars and points:
+let scalars: Vec<Scalar> = /* ... */;
+let points: Vec<Point> = /* ... */;
+
+// Single MSM operation
+let result = multiscalar_mul(&scalars, &points);
+```
+
+Libraries like `curve25519-dalek` or `arkworks` provide efficient MSM implementations.
+
+#### Same Public Key Optimization
+
+When all signatures use the same public key:
+
+```rust
+// Combine challenge terms
+let combined_challenge: Scalar = weights
+    .iter()
+    .zip(&challenges)
+    .map(|(w, c)| w * c)
+    .sum();
+
+// Single public key multiplication
+let pk_term = combined_challenge * public_key;
+```
+
+### Performance Expectations
+
+| Batch Size | Individual (ms) | Batch (ms) | Speedup |
+|------------|-----------------|------------|---------|
+| 2 | 2.0 | 1.2 | 1.7x |
+| 10 | 10.0 | 2.5 | 4.0x |
+| 100 | 100.0 | 15.0 | 6.7x |
+| 1000 | 1000.0 | 120.0 | 8.3x |
+
+*Estimates based on typical lattice signature verification. Actual performance depends on implementation.*
+
+### Error Handling Strategies
+
+When batch verification fails:
+
+1. **Binary search** (optional): Split batch in half, verify each half. Repeat to narrow down failures. Complexity: O(log n) batch verifications.
+
+2. **Full fallback**: Verify all signatures individually. Complexity: O(n) individual verifications.
+
+Choose based on expected failure rate:
+- Low failure rate: Binary search is faster
+- High failure rate: Full fallback is simpler
+
+### Benchmarking
+
+```rust
+#[bench]
+fn bench_batch_verification(b: &mut Bencher) {
+    let entries = generate_valid_entries(100);
+    let mut rng = OsRng;
+
+    b.iter(|| {
+        let ctx = BatchContext::new(entries.clone());
+        ctx.verify(&mut rng)
+    });
+}
+```
+
+### References
+
+- Bellare, Garay, Rabin. "Fast Batch Verification for Modular Exponentiation and Digital Signatures" (EUROCRYPT 1998)
+- FROST RFC Section 5.3: Batch Verification
+- dalek-cryptography/bulletproofs: Efficient MSM implementations

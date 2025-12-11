@@ -52,7 +52,6 @@ structure ContribCommitMsg (S : Scheme) where
   sender : S.PartyId
   /-- Commitment to contribution value -/
   contribCommit : S.Commitment
-deriving Repr
 
 /-- Reveal message for repair contribution. -/
 structure ContribRevealMsg (S : Scheme) where
@@ -61,7 +60,6 @@ structure ContribRevealMsg (S : Scheme) where
   contribution : S.Secret
   /-- Opening for commitment verification -/
   opening : S.Opening
-deriving Repr
 
 /-- Verified contribution after commit-reveal. -/
 structure VerifiedContrib (S : Scheme) where
@@ -69,7 +67,6 @@ structure VerifiedContrib (S : Scheme) where
   contribution : S.Secret
   /-- The Lagrange coefficient used -/
   coefficient : S.Scalar
-deriving Repr
 
 /-!
 ## Message Maps for Repair Coordination
@@ -118,7 +115,6 @@ structure RepairCoordState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] whe
   reveals : ContribRevealMap S
   /-- Repaired share (after verification) -/
   repairedShare : Option S.Secret
-deriving Repr
 
 /-- Create initial repair coordination state. -/
 def initRepairCoord (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
@@ -154,7 +150,6 @@ inductive ContribCommitResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | conflict (existing : ContribCommitMsg S)
   | notHelper
   | wrongPhase
-deriving Repr
 
 /-- Process a commit from a helper with conflict detection. -/
 def processContribCommitStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
@@ -196,7 +191,6 @@ inductive ContribRevealResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   | invalidOpening
   | noCommit
   | wrongPhase
-deriving Repr
 
 /-- Process a reveal from a helper with conflict detection. -/
 def processContribRevealStrict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
@@ -281,7 +275,6 @@ structure HelperLocalState (S : Scheme) where
   commitment : S.Commitment
   /-- Opening for commitment -/
   opening : S.Opening
-deriving Repr
 
 /-- Initialize helper state for repair participation. -/
 def initHelper (S : Scheme)
@@ -289,7 +282,7 @@ def initHelper (S : Scheme)
     (lagrangeCoeff : S.Scalar)
     (randomness : S.Opening)  -- for commitment
     : HelperLocalState S :=
-  let contrib := lagrangeCoeff • keyShare.secret
+  let contrib := lagrangeCoeff • keyShare.secret.val
   let pubContrib := S.A contrib
   let commitment := S.commit pubContrib randomness
   { helperId := keyShare.pid
@@ -328,7 +321,6 @@ structure RepairTranscript (S : Scheme) where
   result : Option S.Secret
   /-- Verification status -/
   verified : Bool
-deriving Repr
 
 /-- Create transcript from final state.
     Extracts lists from MsgMap for archival. -/

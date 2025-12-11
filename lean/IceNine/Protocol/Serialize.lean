@@ -37,6 +37,221 @@ import IceNine.Protocol.Sign
 namespace IceNine.Protocol.Serialize
 
 /-!
+## Serialization Header
+
+Following FROST, all serialized messages include a header with:
+- Protocol version: enables forward compatibility
+- Scheme ID: identifies parameter set (e.g., ML-DSA-44, ML-DSA-65, ML-DSA-87)
+
+This ensures messages can be validated before parsing and enables
+safe protocol upgrades.
+-/
+
+/-- Protocol version for serialization format.
+    Increment when making breaking changes to wire format. -/
+def protocolVersion : UInt8 := 1
+
+/-- Scheme identifiers for different parameter sets. -/
+inductive SchemeId : Type
+  | mlDsa44    -- ML-DSA-44 (128-bit security)
+  | mlDsa65    -- ML-DSA-65 (192-bit security)
+  | mlDsa87    -- ML-DSA-87 (256-bit security)
+  | custom (id : ByteArray)  -- Custom/experimental schemes
+  deriving DecidableEq, Repr
+
+/-- Convert scheme ID to bytes. -/
+def SchemeId.toBytes : SchemeId → ByteArray
+  | .mlDsa44 => ⟨#[0x44]⟩
+  | .mlDsa65 => ⟨#[0x65]⟩
+  | .mlDsa87 => ⟨#[0x87]⟩
+  | .custom id => ⟨#[0xFF]⟩ ++ id
+
+/-- Parse scheme ID from bytes. -/
+def SchemeId.fromByte : UInt8 → Option SchemeId
+  | 0x44 => some .mlDsa44
+  | 0x65 => some .mlDsa65
+  | 0x87 => some .mlDsa87
+  | _ => none
+
+/-- Serialization header included in all protocol messages. -/
+structure SerializationHeader where
+  /-- Protocol version (for format compatibility) -/
+  version : UInt8
+  /-- Scheme/parameter set identifier -/
+  schemeId : SchemeId
+  deriving Repr
+
+/-- Default header for current protocol version. -/
+def SerializationHeader.default (sid : SchemeId) : SerializationHeader :=
+  { version := protocolVersion, schemeId := sid }
+
+/-- Serialize header: version (1 byte) + schemeId (1+ bytes) -/
+def SerializationHeader.toBytes (h : SerializationHeader) : ByteArray :=
+  ⟨#[h.version]⟩ ++ h.schemeId.toBytes
+
+/-- Parse header from bytes. Returns header and remaining bytes. -/
+def SerializationHeader.fromBytes (bs : ByteArray) : Option (SerializationHeader × ByteArray) :=
+  if bs.size < 2 then none
+  else
+    let version := bs.get! 0
+    let schemeIdByte := bs.get! 1
+    match SchemeId.fromByte schemeIdByte with
+    | some sid =>
+        if schemeIdByte = 0xFF then
+          -- Custom scheme: read 4-byte length + data
+          if bs.size < 6 then none
+          else
+            let len := bs.get! 2 |>.toNat + bs.get! 3 |>.toNat * 256
+            if bs.size < 4 + len then none
+            else
+              let customId := bs.extract 4 (4 + len)
+              some ({ version := version, schemeId := .custom customId },
+                    bs.extract (4 + len) bs.size)
+        else
+          some ({ version := version, schemeId := sid }, bs.extract 2 bs.size)
+    | none => none
+
+/-- Validate header version compatibility. -/
+def SerializationHeader.isCompatible (h : SerializationHeader) : Bool :=
+  h.version ≤ protocolVersion
+
+/-- Header validation error. -/
+inductive HeaderError
+  | versionMismatch (expected got : UInt8)
+  | unknownScheme
+  | malformedHeader
+  deriving DecidableEq, Repr
+
+/-- Validate and extract header from bytes. -/
+def validateHeader (bs : ByteArray) (expectedScheme : Option SchemeId := none)
+    : Except HeaderError (SerializationHeader × ByteArray) :=
+  match SerializationHeader.fromBytes bs with
+  | none => .error .malformedHeader
+  | some (h, rest) =>
+      if !h.isCompatible then
+        .error (.versionMismatch protocolVersion h.version)
+      else match expectedScheme with
+        | none => .ok (h, rest)
+        | some expected =>
+            if h.schemeId = expected then .ok (h, rest)
+            else .error .unknownScheme
+
+/-!
+## Parameter Set Registry
+
+Standard parameter sets for ML-DSA (NIST FIPS 204).
+Each set provides different security/performance tradeoffs.
+-/
+
+/-- Security level for a parameter set. -/
+inductive SecurityLevel
+  | bits128  -- NIST Level 1 (equivalent to AES-128)
+  | bits192  -- NIST Level 3 (equivalent to AES-192)
+  | bits256  -- NIST Level 5 (equivalent to AES-256)
+  deriving DecidableEq, Repr
+
+/-- Parameter set specification. -/
+structure ParameterSet where
+  /-- Scheme identifier for serialization -/
+  schemeId : SchemeId
+  /-- Security level -/
+  securityLevel : SecurityLevel
+  /-- Ring dimension (power of 2) -/
+  n : Nat
+  /-- Module rank -/
+  k : Nat
+  /-- Number of vectors in public key -/
+  l : Nat
+  /-- Modulus -/
+  q : Nat
+  /-- Challenge weight (number of ±1 entries) -/
+  tau : Nat
+  /-- Response norm bound (γ₁) -/
+  gamma1 : Nat
+  /-- Low bits rounding (γ₂) -/
+  gamma2 : Nat
+  /-- Rejection bound (β) -/
+  beta : Nat
+  deriving Repr
+
+/-- ML-DSA-44: 128-bit security (NIST Level 1) -/
+def paramsMlDsa44 : ParameterSet :=
+  { schemeId := .mlDsa44
+    securityLevel := .bits128
+    n := 256
+    k := 4
+    l := 4
+    q := 8380417
+    tau := 39
+    gamma1 := 131072  -- 2^17
+    gamma2 := 95232
+    beta := 78
+  }
+
+/-- ML-DSA-65: 192-bit security (NIST Level 3) -/
+def paramsMlDsa65 : ParameterSet :=
+  { schemeId := .mlDsa65
+    securityLevel := .bits192
+    n := 256
+    k := 6
+    l := 5
+    q := 8380417
+    tau := 49
+    gamma1 := 524288  -- 2^19
+    gamma2 := 261888
+    beta := 196
+  }
+
+/-- ML-DSA-87: 256-bit security (NIST Level 5) -/
+def paramsMlDsa87 : ParameterSet :=
+  { schemeId := .mlDsa87
+    securityLevel := .bits256
+    n := 256
+    k := 8
+    l := 7
+    q := 8380417
+    tau := 60
+    gamma1 := 524288  -- 2^19
+    gamma2 := 261888
+    beta := 120
+  }
+
+/-- All standard parameter sets. -/
+def standardParameterSets : List ParameterSet :=
+  [paramsMlDsa44, paramsMlDsa65, paramsMlDsa87]
+
+/-- Look up parameter set by scheme ID. -/
+def ParameterSet.fromSchemeId : SchemeId → Option ParameterSet
+  | .mlDsa44 => some paramsMlDsa44
+  | .mlDsa65 => some paramsMlDsa65
+  | .mlDsa87 => some paramsMlDsa87
+  | .custom _ => none  -- Custom schemes need explicit parameters
+
+/-- Look up parameter set by security level. -/
+def ParameterSet.fromSecurityLevel : SecurityLevel → ParameterSet
+  | .bits128 => paramsMlDsa44
+  | .bits192 => paramsMlDsa65
+  | .bits256 => paramsMlDsa87
+
+/-- Check if parameters are within secure bounds.
+    This is a basic sanity check, not a full security analysis. -/
+def ParameterSet.isSecure (p : ParameterSet) : Bool :=
+  p.n ≥ 256 &&
+  p.k ≥ 4 &&
+  p.q > p.beta * 2 &&
+  p.gamma1 > p.beta
+
+/-- Estimated public key size in bytes. -/
+def ParameterSet.publicKeySize (p : ParameterSet) : Nat :=
+  -- Compressed representation: seedA (32 bytes) + t1 (k * n * 10 bits)
+  32 + (p.k * p.n * 10) / 8
+
+/-- Estimated signature size in bytes. -/
+def ParameterSet.signatureSize (p : ParameterSet) : Nat :=
+  -- Challenge hash (32) + z (l * n * log γ₁ bits) + hints
+  32 + (p.l * p.n * 18) / 8 + p.k
+
+/-!
 ## Serializable Typeclass
 
 The core abstraction for types that can be converted to/from bytes.
@@ -51,6 +266,18 @@ class Serializable (α : Type*) where
   fromBytes : ByteArray → Option α
   /-- Axiom: successful round-trip -/
   -- roundTrip : ∀ x, fromBytes (toBytes x) = some x
+
+/-- Typeclass for types that serialize with a header. -/
+class SerializableWithHeader (α : Type*) extends Serializable α where
+  /-- The scheme ID for this type's serialization -/
+  schemeId : SchemeId
+  /-- Serialize with header prefix -/
+  toBytesWithHeader (x : α) : ByteArray :=
+    SerializationHeader.default schemeId |>.toBytes ++ toBytes x
+  /-- Parse with header validation -/
+  fromBytesWithHeader (bs : ByteArray) : Option α := do
+    let (h, rest) ← SerializationHeader.fromBytes bs
+    if h.schemeId = schemeId then fromBytes rest else none
 
 /-!
 ## Primitive Serializers
@@ -187,21 +414,22 @@ def serializeDkgRevealMsg (S : Scheme)
   Serializable.toBytes msg.pk_i ++
   Serializable.toBytes msg.opening
 
-/-- Serialize SignCommitMsg: sender + session + commitment -/
+/-- Serialize SignCommitMsg: sender + session + commitW + hiding + binding -/
 def serializeSignCommitMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Commitment]
+    [Serializable S.PartyId] [Serializable S.Commitment] [Serializable S.Public]
     (msg : SignCommitMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
-  Serializable.toBytes msg.commitW
+  Serializable.toBytes msg.commitW ++
+  Serializable.toBytes msg.hiding ++
+  Serializable.toBytes msg.binding
 
-/-- Serialize SignRevealWMsg: sender + session + w_i + opening -/
+/-- Serialize SignRevealWMsg: sender + session + opening -/
 def serializeSignRevealWMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Public] [Serializable S.Opening]
+    [Serializable S.PartyId] [Serializable S.Opening]
     (msg : SignRevealWMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
-  Serializable.toBytes msg.w_i ++
   Serializable.toBytes msg.opening
 
 /-- Serialize SignShareMsg: sender + session + z_i -/
@@ -295,9 +523,9 @@ def wrapDkgCommit (S : Scheme)
     (msg : DkgCommitMsg S) : WrappedMessage :=
   { tag := .dkgCommit, payload := serializeDkgCommitMsg S msg }
 
-/-- Wrap a sign commit message for transport -/
+/-- Wrap a sign commit message for transport (dual nonce) -/
 def wrapSignCommit (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Commitment]
+    [Serializable S.PartyId] [Serializable S.Commitment] [Serializable S.Public]
     (msg : SignCommitMsg S) : WrappedMessage :=
   { tag := .signCommit, payload := serializeSignCommitMsg S msg }
 

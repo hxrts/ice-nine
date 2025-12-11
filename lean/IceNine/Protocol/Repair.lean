@@ -29,43 +29,39 @@ The repair protocol uses request/response messaging:
 
 /-- Repair request from party who lost their secret share.
     pk_i is public and still known for verification. -/
-structure RepairRequest (S : Scheme) :=
-  (requester : S.PartyId)  -- party who lost their share
-  (knownPk_i : S.Public)   -- public share for verification
-deriving Repr
+structure RepairRequest (S : Scheme) where
+  requester : S.PartyId  -- party who lost their share
+  knownPk_i : S.Public   -- public share for verification
 
 /-- Repair contribution from a helper party.
     delta = λ_j·sk_j where λ_j is helper's Lagrange coefficient. -/
-structure RepairMsg (S : Scheme) :=
-  (sender : S.PartyId)  -- helper party
-  (to     : S.PartyId)  -- requester (for routing)
-  (delta  : S.Secret)   -- weighted share contribution
-deriving Repr
+structure RepairMsg (S : Scheme) where
+  sender : S.PartyId  -- helper party
+  target : S.PartyId  -- requester (for routing)
+  delta  : S.Secret   -- weighted share contribution
 
 /-- Bundle of repair messages with CRDT merge via append.
     Out-of-order delivery is safe due to commutativity. -/
-structure RepairBundle (S : Scheme) :=
-  (msgs : List (RepairMsg S))
-deriving Repr
+structure RepairBundle (S : Scheme) where
+  msgs : List (RepairMsg S)
 
 /-- CRDT merge: concatenate message lists. -/
 instance (S : Scheme) : Join (RepairBundle S) := ⟨fun a b => ⟨a.msgs ++ b.msgs⟩⟩
 
 /-- Repair session state for tracking progress.
     CRDT merge: union helpers, append messages, max threshold. -/
-structure RepairSession (S : Scheme) :=
-  (request   : RepairRequest S)      -- who needs repair
-  (helpers   : Finset S.PartyId)     -- available helpers
-  (received  : RepairBundle S)       -- messages received so far
-  (threshold : Nat)                   -- minimum helpers needed
-deriving Repr
+structure RepairSession (S : Scheme) where
+  request   : RepairRequest S      -- who needs repair
+  helpers   : Finset S.PartyId     -- available helpers
+  received  : RepairBundle S       -- messages received so far
+  threshold : Nat                  -- minimum helpers needed
 
 /-- CRDT merge for repair sessions: monotonic on all fields. -/
-instance (S : Scheme) : Join (RepairSession S) :=
+instance (S : Scheme) [DecidableEq S.PartyId] : Join (RepairSession S) :=
   ⟨fun a b => { request   := a.request
-              , helpers   := a.helpers ∪ b.helpers
-              , received  := a.received ⊔ b.received
-              , threshold := max a.threshold b.threshold }⟩
+                helpers   := a.helpers ∪ b.helpers
+                received  := a.received ⊔ b.received
+                threshold := max a.threshold b.threshold }⟩
 
 /-!
 ## Repair Protocol Functions
@@ -94,8 +90,8 @@ def helperContribution
   (coefficient : S.Scalar)    -- Lagrange weight λ_j
   : RepairMsg S :=
   { sender := helper.pid
-  , to     := requester
-  , delta  := coefficient • helper.secret }  -- λ_j·sk_j
+    target := requester
+    delta  := coefficient • helper.secret }  -- λ_j·sk_j
 
 /-- Sum deltas to recover the lost share.
     Correctness: Σ_j λ_j·sk_j = sk_i via Lagrange interpolation. -/
@@ -109,9 +105,9 @@ def repairShare
 def messagesFor
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
-  (target : S.PartyId)
+  (recipient : S.PartyId)
   : List (RepairMsg S) :=
-  msgs.filter (fun m => m.to = target)
+  msgs.filter (fun m => m.target = recipient)
 
 /-- Extract unique helper IDs from received messages. -/
 def helperPids
@@ -138,9 +134,9 @@ def verifyRepairedShare
 def repairMsgsWellFormed
   (S : Scheme) [DecidableEq S.PartyId]
   (msgs : List (RepairMsg S))
-  (target : S.PartyId)
+  (recipient : S.PartyId)
   : Prop :=
-  ∀ m ∈ msgs, m.to = target
+  ∀ m ∈ msgs, m.target = recipient
 
 /-- Each helper contributes at most once. -/
 def repairMsgsDistinct

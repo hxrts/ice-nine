@@ -46,21 +46,54 @@ The protocol uses three message types across its phases.
 
 ```lean
 structure SignCommitMsg (S : Scheme) :=
-  (from    : S.PartyId)
-  (session : Nat)
-  (commitW : S.Commitment)
+  (sender   : S.PartyId)
+  (session  : Nat)
+  (commitW  : S.Commitment)  -- hash commitment to hiding nonce
+  (hiding   : S.Public)       -- public hiding commitment
+  (binding  : S.Public)       -- public binding commitment
 
 structure SignRevealWMsg (S : Scheme) :=
-  (from    : S.PartyId)
+  (sender  : S.PartyId)
   (session : Nat)
-  (w_i     : S.Public)
-  (opening : S.Opening)
+  (opening : S.Opening)  -- opening for commitment verification
 
 structure SignShareMsg (S : Scheme) :=
-  (from    : S.PartyId)
+  (sender  : S.PartyId)
   (session : Nat)
   (z_i     : S.Secret)
 ```
+
+## Dual Nonce Structure (FROST Pattern)
+
+Following FROST, we use two nonces per signer instead of one:
+
+- **Hiding nonce**: Protects against adaptive adversaries
+- **Binding nonce**: Commits to the signing context (message + all commitments)
+
+This provides stronger security against adaptive chosen-message attacks.
+
+```lean
+structure SigningNonces (S : Scheme) where
+  hiding  : S.Secret   -- protects signer from adaptive adversaries
+  binding : S.Secret   -- commits to signing context
+
+structure SigningCommitments (S : Scheme) where
+  hiding  : S.Public   -- W_hiding = A(hiding nonce)
+  binding : S.Public   -- W_binding = A(binding nonce)
+```
+
+### Binding Factor Derivation
+
+The binding factor $\rho_i$ binds each signer's nonce to the full signing context:
+
+$$\rho_i = H(\text{"binding"}, m, \mathsf{pk}, \text{all\_commitments}, i)$$
+
+The effective nonce is then:
+
+$$y_{\text{eff}} = y_{\text{hiding}} + \rho \cdot y_{\text{binding}}$$
+$$w_{\text{eff}} = W_{\text{hiding}} + \rho \cdot W_{\text{binding}}$$
+
+This prevents an adversary from adaptively choosing the message after seeing nonce commitments.
 
 ## Party State
 
@@ -71,15 +104,15 @@ structure SignLocalState (S : Scheme) :=
   (share   : KeyShare S)
   (msg     : S.Message)
   (session : Nat)
-  (y_i     : S.Secret)
-  (w_i     : S.Public)
+  (nonces  : SigningNonces S)      -- dual ephemeral nonces
+  (commits : SigningCommitments S) -- public nonce commitments
   (openW   : S.Opening)
 ```
 
 The local state contains:
-- The ephemeral secret $y_i \in \mathcal{S}$ sampled for this session.
-- The ephemeral public value $w_i = A(y_i)$.
-- The commitment opening $\rho_i \in \mathcal{O}$.
+- The ephemeral nonces $(y_{\text{hiding}}, y_{\text{binding}}) \in \mathcal{S}^2$ sampled for this session.
+- The public commitments $W_{\text{hiding}} = A(y_{\text{hiding}})$ and $W_{\text{binding}} = A(y_{\text{binding}})$.
+- The commitment opening $\rho \in \mathcal{O}$.
 - The session identifier for binding.
 
 ## Round 1: Nonce Commitment

@@ -69,7 +69,7 @@ def dkgAggregateWithComplaints
   if commits.length = reveals.length then
     -- Collect all complaints
     let cs := dkgCheckComplaints S commits reveals
-    if cs = [] then
+    if cs.isEmpty then
       -- No complaints: compute pk = Σ pk_i
       let pk := (reveals.map (·.pk_i)).sum
       Except.ok pk

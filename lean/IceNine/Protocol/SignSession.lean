@@ -30,37 +30,49 @@ namespace IceNine.Protocol.SignSession
 open IceNine.Protocol
 
 /-!
-## Linear Nonce
+## Linear Nonce (Dual Nonce Version)
 
-A nonce wrapped in a structure that can only be consumed once.
+Following FROST, we use two nonces per signer:
+- **Hiding nonce**: Protects against adaptive adversaries
+- **Binding nonce**: Commits to the signing context
+
 The `private mk` prevents construction outside this module, and
-the only way to use the nonce is via `consume` which returns the
-value and a proof token that the nonce was used.
+the only way to use the nonces is through session transitions.
 -/
 
-/-- A fresh, unused nonce. Can only be consumed once.
-    Private constructor prevents arbitrary creation. -/
+/-- A fresh, unused dual nonce pair. Can only be consumed once.
+    Private constructor prevents arbitrary creation.
+
+    **FROST Pattern**: Both nonces must be fresh from CSPRNG. -/
 structure FreshNonce (S : Scheme) where
   private mk ::
-  /-- The secret nonce value -/
-  private value : S.Secret
-  /-- Public nonce w = A(y) -/
-  private publicNonce : S.Public
-  /-- Commitment opening -/
+  /-- Secret hiding nonce -/
+  private hidingNonce : S.Secret
+  /-- Secret binding nonce -/
+  private bindingNonce : S.Secret
+  /-- Public hiding commitment W_hiding = A(hiding) -/
+  private publicHiding : S.Public
+  /-- Public binding commitment W_binding = A(binding) -/
+  private publicBinding : S.Public
+  /-- Commitment opening for hiding commitment -/
   private opening : S.Opening
-deriving Repr
 
-/-- Proof that a nonce was consumed. Produced exactly once per nonce. -/
+/-- Proof that nonces were consumed. Produced exactly once per nonce pair. -/
 structure NonceConsumed (S : Scheme) where
   private mk ::
   /-- Hash of the consumed nonce (for debugging, not reconstruction) -/
   fingerprint : Nat := 0
 
-/-- Create a fresh nonce from sampled randomness.
-    This is the ONLY way to create a FreshNonce. -/
-def FreshNonce.sample (S : Scheme) (y : S.Secret) (opening : S.Opening) : FreshNonce S :=
-  { value := y
-    publicNonce := S.A y
+/-- Create fresh dual nonces from sampled randomness.
+    This is the ONLY way to create a FreshNonce.
+
+    **CRITICAL**: Both `hiding` and `binding` must be fresh from CSPRNG. -/
+def FreshNonce.sample (S : Scheme)
+    (hiding binding : S.Secret) (opening : S.Opening) : FreshNonce S :=
+  { hidingNonce := hiding
+    bindingNonce := binding
+    publicHiding := S.A hiding
+    publicBinding := S.A binding
     opening := opening }
 
 /-!
@@ -71,50 +83,60 @@ and carry the data accumulated up to that point. Transitions consume the
 current state and produce the next state.
 -/
 
-/-- Initial state: party has key share and fresh nonce, ready to commit. -/
+/-- Initial state: party has key share and fresh dual nonces, ready to commit. -/
 structure ReadyToCommit (S : Scheme) where
   /-- Party's long-term key share -/
   keyShare : KeyShare S
-  /-- Fresh nonce (will be consumed on commit) -/
+  /-- Fresh dual nonces (will be consumed on commit) -/
   nonce : FreshNonce S
   /-- Message to sign -/
   message : S.Message
   /-- Session identifier -/
   session : Nat
 
-/-- After committing: nonce is consumed, commitment is published. -/
+/-- After committing: nonces are consumed, commitments are published. -/
 structure Committed (S : Scheme) where
   /-- Party's key share -/
   keyShare : KeyShare S
-  /-- The secret nonce (moved from FreshNonce) -/
-  private secretNonce : S.Secret
-  /-- Public nonce -/
-  publicNonce : S.Public
+  /-- Secret hiding nonce (moved from FreshNonce) -/
+  private hidingNonce : S.Secret
+  /-- Secret binding nonce (moved from FreshNonce) -/
+  private bindingNonce : S.Secret
+  /-- Public hiding commitment -/
+  publicHiding : S.Public
+  /-- Public binding commitment -/
+  publicBinding : S.Public
   /-- Commitment opening -/
   opening : S.Opening
   /-- Message being signed -/
   message : S.Message
   /-- Session identifier -/
   session : Nat
-  /-- The commitment that was broadcast -/
+  /-- The hash commitment to hiding nonce -/
   commitment : S.Commitment
-  /-- Proof the nonce was consumed -/
+  /-- Proof the nonces were consumed -/
   nonceConsumed : NonceConsumed S
 
-/-- After revealing: public nonce is revealed, ready to compute partial sig. -/
+/-- After revealing: nonce openings revealed, ready to compute partial sig. -/
 structure Revealed (S : Scheme) where
   /-- Party's key share -/
   keyShare : KeyShare S
-  /-- The secret nonce (still needed for signing) -/
-  private secretNonce : S.Secret
-  /-- Public nonce -/
-  publicNonce : S.Public
+  /-- Secret hiding nonce (needed for effective nonce derivation) -/
+  private hidingNonce : S.Secret
+  /-- Secret binding nonce (needed for effective nonce derivation) -/
+  private bindingNonce : S.Secret
+  /-- Public hiding commitment -/
+  publicHiding : S.Public
+  /-- Public binding commitment -/
+  publicBinding : S.Public
   /-- Message being signed -/
   message : S.Message
   /-- Session identifier -/
   session : Nat
   /-- Challenge computed from transcript -/
   challenge : S.Challenge
+  /-- Binding factor for this signer -/
+  bindingFactor : S.Scalar
   /-- Aggregate public nonce from all parties -/
   aggregateNonce : S.Public
 
@@ -153,62 +175,82 @@ The type signatures enforce the linear protocol flow.
 -/
 
 /-- Transition: Ready → Committed
-    Consumes the fresh nonce and produces a commitment.
-    After this, the nonce cannot be accessed again from ReadyToCommit. -/
+    Consumes the fresh dual nonces and produces commitments.
+    After this, the nonces cannot be accessed again from ReadyToCommit.
+
+    **FROST Protocol**: Broadcasts both public commitments (hiding + binding)
+    along with a hash commitment to the hiding nonce for equivocation prevention. -/
 def commit (S : Scheme) (ready : ReadyToCommit S)
     : Committed S × SignCommitMsg S :=
   -- Extract nonce data (consumes the FreshNonce)
-  let y := ready.nonce.value
-  let w := ready.nonce.publicNonce
+  let hidingNonce := ready.nonce.hidingNonce
+  let bindingNonce := ready.nonce.bindingNonce
+  let publicHiding := ready.nonce.publicHiding
+  let publicBinding := ready.nonce.publicBinding
   let opening := ready.nonce.opening
-  -- Create commitment
-  let commitment := S.commit w opening
-  -- Build committed state (nonce is now here, not in FreshNonce)
+  -- Create commitment to hiding nonce
+  let commitment := S.commit publicHiding opening
+  -- Build committed state (nonces are now here, not in FreshNonce)
   let committed : Committed S :=
     { keyShare := ready.keyShare
-      secretNonce := y
-      publicNonce := w
+      hidingNonce := hidingNonce
+      bindingNonce := bindingNonce
+      publicHiding := publicHiding
+      publicBinding := publicBinding
       opening := opening
       message := ready.message
       session := ready.session
       commitment := commitment
       nonceConsumed := { fingerprint := 0 } }
-  -- Build message for broadcast
+  -- Build message for broadcast (includes both public commitments)
   let msg : SignCommitMsg S :=
     { sender := ready.keyShare.pid
       session := ready.session
-      commitW := commitment }
+      commitW := commitment
+      hiding := publicHiding
+      binding := publicBinding }
   (committed, msg)
 
 /-- Transition: Committed → Revealed
-    Called after receiving all commitments and computing challenge. -/
+    Called after receiving all commitments and computing binding factors/challenge.
+
+    **FROST Protocol**: The binding factor ρ is computed from the message, public key,
+    and all participants' commitments. This binds the effective nonce to the signing context. -/
 def reveal (S : Scheme) (committed : Committed S)
-    (challenge : S.Challenge) (aggregateW : S.Public)
+    (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
     : Revealed S × SignRevealWMsg S :=
   -- Build revealed state
   let revealed : Revealed S :=
     { keyShare := committed.keyShare
-      secretNonce := committed.secretNonce
-      publicNonce := committed.publicNonce
+      hidingNonce := committed.hidingNonce
+      bindingNonce := committed.bindingNonce
+      publicHiding := committed.publicHiding
+      publicBinding := committed.publicBinding
       message := committed.message
       session := committed.session
       challenge := challenge
+      bindingFactor := bindingFactor
       aggregateNonce := aggregateW }
-  -- Build reveal message
+  -- Build reveal message (just opening - public nonces already sent in commit)
   let msg : SignRevealWMsg S :=
     { sender := committed.keyShare.pid
       session := committed.session
-      w_i := committed.publicNonce
       opening := committed.opening }
   (revealed, msg)
 
 /-- Transition: Revealed → Signed (success) or Revealed → Aborted (norm failure)
-    Computes partial signature z_i = y_i + c·sk_i.
-    Returns Left if norm check passes, Right if it fails. -/
+    Computes partial signature z_i = y_eff_i + c·sk_i where
+    y_eff = hiding + ρ·binding (effective nonce from dual nonce structure).
+    Returns Left if norm check passes, Right if it fails.
+
+    **FROST Protocol**: The effective nonce incorporates the binding factor,
+    which ties this signer's contribution to the specific signing context. -/
 def sign (S : Scheme) (revealed : Revealed S)
     : Sum (Signed S) (Revealed S × String) :=
-  -- Compute partial signature: z_i = y_i + c·sk_i
-  let z_i := revealed.secretNonce + revealed.challenge • revealed.keyShare.secret
+  -- Derive effective nonce: y_eff = hiding + ρ·binding
+  let y_eff := revealed.hidingNonce + revealed.bindingFactor • revealed.bindingNonce
+  -- Compute partial signature: z_i = y_eff + c·sk_i
+  let z_i := y_eff + revealed.challenge • revealed.keyShare.secret
   -- Check norm bound
   if S.normOK z_i then
     let signed : Signed S :=
@@ -352,17 +394,19 @@ def trySign (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat := 16)
 Create the initial session state from key share and sampled randomness.
 -/
 
-/-- Initialize a signing session.
-    Caller must provide freshly sampled nonce and opening. -/
+/-- Initialize a signing session with dual nonces.
+    Caller must provide freshly sampled hiding and binding nonces.
+
+    **CRITICAL**: Both nonces must be fresh from CSPRNG. -/
 def initSession (S : Scheme)
     (keyShare : KeyShare S)
     (message : S.Message)
     (session : Nat)
-    (y : S.Secret)
+    (hidingNonce bindingNonce : S.Secret)
     (opening : S.Opening)
     : ReadyToCommit S :=
   { keyShare := keyShare
-    nonce := FreshNonce.sample S y opening
+    nonce := FreshNonce.sample S hidingNonce bindingNonce opening
     message := message
     session := session }
 

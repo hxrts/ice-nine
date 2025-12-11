@@ -40,7 +40,7 @@ def hashBytes (b : ByteArray) : HashOut := b -- placeholder; treat as injective 
 /-- Hash-based commitment: Com(w; nonce) = H( encode(w, nonce) ). -/
 structure HashCommitment (P N : Type) where
   com : HashOut
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 def hashCommit {P N} [ToString P] [ToString N] (w : P) (nonce : N) : HashCommitment P N :=
   ⟨hashBytes (encodePair w nonce)⟩
@@ -79,7 +79,7 @@ def hashToChallenge (h : HashOut) : Int :=
   -- Interpret first 8 bytes as little-endian Int64, then take modulo to bound
   -- This is a simplified model; real Dilithium uses rejection sampling
   let bytes := h.toList.take 8
-  let asNat := bytes.enum.foldl (fun acc (i, b) => acc + (b.toNat <<< (8 * i))) 0
+  let asNat := bytes.foldl (fun (acc, i) b => (acc + (b.toNat <<< (8 * i)), i + 1)) (0, 0) |>.1
   -- Reduce to a reasonable range (Dilithium τ is at most 60)
   Int.ofNat (asNat % 256) - 128  -- Range [-128, 127] for simple bound
 

@@ -111,25 +111,24 @@ structure VSSShare (S : Scheme) where
   /-- Share value: f(evalPoint) -/
   value : S.Secret
 
+/-- Evaluate polynomial with scalar multiplication.
+    f(x) = Σ_{i=0}^{t-1} a_i · x^i -/
+def evalPolynomialScalar (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Secret] [Module S.Scalar S.Secret]
+    (coeffs : List S.Secret) (x : S.Scalar) : S.Secret :=
+  coeffs.foldl (fun (acc, i) a =>
+    let xPowI := scalarPow x i
+    (acc + xPowI • a, i + 1)) (0, 0) |>.1
+
 /-- Generate share for a party at given evaluation point. -/
-def generateShare (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Secret]
+def generateShare (S : Scheme) [Monoid S.Scalar] [Semiring S.Secret] [Module S.Scalar S.Secret]
     (p : Polynomial S.Secret) (recipient : S.PartyId) (evalPoint : S.Scalar)
     : VSSShare S :=
   { recipient := recipient
     evalPoint := evalPoint
-    value := evalPolynomialScalar S p evalPoint }
-where
-  /-- Evaluate polynomial with scalar multiplication. -/
-  evalPolynomialScalar (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Secret]
-      (p : Polynomial S.Secret) (x : S.Scalar) : S.Secret :=
-    -- f(x) = Σ_{i=0}^{t-1} a_i · x^i
-    let indexed := List.enum p.coeffs
-    List.foldl (fun acc (i, a) =>
-      let xPowI := scalarPow x i  -- x^i
-      acc + xPowI • a) 0 indexed
+    value := evalPolynomialScalar S p.coeffs evalPoint }
 
 /-- Generate shares for all parties. -/
-def generateShares (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Secret]
+def generateShares (S : Scheme) [Monoid S.Scalar] [Semiring S.Secret] [Module S.Scalar S.Secret]
     (p : Polynomial S.Secret)
     (parties : List (S.PartyId × S.Scalar))  -- (party, eval point) pairs
     : List (VSSShare S) :=
@@ -149,21 +148,20 @@ This works because:
 
 /-- Compute expected public value from commitment and evaluation point.
     Returns Σ_{i=0}^{t-1} (x^i) · C_i -/
-def expectedPublicValue (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Public]
+def expectedPublicValue (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public]
     (comm : PolyCommitment S) (evalPoint : S.Scalar) : S.Public :=
-  let indexed := List.enum comm.commitments
-  List.foldl (fun acc (i, c) =>
-    let xPowI := scalarPow evalPoint i  -- x^i
-    acc + xPowI • c) 0 indexed
+  comm.commitments.foldl (fun (acc, i) c =>
+    let xPowI := scalarPow evalPoint i
+    (acc + xPowI • c, i + 1)) (0, 0) |>.1
 
 /-- Verify a share against the polynomial commitment.
     Checks: A(share.value) = expectedPublicValue(commitment, share.evalPoint) -/
-def verifyShare (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Public]
+def verifyShare (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public]
     (comm : PolyCommitment S) (share : VSSShare S) : Prop :=
   S.A share.value = expectedPublicValue S comm share.evalPoint
 
 /-- Decidable share verification (requires decidable equality on Public). -/
-def verifyShareBool (S : Scheme) [Monoid S.Scalar] [Module S.Scalar S.Public] [DecidableEq S.Public]
+def verifyShareBool (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (comm : PolyCommitment S) (share : VSSShare S) : Bool :=
   S.A share.value == expectedPublicValue S comm share.evalPoint
 
