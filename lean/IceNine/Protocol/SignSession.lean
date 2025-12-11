@@ -66,13 +66,13 @@ structure NonceConsumed (S : Scheme) where
 /-- Create fresh dual nonces from sampled randomness.
     This is the ONLY way to create a FreshNonce.
 
-    **CRITICAL**: Both `hiding` and `binding` must be fresh from CSPRNG. -/
+    **CRITICAL**: Both hiding and binding nonces must be fresh from CSPRNG. -/
 def FreshNonce.sample (S : Scheme)
-    (hiding binding : S.Secret) (opening : S.Opening) : FreshNonce S :=
-  { hidingNonce := hiding
-    bindingNonce := binding
-    publicHiding := S.A hiding
-    publicBinding := S.A binding
+    (h b : S.Secret) (opening : S.Opening) : FreshNonce S :=
+  { hidingNonce := h
+    bindingNonce := b
+    publicHiding := S.A h
+    publicBinding := S.A b
     opening := opening }
 
 /-!
@@ -207,8 +207,8 @@ def commit (S : Scheme) (ready : ReadyToCommit S)
     { sender := ready.keyShare.pid
       session := ready.session
       commitW := commitment
-      hiding := publicHiding
-      binding := publicBinding }
+      hidingVal := publicHiding
+      bindingVal := publicBinding }
   (committed, msg)
 
 /-- Transition: Committed → Revealed
@@ -326,7 +326,7 @@ def mkRetryContext (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat)
 
 /-- Advance retry context for next attempt.
     Returns None if max attempts exceeded. -/
-def advanceRetry (ctx : RetryContext S) : Option (RetryContext S) :=
+def advanceRetry {S : Scheme} (ctx : RetryContext S) : Option (RetryContext S) :=
   if ctx.attempt < ctx.maxAttempts then
     some { ctx with attempt := ctx.attempt + 1 }
   else
@@ -431,7 +431,7 @@ The session type system provides these guarantees:
    system prevents writing code that would reuse a nonce.
 -/
 
-/-- Example: this CANNOT compile because `ready` is consumed by first `commit` -/
+-- Example: this CANNOT compile because `ready` is consumed by first `commit`
 -- def badNonceReuse (S : Scheme) (ready : ReadyToCommit S) :=
 --   let (committed1, _) := commit S ready  -- consumes ready
 --   let (committed2, _) := commit S ready  -- ERROR: ready already consumed

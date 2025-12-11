@@ -160,10 +160,10 @@ def latticeScheme (p : LatticeParams := {}) : Scheme :=
   , normOKDecidable := intVecInfLeqDecidable p.bound
 }
 
-abbrev LatticePartyId   := (latticeScheme ()).PartyId
-abbrev LatticeMessage   := (latticeScheme ()).Message
-abbrev LatticeSecret    := (latticeScheme ()).Secret
-abbrev LatticePublic    := (latticeScheme ()).Public
-abbrev LatticeChallenge := (latticeScheme ()).Challenge
+abbrev LatticePartyId   := (latticeScheme).PartyId
+abbrev LatticeMessage   := (latticeScheme).Message
+abbrev LatticeSecret    := (latticeScheme).Secret
+abbrev LatticePublic    := (latticeScheme).Public
+abbrev LatticeChallenge := (latticeScheme).Challenge
 
 end IceNine.Instances

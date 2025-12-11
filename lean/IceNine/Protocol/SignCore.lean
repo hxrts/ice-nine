@@ -111,8 +111,8 @@ def encodeCommitmentList (S : Scheme)
   -- HashDomain.commitmentList ++
   --   commits.foldl (fun acc c =>
   --     acc ++ S.serializePartyId c.sender ++
-  --           S.serializePublic c.hiding ++
-  --           S.serializePublic c.binding) ByteArray.empty
+  --           S.serializePublic c.hidingVal ++
+  --           S.serializePublic c.bindingVal) ByteArray.empty
 
 /-- Hash a commitment list (FROST H5).
     Used in binding factor computation.
@@ -220,7 +220,7 @@ With dual nonces:
 /-- Compute effective public nonce for a signer given their commitments and binding factor. -/
 def computeEffectiveNonce (S : Scheme) [DecidableEq S.PartyId]
     (commitMsg : SignCommitMsg S) (bindingFactor : S.Scalar) : S.Public :=
-  commitMsg.hiding + bindingFactor • commitMsg.binding
+  commitMsg.hidingVal + bindingFactor • commitMsg.bindingVal
 
 /-- Compute aggregate nonce from all signers' commitments and binding factors.
     w = Σᵢ (W_hiding_i + ρᵢ·W_binding_i) -/
@@ -231,7 +231,7 @@ def computeAggregateNonce (S : Scheme) [DecidableEq S.PartyId]
   (commits.map fun cmsg =>
     match bindingFactors.get cmsg.sender with
     | some ρ => computeEffectiveNonce S cmsg ρ
-    | none => cmsg.hiding  -- fallback if binding factor missing
+    | none => cmsg.hidingVal  -- fallback if binding factor missing
   ).sum
 
 /-!
@@ -346,7 +346,7 @@ structure ValidSignTranscript (S : Scheme)
   pids_eq : commits.map (·.sender) = Sset
   commit_open_ok :
     -- Verify commitment to hiding public nonce
-    List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit c.hiding r.opening = c.commitW) commits reveals
+    List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit c.hidingVal r.opening = c.commitW) commits reveals
   sessions_ok :
     let sess := (commits.head?.map (·.session)).getD 0;
     ∀ sh ∈ shares, sh.session = sess
@@ -384,7 +384,7 @@ def validateSigning
   -- Verify commitments: commit(W_hiding, opening) = commitW
   for (c,r) in List.zip commits reveals do
     if c.sender = r.sender then
-      if decide (S.commit c.hiding r.opening = c.commitW) then
+      if decide (S.commit c.hidingVal r.opening = c.commitW) then
         pure ()
       else throw (.commitMismatch r.sender)
     else throw (.participantMismatch c.sender)

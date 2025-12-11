@@ -75,11 +75,11 @@ def NonceRegistry.empty (S : Scheme)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
     : NonceRegistry S :=
-  { bySession := Std.HashMap.empty
-    byCommitment := Std.HashMap.empty }
+  { bySession := {}
+    byCommitment := {} }
 
 /-- Check if a nonce commitment was seen before. -/
-def NonceRegistry.hasCommitment
+def NonceRegistry.hasCommitment {S : Scheme}
     (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
@@ -89,7 +89,7 @@ def NonceRegistry.hasCommitment
   | none => false
 
 /-- Check if a (party, session) pair exists. -/
-def NonceRegistry.hasSession
+def NonceRegistry.hasSession {S : Scheme}
     (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
@@ -97,7 +97,7 @@ def NonceRegistry.hasSession
   reg.bySession.contains (pid, session)
 
 /-- Record a nonce commitment. -/
-def NonceRegistry.record
+def NonceRegistry.record {S : Scheme}
     (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
@@ -110,7 +110,7 @@ def NonceRegistry.record
     byCommitment := newByCommitment }
 
 /-- Detect if same nonce was used in different sessions. -/
-def NonceRegistry.detectReuse
+def NonceRegistry.detectReuse {S : Scheme}
     (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
@@ -120,7 +120,7 @@ def NonceRegistry.detectReuse
   | _ => none
 
 /-- Get all commitments as a list. -/
-def NonceRegistry.toList
+def NonceRegistry.toList {S : Scheme}
     (reg : NonceRegistry S)
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
@@ -151,22 +151,22 @@ Reference: FROST RFC (draft-irtf-cfrg-frost-15), Section 4.1
     **CRITICAL**: Never reuse nonces across sessions. -/
 structure SigningNonces (S : Scheme) where
   /-- Hiding nonce: protects signer from adaptive adversaries -/
-  hiding  : S.Secret
+  hidingVal  : S.Secret
   /-- Binding nonce: commits to signing context -/
-  binding : S.Secret
+  bindingVal : S.Secret
 
 /-- Public commitments derived from signing nonces.
     W_hiding = A(hiding), W_binding = A(binding) -/
 structure SigningCommitments (S : Scheme) where
   /-- Public hiding commitment: A(hiding nonce) -/
-  hiding  : S.Public
+  hidingVal  : S.Public
   /-- Public binding commitment: A(binding nonce) -/
-  binding : S.Public
+  bindingVal : S.Public
 
 /-- Compute public commitments from secret nonces. -/
 def SigningNonces.toCommitments (S : Scheme) (nonces : SigningNonces S) : SigningCommitments S :=
-  { hiding := S.A nonces.hiding
-    binding := S.A nonces.binding }
+  { hidingVal := S.A nonces.hidingVal
+    bindingVal := S.A nonces.bindingVal }
 
 /-- Derive the effective nonce from dual nonces and binding factor.
     y = hiding + ρ·binding where ρ = H(msg, pk, commitments).
@@ -175,13 +175,13 @@ def SigningNonces.toCommitments (S : Scheme) (nonces : SigningNonces S) : Signin
     adaptive attacks where adversary chooses message after seeing commitments. -/
 def SigningNonces.deriveEffective (S : Scheme)
     (nonces : SigningNonces S) (bindingFactor : S.Scalar) : S.Secret :=
-  nonces.hiding + bindingFactor • nonces.binding
+  nonces.hidingVal + bindingFactor • nonces.bindingVal
 
 /-- Derive the effective public nonce.
     w = W_hiding + ρ·W_binding -/
 def SigningCommitments.deriveEffective (S : Scheme)
     (commits : SigningCommitments S) (bindingFactor : S.Scalar) : S.Public :=
-  commits.hiding + bindingFactor • commits.binding
+  commits.hidingVal + bindingFactor • commits.bindingVal
 
 /-!
 ## Binding Factor Computation
@@ -213,7 +213,7 @@ structure BindingFactors (S : Scheme) where
   factors : List (BindingFactor S)
 
 /-- Look up binding factor for a specific party. -/
-def BindingFactors.get [DecidableEq S.PartyId]
+def BindingFactors.get {S : Scheme} [DecidableEq S.PartyId]
     (bf : BindingFactors S) (pid : S.PartyId) : Option S.Scalar :=
   (bf.factors.find? (·.pid = pid)).map (·.factor)
 
@@ -238,9 +238,9 @@ structure SignCommitMsg (S : Scheme) where
   /-- Commitment to hiding public nonce (hash-based commitment) -/
   commitW  : S.Commitment
   /-- Public hiding commitment W_hiding = A(hiding nonce) -/
-  hiding   : S.Public
+  hidingVal   : S.Public
   /-- Public binding commitment W_binding = A(binding nonce) -/
-  binding  : S.Public
+  bindingVal  : S.Public
 
 /-- Reveal message: party discloses opening for verification.
     With dual nonces, the public commitments are sent in Round 1,
@@ -261,10 +261,10 @@ structure LagrangeCoeff (S : Scheme) where
 -/
 
 /-- Signing failure modes. -/
-inductive SignError (PartyId : Type u) where
+inductive SignError (PartyId : Type*) where
   | lengthMismatch : SignError PartyId
   | participantMismatch : PartyId → SignError PartyId
-  | duplicateParticipants : SignError PartyId
+  | duplicateParticipants : PartyId → SignError PartyId
   | commitMismatch : PartyId → SignError PartyId
   | sessionMismatch : Nat → Nat → SignError PartyId
   | normCheckFailed : PartyId → SignError PartyId
@@ -273,7 +273,7 @@ inductive SignError (PartyId : Type u) where
 deriving DecidableEq
 
 /-- Abort reason for detailed error reporting -/
-inductive AbortReason (PartyId : Type u) where
+inductive AbortReason (PartyId : Type*) where
   | normBoundExceeded : PartyId → Nat → AbortReason PartyId
   | maxRetriesReached : PartyId → AbortReason PartyId
   | coordinationFailure : AbortReason PartyId
@@ -315,12 +315,12 @@ def minAbortThreshold (totalParties : Nat) : Nat :=
   (totalParties + 1) / 2 + 1
 
 /-- Check if session should be considered aborted. -/
-def SignAbortState.isAborted (state : SignAbortState S) (threshold : Nat) (totalParties : Nat) : Bool :=
+def SignAbortState.isAborted {S : Scheme} (state : SignAbortState S) (threshold : Nat) (totalParties : Nat) : Bool :=
   let effectiveThreshold := max threshold (minAbortThreshold totalParties)
   state.abortVotes.card ≥ effectiveThreshold
 
 /-- Safe abort check using minimum threshold. -/
-def SignAbortState.isSafelyAborted (state : SignAbortState S) (totalParties : Nat) : Bool :=
+def SignAbortState.isSafelyAborted {S : Scheme} (state : SignAbortState S) (totalParties : Nat) : Bool :=
   state.abortVotes.card ≥ minAbortThreshold totalParties
 
 /-- Create abort message when norm check fails. -/
@@ -361,7 +361,7 @@ structure SigningPackage (S : Scheme) where
 
 /-- Create a signing package with validation.
     Returns none if commitments don't match signer set. -/
-def SigningPackage.create [DecidableEq S.PartyId]
+def SigningPackage.create {S : Scheme} [DecidableEq S.PartyId]
     (session : Nat)
     (message : S.Message)
     (publicKey : S.Public)
@@ -381,23 +381,23 @@ def SigningPackage.create [DecidableEq S.PartyId]
   else none
 
 /-- Get a specific signer's commitments from the package. -/
-def SigningPackage.getCommitment [DecidableEq S.PartyId]
+def SigningPackage.getCommitment {S : Scheme} [DecidableEq S.PartyId]
     (pkg : SigningPackage S) (pid : S.PartyId) : Option (SignCommitMsg S) :=
   pkg.commitments.find? (·.sender = pid)
 
 /-- Get binding factor for a specific signer. -/
-def SigningPackage.getBindingFactor [DecidableEq S.PartyId]
+def SigningPackage.getBindingFactor {S : Scheme} [DecidableEq S.PartyId]
     (pkg : SigningPackage S) (pid : S.PartyId) : Option S.Scalar :=
   pkg.bindingFactors.get pid
 
 /-- Validate that all expected signers have commitments. -/
-def SigningPackage.isComplete [DecidableEq S.PartyId]
+def SigningPackage.isComplete {S : Scheme} [DecidableEq S.PartyId]
     (pkg : SigningPackage S) : Bool :=
   pkg.signerSet.all fun pid =>
     pkg.commitments.any (·.sender = pid)
 
 /-- Number of signers in this package. -/
-def SigningPackage.signerCount (pkg : SigningPackage S) : Nat :=
+def SigningPackage.signerCount {S : Scheme} (pkg : SigningPackage S) : Nat :=
   pkg.signerSet.length
 
 /-!
@@ -471,7 +471,7 @@ def BatchVerificationContext.empty (S : Scheme) : BatchVerificationContext S :=
   { entries := [], weights := [] }
 
 /-- Add an entry to the batch. -/
-def BatchVerificationContext.add
+def BatchVerificationContext.add {S : Scheme}
     (ctx : BatchVerificationContext S)
     (entry : BatchEntry S)
     (weight : S.Scalar)
@@ -480,7 +480,7 @@ def BatchVerificationContext.add
     weights := weight :: ctx.weights }
 
 /-- Number of entries in the batch. -/
-def BatchVerificationContext.size (ctx : BatchVerificationContext S) : Nat :=
+def BatchVerificationContext.size {S : Scheme} (ctx : BatchVerificationContext S) : Nat :=
   ctx.entries.length
 
 /-- Result of batch verification. -/

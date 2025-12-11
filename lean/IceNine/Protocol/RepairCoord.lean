@@ -145,67 +145,130 @@ def RepairCoordState.allRevealed [BEq S.PartyId] [Hashable S.PartyId]
     (st : RepairCoordState S) : Bool :=
   st.commits.senders.all (fun h => st.reveals.contains h)
 
-/-- Result of processing a contribution commit. -/
-inductive ContribCommitResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-  | success (newSt : RepairCoordState S)
-  | conflict (existing : ContribCommitMsg S)
-  | notHelper
-  | wrongPhase
+/-!
+## CRDT Merge Functions
 
-/-- Process a commit from a helper with conflict detection.
+These functions implement pure CRDT semantics: idempotent, commutative merge.
+They always succeed and silently ignore duplicates (first-writer-wins).
+Use these for replication/networking.
+-/
 
-    **Design choice**: We use strict conflict detection rather than CRDT-style
-    silent merging because detecting duplicate/conflicting messages is security-critical
-    in cryptographic protocols. A duplicate commit could indicate an attack. -/
+/-- Process contribution commit (CRDT merge).
+    Idempotent: duplicate messages from same sender are silently ignored.
+    Non-helpers are silently ignored.
+    Use `detectContribCommitConflict` separately if conflict detection is needed. -/
 def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RepairCoordState S) (msg : ContribCommitMsg S)
-    : ContribCommitResult S :=
+    : RepairCoordState S :=
   if st.phase = .commit then
-    -- Verify sender is a valid helper
+    -- Only process if sender is a valid helper
     if st.helpers.contains msg.sender then
-      match st.commits.tryInsert contribCommitSender msg with
-      | .success newCommits =>
-          let newSt := { st with commits := newCommits }
-          -- Transition to reveal phase if enough commits
-          if newSt.enoughCommits then
-            .success { newSt with phase := .reveal }
-          else .success newSt
-      | .conflict existing => .conflict existing
-    else .notHelper
-  else .wrongPhase
+      let newSt := { st with commits := st.commits.insert contribCommitSender msg }
+      -- Transition to reveal phase if enough commits
+      if newSt.enoughCommits then { newSt with phase := .reveal }
+      else newSt
+    else st  -- Non-helper, no change
+  else st
 
-/-- Result of processing a contribution reveal. -/
-inductive ContribRevealResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-  | success (newSt : RepairCoordState S)
-  | conflict (existing : ContribRevealMsg S)
-  | invalidOpening
-  | noCommit
-  | wrongPhase
-
-/-- Process a reveal from a helper with conflict detection.
-
-    **Design choice**: We use strict conflict detection rather than CRDT-style
-    silent merging because detecting duplicate/conflicting messages is security-critical
-    in cryptographic protocols. A duplicate reveal could indicate an attack. -/
+/-- Process contribution reveal (CRDT merge).
+    Idempotent: duplicate messages from same sender are silently ignored.
+    Invalid openings are silently rejected (no state change).
+    Use `detectContribRevealConflict` and `validateContribReveal` separately if needed. -/
 def processContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
     (st : RepairCoordState S) (msg : ContribRevealMsg S)
-    : ContribRevealResult S :=
+    : RepairCoordState S :=
   if st.phase = .reveal then
     -- Verify commitment opens correctly
     match st.commits.get? msg.sender with
     | some c =>
         if S.commit (S.A msg.contribution) msg.opening = c.contribCommit then
-          match st.reveals.tryInsert contribRevealSender msg with
-          | .success newReveals =>
-              let newSt := { st with reveals := newReveals }
-              -- Transition to verify phase if all revealed
-              if newSt.allRevealed then
-                .success { newSt with phase := .verify }
-              else .success newSt
-          | .conflict existing => .conflict existing
-        else .invalidOpening
-    | none => .noCommit
-  else .wrongPhase
+          let newSt := { st with reveals := st.reveals.insert contribRevealSender msg }
+          -- Transition to verify phase if all revealed
+          if newSt.allRevealed then { newSt with phase := .verify }
+          else newSt
+        else st  -- Invalid opening, no change
+    | none => st  -- No commit found, no change
+  else st
+
+/-!
+## Conflict Detection (Validation Layer)
+
+These functions detect anomalies without modifying state.
+Use for auditing, logging, or when strict conflict handling is required.
+Separate from CRDT merge to keep concerns clean.
+-/
+
+/-- Detect if a contribution commit conflicts with existing state.
+    Returns the existing message if sender already committed. -/
+def detectContribCommitConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : Option (ContribCommitMsg S) :=
+  st.commits.get? msg.sender
+
+/-- Detect if a contribution reveal conflicts with existing state.
+    Returns the existing message if sender already revealed. -/
+def detectContribRevealConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribRevealMsg S)
+    : Option (ContribRevealMsg S) :=
+  st.reveals.get? msg.sender
+
+/-- Validation errors for contribution commit processing. -/
+inductive ContribCommitValidationError (S : Scheme)
+  | wrongPhase (current : RepairPhase)
+  | notHelper (sender : S.PartyId)
+  | conflict (existing : ContribCommitMsg S)
+
+/-- Validation errors for contribution reveal processing. -/
+inductive ContribRevealValidationError (S : Scheme)
+  | wrongPhase (current : RepairPhase)
+  | noCommit (sender : S.PartyId)
+  | invalidOpening (sender : S.PartyId)
+  | conflict (existing : ContribRevealMsg S)
+
+/-- Validate a contribution commit before processing.
+    Returns error if validation fails, none if OK to process. -/
+def validateContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : Option (ContribCommitValidationError S) :=
+  if st.phase ≠ .commit then
+    some (.wrongPhase st.phase)
+  else if !st.helpers.contains msg.sender then
+    some (.notHelper msg.sender)
+  else match detectContribCommitConflict S st msg with
+    | some existing => some (.conflict existing)
+    | none => none
+
+/-- Validate a contribution reveal before processing.
+    Returns error if validation fails, none if OK to process. -/
+def validateContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+    (st : RepairCoordState S) (msg : ContribRevealMsg S)
+    : Option (ContribRevealValidationError S) :=
+  if st.phase ≠ .reveal then
+    some (.wrongPhase st.phase)
+  else match st.commits.get? msg.sender with
+    | none => some (.noCommit msg.sender)
+    | some c =>
+        if S.commit (S.A msg.contribution) msg.opening ≠ c.contribCommit then
+          some (.invalidOpening msg.sender)
+        else match detectContribRevealConflict S st msg with
+          | some existing => some (.conflict existing)
+          | none => none
+
+/-- Process contribution commit with validation. Combines validation and CRDT merge.
+    Use when you need both conflict detection and state update. -/
+def processContribCommitValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : RepairCoordState S × Option (ContribCommitValidationError S) :=
+  let err := validateContribCommit S st msg
+  (processContribCommit S st msg, err)
+
+/-- Process contribution reveal with validation. Combines validation and CRDT merge.
+    Use when you need both conflict detection and state update. -/
+def processContribRevealValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+    (st : RepairCoordState S) (msg : ContribRevealMsg S)
+    : RepairCoordState S × Option (ContribRevealValidationError S) :=
+  let err := validateContribReveal S st msg
+  (processContribReveal S st msg, err)
 
 /-- Aggregate revealed contributions to recover share. -/
 def aggregateContributions (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]

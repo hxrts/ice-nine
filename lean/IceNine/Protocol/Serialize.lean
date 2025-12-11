@@ -434,8 +434,8 @@ def serializeSignCommitMsg (S : Scheme)
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
   Serializable.toBytes msg.commitW ++
-  Serializable.toBytes msg.hiding ++
-  Serializable.toBytes msg.binding
+  Serializable.toBytes msg.hidingVal ++
+  Serializable.toBytes msg.bindingVal
 
 /-- Serialize SignRevealWMsg: sender + session + opening -/
 def serializeSignRevealWMsg (S : Scheme)

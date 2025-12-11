@@ -253,7 +253,7 @@ unique prefix string to prevent cross-protocol attacks.
 **Protocol version**: Prefix includes "v1" so future versions can change domains.
 -/
 
-/-- Domain separation strings for Ice-Nine protocol. -/
+-- Domain separation strings for Ice-Nine protocol
 namespace HashDomain
   /-- Binding factor computation (FROST H1) -/
   def bindingFactor : ByteArray := "ice-nine-v1-rho".toUTF8

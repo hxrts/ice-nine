@@ -361,19 +361,42 @@ structure RefreshRoundState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] wh
 - Consistency with DKG (which commits to public shares)
 - Simple zero-sum verification via `A(Σ m_i)`
 
-**Processing Functions:**
+**Architecture: Separated CRDT and Validation**
+
+The protocol separates concerns into two layers:
+
+1. **CRDT Layer** - Pure merge semantics for replication/networking
+2. **Validation Layer** - Conflict detection for auditing/security
+
 ```lean
--- Returns result type with conflict detection (security-critical)
+-- CRDT merge: idempotent, always succeeds, silently ignores duplicates
 def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) (msg : MaskCommitMsg S)
-    : CommitProcessResult S  -- success | conflict | wrongPhase
+    : RefreshRoundState S
 
 def processReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) (msg : MaskRevealMsg S)
-    : RevealProcessResult S  -- success | conflict | invalidOpening | noCommit | wrongPhase
+    : RefreshRoundState S
+
+-- Validation: detect conflicts without modifying state
+def detectCommitConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : Option (MaskCommitMsg S)
+
+def validateCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : Option (CommitValidationError S)
+
+-- Combined: merge + validation in one call
+def processCommitValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : RefreshRoundState S × Option (CommitValidationError S)
 ```
 
-**Design Choice:** We use strict conflict detection rather than CRDT-style silent merging because detecting duplicate/conflicting messages is security-critical in cryptographic protocols.
+**Design Rationale:**
+- CRDT functions can be used directly for networking without error handling in merge path
+- Validation is explicit and composable—call it when you need it
+- Follows "make illegal states unrepresentable" at CRDT level, "detect suspicious patterns" separately
 
 **Coordinator Selection:**
 ```lean
@@ -695,19 +718,39 @@ structure RepairCoordState (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] whe
   repairedShare : Option S.Secret
 ```
 
-**Processing Functions:**
+**Architecture: Separated CRDT and Validation**
+
+Like RefreshCoord, RepairCoord separates CRDT merge from validation:
+
 ```lean
--- Returns result type with conflict detection (security-critical)
+-- CRDT merge: idempotent, always succeeds, silently ignores duplicates/non-helpers
 def processContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RepairCoordState S) (msg : ContribCommitMsg S)
-    : ContribCommitResult S  -- success | conflict | notHelper | wrongPhase
+    : RepairCoordState S
 
 def processContribReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RepairCoordState S) (msg : ContribRevealMsg S)
-    : ContribRevealResult S  -- success | conflict | invalidOpening | noCommit | wrongPhase
+    : RepairCoordState S
+
+-- Validation: detect conflicts without modifying state
+def detectContribCommitConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : Option (ContribCommitMsg S)
+
+def validateContribCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : Option (ContribCommitValidationError S)  -- wrongPhase | notHelper | conflict
+
+-- Combined: merge + validation in one call
+def processContribCommitValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RepairCoordState S) (msg : ContribCommitMsg S)
+    : RepairCoordState S × Option (ContribCommitValidationError S)
 ```
 
-**Design Choice:** We use strict conflict detection rather than CRDT-style silent merging because detecting duplicate/conflicting messages is security-critical in cryptographic protocols.
+**Usage Patterns:**
+- **Networking**: Use `processContribCommit`/`processContribReveal` directly for replication
+- **Auditing**: Call `detectContribCommitConflict` to check for duplicate messages
+- **Strict mode**: Use `processContribCommitValidated` for both merge and error reporting
 
 **Helper State:**
 Each helper maintains local state for participation:

@@ -81,7 +81,7 @@ The canonical implementation used throughout the protocol.
     - `allScalars`: All parties' scalars including this one
 
     **Safety**: Returns 0 if any two parties have the same scalar (degenerate case). -/
-def coeffAtZero [Field F] [DecidableEq F]
+def coeffAtZero {F : Type*} [Field F] [DecidableEq F]
     (partyScalar : F)
     (allScalars : List F)
     : F :=
@@ -98,7 +98,7 @@ def coeffAtZero [Field F] [DecidableEq F]
     Useful when the party list doesn't include the current party.
 
     λ_i = Π_{j∈others} x_j / (x_j - x_i) -/
-def coeffAtZeroOthers [Field F] [DecidableEq F]
+def coeffAtZeroOthers {F : Type*} [Field F] [DecidableEq F]
     (partyScalar : F)
     (otherScalars : List F)
     : F :=
@@ -116,14 +116,14 @@ Compute coefficients for all parties at once.
 
 /-- Compute Lagrange coefficients for all parties in a set.
     Returns list of (scalar, coefficient) pairs. -/
-def allCoeffsAtZero [Field F] [DecidableEq F]
+def allCoeffsAtZero {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     : List (F × F) :=
   partyScalars.map fun p => (p, coeffAtZero p partyScalars)
 
 /-- Compute Lagrange coefficients as a function.
     Returns a lookup function from party scalar to coefficient. -/
-def coeffFnAtZero [Field F] [DecidableEq F]
+def coeffFnAtZero {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     : F → F :=
   fun p => coeffAtZero p partyScalars

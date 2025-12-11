@@ -140,16 +140,16 @@ inductive CoordinatorStrategy (PartyId : Type*)
   | random (seed : Nat)             -- pseudo-random selection
 
 /-- Select coordinator from party list. -/
-def selectCoordinator [Inhabited PartyId]
+def selectCoordinator {PartyId : Type*} [Inhabited PartyId]
     (parties : List PartyId) (strategy : CoordinatorStrategy PartyId) : PartyId :=
   match strategy with
   | .fixed pid => pid
   | .roundRobin round =>
       let idx := round % parties.length
-      parties.get? idx |>.getD default
+      parties[idx]?.getD default
   | .random seed =>
       let idx := seed % parties.length
-      parties.get? idx |>.getD default
+      parties[idx]?.getD default
 
 /-!
 ## Refresh Round State
@@ -197,78 +197,137 @@ def initRefreshRound (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 -/
 
 /-- Get the coordinator for this round. -/
-def RefreshRoundState.coordinator [BEq S.PartyId] [Hashable S.PartyId] [Inhabited S.PartyId]
+def RefreshRoundState.coordinator {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId] [Inhabited S.PartyId]
     (st : RefreshRoundState S) : S.PartyId :=
   selectCoordinator st.parties st.coordStrategy
 
 /-- Check if all parties have committed. -/
-def RefreshRoundState.allCommitted [BEq S.PartyId] [Hashable S.PartyId]
+def RefreshRoundState.allCommitted {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) : Bool :=
   st.parties.all (fun p => st.maskCommits.contains p)
 
 /-- Check if all parties have revealed. -/
-def RefreshRoundState.allRevealed [BEq S.PartyId] [Hashable S.PartyId]
+def RefreshRoundState.allRevealed {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) : Bool :=
   st.parties.all (fun p => st.maskReveals.contains p)
 
-/-- Result of processing a commit message. -/
-inductive CommitProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-  | success (newSt : RefreshRoundState S)
-  | conflict (existing : MaskCommitMsg S)
-  | wrongPhase
+/-!
+## CRDT Merge Functions
 
-/-- Process mask commitment with conflict detection.
-    Returns conflict indicator if sender already has a commit.
+These functions implement pure CRDT semantics: idempotent, commutative merge.
+They always succeed and silently ignore duplicates (first-writer-wins).
+Use these for replication/networking.
+-/
 
-    **Design choice**: We use strict conflict detection rather than CRDT-style
-    silent merging because detecting duplicate/conflicting messages is security-critical
-    in cryptographic protocols. A duplicate commit could indicate an attack. -/
+/-- Process mask commitment (CRDT merge).
+    Idempotent: duplicate messages from same sender are silently ignored.
+    Use `detectCommitConflict` separately if conflict detection is needed. -/
 def processCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) (msg : MaskCommitMsg S)
-    : CommitProcessResult S :=
+    : RefreshRoundState S :=
   if st.phase = .commit then
-    match st.maskCommits.tryInsert maskCommitSender msg with
-    | .success newCommits =>
-        let newSt := { st with maskCommits := newCommits }
-        -- Transition to reveal phase if all committed
-        if newSt.allCommitted then
-          .success { newSt with phase := .reveal }
-        else .success newSt
-    | .conflict existing => .conflict existing
-  else .wrongPhase
+    let newSt := { st with maskCommits := st.maskCommits.insert maskCommitSender msg }
+    -- Transition to reveal phase if all committed
+    if newSt.allCommitted then { newSt with phase := .reveal }
+    else newSt
+  else st
 
-/-- Result of processing a reveal message. -/
-inductive RevealProcessResult (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-  | success (newSt : RefreshRoundState S)
-  | conflict (existing : MaskRevealMsg S)
-  | invalidOpening
-  | noCommit
-  | wrongPhase
-
-/-- Process mask reveal with conflict detection.
-
-    **Design choice**: We use strict conflict detection rather than CRDT-style
-    silent merging because detecting duplicate/conflicting messages is security-critical
-    in cryptographic protocols. A duplicate reveal could indicate an attack. -/
+/-- Process mask reveal (CRDT merge).
+    Idempotent: duplicate messages from same sender are silently ignored.
+    Invalid openings are silently rejected (no state change).
+    Use `detectRevealConflict` and `validateRevealOpening` separately if needed. -/
 def processReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
     (st : RefreshRoundState S) (msg : MaskRevealMsg S)
-    : RevealProcessResult S :=
+    : RefreshRoundState S :=
   if st.phase = .reveal then
     -- Verify commitment opens correctly
     match st.maskCommits.get? msg.sender with
     | some c =>
         if S.commit (S.A msg.mask) msg.opening = c.maskCommit then
-          match st.maskReveals.tryInsert maskRevealSender msg with
-          | .success newReveals =>
-              let newSt := { st with maskReveals := newReveals }
-              -- Transition to adjust phase if all revealed
-              if newSt.allRevealed then
-                .success { newSt with phase := .adjust }
-              else .success newSt
-          | .conflict existing => .conflict existing
-        else .invalidOpening
-    | none => .noCommit
-  else .wrongPhase
+          let newSt := { st with maskReveals := st.maskReveals.insert maskRevealSender msg }
+          -- Transition to adjust phase if all revealed
+          if newSt.allRevealed then { newSt with phase := .adjust }
+          else newSt
+        else st  -- Invalid opening, no change
+    | none => st  -- No commit found, no change
+  else st
+
+/-!
+## Conflict Detection (Validation Layer)
+
+These functions detect anomalies without modifying state.
+Use for auditing, logging, or when strict conflict handling is required.
+Separate from CRDT merge to keep concerns clean.
+-/
+
+/-- Detect if a commit message conflicts with existing state.
+    Returns the existing message if sender already committed. -/
+def detectCommitConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : Option (MaskCommitMsg S) :=
+  st.maskCommits.get? msg.sender
+
+/-- Detect if a reveal message conflicts with existing state.
+    Returns the existing message if sender already revealed. -/
+def detectRevealConflict (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskRevealMsg S)
+    : Option (MaskRevealMsg S) :=
+  st.maskReveals.get? msg.sender
+
+/-- Validation errors for commit processing. -/
+inductive CommitValidationError (S : Scheme)
+  | wrongPhase (current : RefreshPhase)
+  | conflict (existing : MaskCommitMsg S)
+
+/-- Validation errors for reveal processing. -/
+inductive RevealValidationError (S : Scheme)
+  | wrongPhase (current : RefreshPhase)
+  | noCommit (sender : S.PartyId)
+  | invalidOpening (sender : S.PartyId)
+  | conflict (existing : MaskRevealMsg S)
+
+/-- Validate a commit message before processing.
+    Returns error if validation fails, none if OK to process. -/
+def validateCommit (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : Option (CommitValidationError S) :=
+  if st.phase ≠ .commit then
+    some (.wrongPhase st.phase)
+  else match detectCommitConflict S st msg with
+    | some existing => some (.conflict existing)
+    | none => none
+
+/-- Validate a reveal message before processing.
+    Returns error if validation fails, none if OK to process. -/
+def validateReveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+    (st : RefreshRoundState S) (msg : MaskRevealMsg S)
+    : Option (RevealValidationError S) :=
+  if st.phase ≠ .reveal then
+    some (.wrongPhase st.phase)
+  else match st.maskCommits.get? msg.sender with
+    | none => some (.noCommit msg.sender)
+    | some c =>
+        if S.commit (S.A msg.mask) msg.opening ≠ c.maskCommit then
+          some (.invalidOpening msg.sender)
+        else match detectRevealConflict S st msg with
+          | some existing => some (.conflict existing)
+          | none => none
+
+/-- Process commit with validation. Combines validation and CRDT merge.
+    Use when you need both conflict detection and state update. -/
+def processCommitValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) (msg : MaskCommitMsg S)
+    : RefreshRoundState S × Option (CommitValidationError S) :=
+  let err := validateCommit S st msg
+  (processCommit S st msg, err)
+
+/-- Process reveal with validation. Combines validation and CRDT merge.
+    Use when you need both conflict detection and state update. -/
+def processRevealValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.Commitment]
+    (st : RefreshRoundState S) (msg : MaskRevealMsg S)
+    : RefreshRoundState S × Option (RevealValidationError S) :=
+  let err := validateReveal S st msg
+  (processReveal S st msg, err)
 
 /-- Coordinator computes adjustment to achieve zero-sum.
     adjustment = -Σ_{i≠coord} m_i -/
@@ -321,7 +380,8 @@ def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq
 theorem verifyZeroSum_spec (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) :
     verifyZeroSum S st = true ↔ zeroSumProp S st := by
-  simp only [verifyZeroSum, zeroSumProp, beq_iff_eq]
+  simp only [verifyZeroSum, zeroSumProp]
+  exact decide_eq_true_iff _
 
 /-!
 ## Final Mask Construction
@@ -345,7 +405,7 @@ theorem makeMaskFn_eq_finalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyI
     st.parties.map (fun pid => (makeMaskFn S st).mask pid) = computeFinalMasks S st := by
   simp only [makeMaskFn, computeFinalMasks]
   cases st.adjustment with
-  | none => simp
+  | none => rfl
   | some adj => rfl
 
 /-- Construct the final zero-sum mask function from refresh round.
@@ -361,10 +421,10 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
 axiom List.sum_perm {α : Type*} [AddCommMonoid α] (l1 l2 : List α) :
   l1.Perm l2 → l1.sum = l2.sum
 
-/-- Axiom: Finset.ofList.toList is a permutation of deduped original list.
+/-- Axiom: List.toFinset.toList is a permutation of deduped original list.
     For a nodup list, this is exactly the original (up to permutation). -/
-axiom Finset.ofList_toList_perm {α : Type*} [DecidableEq α] (l : List α) :
-  l.Nodup → (Finset.ofList l).toList.Perm l
+axiom List.toFinset_toList_perm {α : Type*} [DecidableEq α] (l : List α) :
+  l.Nodup → l.toFinset.toList.Perm l
 
 /-- Construct zero-sum mask with proof.
 
@@ -374,20 +434,20 @@ def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Deci
     (st : RefreshRoundState S)
     (hzero : zeroSumProp S st)
     (hnodup : st.parties.Nodup)
-    : ZeroSumMaskFn S (Finset.ofList st.parties) :=
+    : ZeroSumMaskFn S (List.toFinset st.parties) :=
   { fn := makeMaskFn S st
     sum_zero := by
-      -- Goal: (Finset.ofList st.parties).toList.map (makeMaskFn S st).mask sums to 0
+      -- Goal: (List.toFinset st.parties).toList.map (makeMaskFn S st).mask sums to 0
       -- Strategy: show this list is a permutation of st.parties.map ..., use sum_perm
       let f := fun pid => (makeMaskFn S st).mask pid
-      -- (Finset.ofList st.parties).toList is a permutation of st.parties
-      have hperm : (Finset.ofList st.parties).toList.Perm st.parties :=
-        Finset.ofList_toList_perm st.parties hnodup
+      -- (List.toFinset st.parties).toList is a permutation of st.parties
+      have hperm : (List.toFinset st.parties).toList.Perm st.parties :=
+        List.toFinset_toList_perm st.parties hnodup
       -- Map preserves permutation
-      have hmapperm : ((Finset.ofList st.parties).toList.map f).Perm (st.parties.map f) :=
+      have hmapperm : ((List.toFinset st.parties).toList.map f).Perm (st.parties.map f) :=
         List.Perm.map f hperm
       -- Use sum_perm
-      have hsumeq : ((Finset.ofList st.parties).toList.map f).sum = (st.parties.map f).sum :=
+      have hsumeq : ((List.toFinset st.parties).toList.map f).sum = (st.parties.map f).sum :=
         List.sum_perm _ _ hmapperm
       -- From makeMaskFn_eq_finalMasks: st.parties.map f = computeFinalMasks S st
       have hmask : st.parties.map f = computeFinalMasks S st :=
@@ -401,7 +461,7 @@ def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Deci
     Returns None if preconditions fail. -/
 def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S)
-    : Option (ZeroSumMaskFn S (Finset.ofList st.parties)) :=
+    : Option (ZeroSumMaskFn S (List.toFinset st.parties)) :=
   if hphase : st.phase = .apply then
     if hzero : verifyZeroSum S st = true then
       if hnodup : st.parties.Nodup then
