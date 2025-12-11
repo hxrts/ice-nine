@@ -86,17 +86,45 @@ Distributed key generation removes the need for a trusted dealer. Parties jointl
 
 ### Message Types
 
-The DKG protocol uses commit and reveal messages.
+The DKG protocol uses commit and reveal messages. Following FROST, commit messages include a proof of knowledge to prevent rogue-key attacks.
 
 ```lean
+/-- Proof of knowledge for DKG: proves knowledge of secret corresponding to public key. -/
+structure ProofOfKnowledge (S : Scheme) where
+  commitment : S.Public   -- R = A(k) for random nonce k
+  response   : S.Secret   -- μ = k + c·sk where c = H_dkg(pid, pk, R)
+
 structure DkgCommitMsg (S : Scheme) where
   sender   : S.PartyId
   commitPk : S.Commitment
+  pok      : ProofOfKnowledge S  -- proof of knowledge (prevents rogue-key attacks)
 
 structure DkgRevealMsg (S : Scheme) where
   sender  : S.PartyId
   pk_i    : S.Public
   opening : S.Opening
+```
+
+### Proof of Knowledge
+
+The proof of knowledge (PoK) prevents rogue-key attacks where an adversary chooses their public key as a function of honest parties' keys. Each party proves knowledge of the secret corresponding to their public share.
+
+**Generation** (during Round 1):
+1. Sample random nonce $k$
+2. Compute commitment $R = A(k)$
+3. Compute challenge $c = H_{\text{dkg}}(\text{pid}, \text{pk}_i, R)$
+4. Compute response $\mu = k + c \cdot s_i$
+
+**Verification** (during aggregation):
+Check that $A(\mu) = R + c \cdot \text{pk}_i$
+
+This works because $A(\mu) = A(k + c \cdot s_i) = A(k) + c \cdot A(s_i) = R + c \cdot \text{pk}_i$.
+
+```lean
+def verifyProofOfKnowledge (S : Scheme) [DecidableEq S.Public]
+    (pid : S.PartyId) (pk : S.Public) (pok : ProofOfKnowledge S) : Bool :=
+  let c := S.hashDkg pid pk pok.commitment
+  S.A pok.response = pok.commitment + c • pk
 ```
 
 ### Party State
@@ -156,11 +184,14 @@ inductive DkgError (PartyId : Type) where
   | lengthMismatch : DkgError PartyId
   | duplicatePids  : DkgError PartyId
   | commitMismatch : PartyId → DkgError PartyId
+  | invalidProofOfKnowledge : PartyId → DkgError PartyId
 ```
 
 **Missing commitment.** If a party does not receive a commitment from $P_j$ within a timeout it marks $P_j$ as absent. The protocol can proceed with the remaining parties if enough are present. Detected via `lengthMismatch`.
 
 **Invalid opening.** If $\mathsf{Com}(\mathsf{pk}_j, r_j) \neq \mathsf{Com}_j$ then party $P_j$ is marked as malicious. Detected via `commitMismatch`.
+
+**Invalid proof of knowledge.** If $A(\mu) \neq R + c \cdot \mathsf{pk}_j$ for party $P_j$'s PoK, this indicates either a malicious party attempting a rogue-key attack or corruption of the PoK data. Detected via `invalidProofOfKnowledge`.
 
 **Duplicate participants.** If the same party identifier appears twice, detected via `duplicatePids`.
 

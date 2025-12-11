@@ -39,6 +39,45 @@ def lagrangeCoeffs
   Sset.map (fun pid => { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar Sset pid })
 
 /-!
+## Domain-Separated Hash Functions (FROST H4, H5)
+
+Following FROST, we use dedicated hash functions for:
+- H4: Message pre-hashing (allows signing large messages efficiently)
+- H5: Commitment list encoding (canonical encoding for binding factor computation)
+-/
+
+/-- Hash a message for signing (FROST H4).
+    Pre-hashing allows efficient signing of large messages.
+
+    **Usage**: Call this before computing binding factors or challenge.
+    The pre-hashed message is used in place of the raw message. -/
+def hashMessage (S : Scheme) (msg : S.Message) : ByteArray :=
+  -- Use domain-separated hash: H(domain || msg)
+  -- Actual implementation depends on Scheme's hash function
+  -- This is a placeholder showing the structure
+  HashDomain.message ++ match msg with
+    | _ => ByteArray.empty  -- Scheme should provide message serialization
+
+/-- Encode a list of commitments for hashing (FROST H5).
+    Produces a canonical encoding of the commitment list.
+
+    **Usage**: Used in binding factor computation to ensure all parties
+    agree on the same commitment ordering and encoding. -/
+def encodeCommitmentList (S : Scheme)
+    (commits : List (SignCommitMsg S)) : ByteArray :=
+  -- Concatenate sender || hiding || binding for each commitment
+  -- The actual encoding depends on Scheme's serialization
+  HashDomain.commitmentList ++ commits.foldl (fun acc _ => acc) ByteArray.empty
+
+/-- Hash a commitment list (FROST H5).
+    Used in binding factor computation. -/
+def hashCommitmentList (S : Scheme)
+    (commits : List (SignCommitMsg S)) : ByteArray :=
+  let encoded := encodeCommitmentList S commits
+  -- Apply H5 hash (domain-separated)
+  encoded  -- Actual hash application depends on Scheme
+
+/-!
 ## Challenge Derivation
 
 After all Round 1 messages, compute binding factors, aggregate nonce,

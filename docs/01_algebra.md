@@ -29,9 +29,17 @@ structure Scheme where
   Opening    : Type
   commit     : Public → Opening → Commitment
   commitBinding : ∀ {x₁ x₂ o₁ o₂}, commit x₁ o₁ = commit x₂ o₂ → x₁ = x₂
+
+  -- Domain-separated hash functions (FROST pattern)
   hashCollisionResistant : Prop
-  hash       : Message → Public → List PartyId → List Commitment → Public → Challenge
-  normOK     : Secret → Prop
+  hashToScalar : ByteArray → ByteArray → Scalar  -- H(domain, data)
+  hashDkg : PartyId → Public → Public → Scalar   -- H_dkg for PoK
+  hash : Message → Public → List PartyId → List Commitment → Public → Challenge
+
+  -- Optional identifier derivation
+  deriveIdentifier : ByteArray → Option PartyId
+
+  normOK : Secret → Prop
 ```
 
 ## Modules and Scalars
@@ -78,13 +86,60 @@ for all $x_1, x_2 \in \mathcal{P}$ and $o_1, o_2 \in \mathcal{O}$.
 
 This property ensures that a commitment uniquely determines the committed value. Adversaries cannot produce two different openings for the same commitment.
 
-## Hash Function
+## Hash Functions
 
-The hash function maps protocol inputs to challenges. Its signature is
+Following FROST, we use domain-separated hash functions for different protocol operations. This prevents cross-protocol attacks where a hash collision in one context could be exploited in another.
 
-$$H : \mathcal{M} \times \mathcal{P} \times \mathsf{List}(\mathsf{PartyId}) \times \mathsf{List}(\mathcal{C}) \times \mathcal{P} \to \mathcal{Ch}$$
+### Domain Separation
+
+Each hash function uses a unique domain prefix:
+
+| Domain | FROST Name | Purpose | Prefix |
+|--------|------------|---------|--------|
+| Binding factor | H1 | Compute binding factors $\rho_i$ | `ice-nine-v1-rho` |
+| Challenge | H2 | Fiat-Shamir challenge $c$ | `ice-nine-v1-chal` |
+| Nonce | H3 | Nonce derivation | `ice-nine-v1-nonce` |
+| Message | H4 | Message pre-hashing | `ice-nine-v1-msg` |
+| Commitment list | H5 | Commitment encoding | `ice-nine-v1-com` |
+| DKG | HDKG | Proof of knowledge | `ice-nine-v1-dkg` |
+| Identifier | HID | Party ID derivation | `ice-nine-v1-id` |
+
+### Challenge Hash (H2)
+
+The primary hash function maps protocol inputs to challenges:
+
+$$H_2 : \mathcal{M} \times \mathcal{P} \times \mathsf{List}(\mathsf{PartyId}) \times \mathsf{List}(\mathcal{C}) \times \mathcal{P} \to \mathcal{Ch}$$
 
 The inputs are the message $m$, the global public key $\mathsf{pk}$, the participant set $S$, the list of commitments, and the aggregated nonce $w$.
+
+### DKG Hash (HDKG)
+
+Used for proof of knowledge in DKG:
+
+$$H_{\text{dkg}} : \mathsf{PartyId} \times \mathcal{P} \times \mathcal{P} \to R$$
+
+Maps (party ID, public key, commitment) to a scalar challenge.
+
+### Identifier Derivation (HID)
+
+The `deriveIdentifier` function maps arbitrary byte strings to party identifiers:
+
+$$H_{\text{id}} : \mathsf{ByteArray} \to \mathsf{Option}(\mathsf{PartyId})$$
+
+Uses domain prefix `ice-nine-v1-id`. Returns `none` if the derived value is zero (invalid identifier).
+
+```lean
+-- In Scheme record
+deriveIdentifier : ByteArray → Option PartyId := fun _ => none
+
+-- Convenience function
+def Scheme.deriveId (S : Scheme) (data : ByteArray) : Option S.PartyId :=
+  S.deriveIdentifier data
+```
+
+This enables deterministic identifier derivation from human-readable strings or external identifiers.
+
+### Random Oracle Model
 
 In security proofs the hash is modeled as a random oracle. This means it behaves as a uniformly random function. The random oracle model enables simulation-based security arguments.
 

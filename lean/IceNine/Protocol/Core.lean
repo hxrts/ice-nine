@@ -139,8 +139,43 @@ structure Scheme where
   -- In ROM, this holds with overwhelming probability.
   hashCollisionResistant : Prop
 
+  /-
+  ## Domain-Separated Hash Functions (FROST Pattern)
+
+  Following FROST RFC, we use domain-separated hash functions for different purposes.
+  Each hash is prefixed with a domain string to prevent cross-protocol attacks.
+
+  | Domain | FROST Name | Purpose |
+  |--------|------------|---------|
+  | bindingFactor | H1 | Compute binding factors ρ_i |
+  | challenge | H2 | Fiat-Shamir challenge c |
+  | nonce | H3 | Nonce derivation |
+  | message | H4 | Message pre-hashing |
+  | commitmentList | H5 | Commitment list encoding |
+  | dkg | HDKG | DKG proof of knowledge |
+  | identifier | HID | Party ID derivation |
+
+  **Security**: Domain separation ensures that a hash collision in one context
+  cannot be exploited in another context.
+  -/
+
+  -- Domain-separated hash to scalar (for binding factors, PoK challenges, etc.)
+  hashToScalar :
+    ByteArray →                 -- domain prefix (e.g., "ice-nine-v1-rho")
+    ByteArray →                 -- input data
+    Scalar
+
+  -- Domain-separated hash for DKG proof of knowledge challenge
+  -- c = H_dkg(pid, pk_i, R) where R is the commitment
+  hashDkg :
+    PartyId →                   -- prover's identifier
+    Public →                    -- prover's public key
+    Public →                    -- commitment R = A(k)
+    Scalar
+
   -- Fiat-Shamir hash: binds challenge to full transcript.
   -- Inputs: message, public key, signers, commitments, nonce sum.
+  -- This is H2 (challenge) in FROST terminology.
   hash :
     Message →
     Public →                    -- global public key
@@ -148,6 +183,10 @@ structure Scheme where
     List Commitment →           -- nonce commitments
     Public →                    -- aggregated nonce w = Σ w_i
     Challenge
+
+  -- Optional: derive party identifier from arbitrary bytes
+  -- Returns none if the derived value is zero (invalid identifier)
+  deriveIdentifier : ByteArray → Option PartyId := fun _ => none
 
   -- Norm bound predicate for lattice security.
   -- Rejects signatures with large z to prevent leakage.
@@ -158,6 +197,48 @@ structure Scheme where
   [normOKDecidable : DecidablePred normOK]
 
 attribute [instance] Scheme.scalarSemiring Scheme.secretAdd Scheme.publicAdd
+
+/-!
+## Domain Separation Constants
+
+Following FROST, we use domain-separated hash functions. Each domain has a
+unique prefix string to prevent cross-protocol attacks.
+
+**Protocol version**: Prefix includes "v1" so future versions can change domains.
+-/
+
+/-- Domain separation strings for Ice-Nine protocol. -/
+namespace HashDomain
+  /-- Binding factor computation (FROST H1) -/
+  def bindingFactor : ByteArray := "ice-nine-v1-rho".toUTF8
+  /-- Fiat-Shamir challenge (FROST H2) -/
+  def challenge : ByteArray := "ice-nine-v1-chal".toUTF8
+  /-- Nonce derivation (FROST H3) -/
+  def nonce : ByteArray := "ice-nine-v1-nonce".toUTF8
+  /-- Message pre-hashing (FROST H4) -/
+  def message : ByteArray := "ice-nine-v1-msg".toUTF8
+  /-- Commitment list encoding (FROST H5) -/
+  def commitmentList : ByteArray := "ice-nine-v1-com".toUTF8
+  /-- DKG proof of knowledge (FROST HDKG) -/
+  def dkg : ByteArray := "ice-nine-v1-dkg".toUTF8
+  /-- Party identifier derivation (FROST HID) -/
+  def identifier : ByteArray := "ice-nine-v1-id".toUTF8
+end HashDomain
+
+/-!
+## Identifier Derivation
+
+Party identifiers can be derived from arbitrary data (usernames, emails, etc.)
+using domain-separated hashing. This is FROST's HID function.
+-/
+
+/-- Derive a party identifier from a byte string.
+    Uses the scheme's deriveIdentifier if provided, otherwise returns none.
+
+    **Security**: The derived identifier must be non-zero. Implementations
+    should reject zero values (which could cause issues in Lagrange interpolation). -/
+def Scheme.deriveId (S : Scheme) (data : ByteArray) : Option S.PartyId :=
+  S.deriveIdentifier data
 attribute [instance] Scheme.secretModule Scheme.publicModule
 attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
 attribute [instance] Scheme.normOKDecidable
@@ -308,15 +389,64 @@ After DKG, each party holds a KeyShare. During DKG, parties exchange
 commit and reveal messages to jointly generate the threshold key.
 -/
 
+/-!
+## Zeroization Marker
+
+Types containing sensitive data should implement `Zeroizable` to indicate
+they require secure memory erasure after use. This is a marker typeclass
+for documentation and Rust FFI - Lean cannot directly control memory.
+
+**Implementation Requirements** (for Rust/C FFI):
+1. Use `zeroize` crate or equivalent for secure erasure
+2. Implement `Drop` trait to auto-zeroize on scope exit
+3. Use `mlock()` to prevent swapping secrets to disk
+4. Add memory barriers around zeroization
+-/
+
+/-- Marker typeclass for types requiring secure memory zeroization.
+    Implementations should provide actual zeroization via FFI. -/
+class Zeroizable (α : Type*) where
+  /-- Marker that this type needs zeroization (implementation via FFI) -/
+  needsZeroization : Bool := true
+
+/-- Marker typeclass for types requiring constant-time equality comparison.
+    Equality operations on these types MUST NOT have data-dependent timing.
+
+    **Implementation Requirements** (for Rust/C FFI):
+    1. Use constant-time comparison (e.g., `subtle::ConstantTimeEq` in Rust)
+    2. Never use early-exit equality (like `==` on byte arrays)
+    3. Process all bytes regardless of mismatch position
+    4. Avoid compiler optimizations that reintroduce timing leaks
+
+    **Types requiring constant-time equality**:
+    - Secret keys and shares
+    - Nonces and ephemeral values
+    - Challenges and responses
+    - Any value derived from secrets -/
+class ConstantTimeEq (α : Type*) where
+  /-- Marker that equality comparison must be constant-time -/
+  requiresConstantTime : Bool := true
+
 /-- Wrapper for secret keys to discourage accidental exposure.
     Unwrap with .val only when computation requires it.
 
     **Security Note**: This is a lightweight discipline, not true linear types.
     Code that pattern-matches on SecretBox must explicitly acknowledge it is
-    handling secret material. Never print, log, or serialize SecretBox contents. -/
+    handling secret material. Never print, log, or serialize SecretBox contents.
+
+    **Zeroization**: SecretBox contents MUST be zeroized after use in production.
+    Implement via FFI to zeroize crate in Rust. -/
 structure SecretBox (α : Type*) where
   private mk ::
   val : α
+
+/-- SecretBox requires zeroization. -/
+instance {α : Type*} : Zeroizable (SecretBox α) where
+  needsZeroization := true
+
+/-- SecretBox requires constant-time equality. -/
+instance {α : Type*} : ConstantTimeEq (SecretBox α) where
+  requiresConstantTime := true
 
 /-- A party's credential after DKG completes. Contains the secret share
     sk_i, public share pk_i = A(sk_i), and global key pk = Σ pk_i.
@@ -342,11 +472,41 @@ def KeyShare.secret {S : Scheme} (share : KeyShare S) : S.Secret :=
   share.sk_i.val
 
 
+/-!
+## Proof of Knowledge (FROST Pattern)
+
+Following FROST, DKG includes a proof of knowledge (PoK) to prevent rogue-key attacks.
+Without PoK, an adversary could choose their public key as a function of honest parties'
+keys, potentially biasing the aggregate key.
+
+The PoK is a Schnorr-style proof: given pk_i = A(sk_i), prove knowledge of sk_i.
+1. Prover samples random k, computes R = A(k)
+2. Challenge c = H_dkg(pid, pk_i, R)
+3. Response μ = k + c·sk_i
+4. Verifier checks: A(μ) = R + c·pk_i
+
+**Security**: This prevents rogue-key attacks because the adversary must know sk_i
+to produce a valid proof. They cannot adaptively choose pk_i after seeing others' keys.
+
+Reference: FROST RFC Section 5.1, Komlo & Goldberg "FROST" (2020)
+-/
+
+/-- Proof of knowledge for DKG: proves knowledge of secret corresponding to public key.
+    Schnorr-style: given pk = A(sk), prove knowledge of sk. -/
+structure ProofOfKnowledge (S : Scheme) where
+  /-- Commitment R = A(k) for random nonce k -/
+  commitment : S.Public
+  /-- Response μ = k + c·sk where c = H_dkg(pid, pk, R) -/
+  response   : S.Secret
+
 /-- DKG round 1: party broadcasts commitment to its public share.
-    Hiding pk_i until all parties commit prevents adaptive attacks. -/
+    Hiding pk_i until all parties commit prevents adaptive attacks.
+    Includes proof of knowledge to prevent rogue-key attacks. -/
 structure DkgCommitMsg (S : Scheme) where
   sender   : S.PartyId
   commitPk : S.Commitment
+  /-- Proof of knowledge of secret corresponding to public share -/
+  pok      : ProofOfKnowledge S
 
 
 /-- DKG round 2: party reveals pk_i and opening to verify commitment.

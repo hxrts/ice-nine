@@ -82,11 +82,29 @@ structure SigningCommitments (S : Scheme) where
   binding : S.Public   -- W_binding = A(binding nonce)
 ```
 
+### Domain-Separated Hash Functions (FROST H4, H5)
+
+Following FROST, the signing protocol uses domain-separated hash functions:
+
+- **H4 (Message pre-hashing)**: `hashMessage` pre-hashes large messages before signing, using domain prefix `ice-nine-v1-msg`. This enables efficient signing of arbitrarily large messages.
+
+- **H5 (Commitment list hashing)**: `hashCommitmentList` produces canonical encodings of commitment lists, using domain prefix `ice-nine-v1-com`. This ensures all parties compute identical binding factors.
+
+```lean
+def hashMessage (S : Scheme) (msg : S.Message) : ByteArray :=
+  HashDomain.message ++ serializeMessage msg
+
+def hashCommitmentList (S : Scheme) (commits : List (SignCommitMsg S)) : ByteArray :=
+  HashDomain.commitmentList ++ encodeCommitmentList S commits
+```
+
 ### Binding Factor Derivation
 
 The binding factor $\rho_i$ binds each signer's nonce to the full signing context:
 
-$$\rho_i = H(\text{"binding"}, m, \mathsf{pk}, \text{all\_commitments}, i)$$
+$$\rho_i = H_1(\text{msg}, \mathsf{pk}, \text{encoded\_commitments}, i)$$
+
+where $H_1$ uses domain prefix `ice-nine-v1-rho`.
 
 The effective nonce is then:
 

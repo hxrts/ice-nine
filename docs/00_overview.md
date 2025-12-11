@@ -28,13 +28,13 @@ The implementation uses session types to enforce disciplined handling of secret 
 
 **Algebraic Setting.** Secrets live in a module $\mathcal{S}$ over a scalar ring. Public keys live in a module $\mathcal{P}$. A linear map $A : \mathcal{S} \to \mathcal{P}$ connects them. Commitments bind public values. A hash function produces challenges.
 
-**Key Generation.** Two modes exist. A trusted dealer can sample the master secret and distribute shares. Alternatively parties can run a distributed key generation protocol. Both modes produce additive shares $s_i$ with $\sum_i s_i = s$. The DKG protocol uses the commit-reveal pattern with CRDT-mergeable state. For malicious security, Verifiable Secret Sharing (VSS) allows parties to verify shares against polynomial commitments.
+**Key Generation.** Two modes exist. A trusted dealer can sample the master secret and distribute shares. Alternatively parties can run a distributed key generation protocol. Both modes produce additive shares $s_i$ with $\sum_i s_i = s$. The DKG protocol uses the commit-reveal pattern with CRDT-mergeable state. Following FROST, each party provides a proof of knowledge (PoK) during DKG to prevent rogue-key attacks. For malicious security, Verifiable Secret Sharing (VSS) allows parties to verify shares against polynomial commitments.
 
 **Signing.** Signing proceeds in two rounds with phase-indexed state. In round one each party commits to a nonce. After all commits arrive parties reveal their nonces and compute a shared challenge. In round two each party produces a partial signature. An aggregator combines the partials into the final signature. State at each phase is mergeable.
 
 **Verification.** A verifier checks the aggregated signature against the public key. The check uses the linear map $A$ and the hash function. The signature is valid if the recomputed challenge matches and the norm bound is satisfied.
 
-**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join; a coordination protocol (`Protocol/RefreshCoord.lean`) ensures distributed zero-sum mask generation via commit-reveal. Share repair combines helper deltas via append-based bundles; a coordination protocol (`Protocol/RepairCoord.lean`) handles Lagrange coefficient computation and contribution verification. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
+**Extensions.** The protocol supports several extensions. Complaints identify misbehaving parties. Share refresh updates shares using zero-sum mask functions that merge via join; two refresh modes are available: a coordinator-based protocol (`Protocol/RefreshCoord.lean`) and a fully distributed DKG-based protocol (`Protocol/RefreshDKG.lean`) where parties contribute zero-polynomials without a trusted coordinator. Share repair combines helper deltas via append-based bundles; a coordination protocol (`Protocol/RepairCoord.lean`) handles Lagrange coefficient computation and contribution verification. Rerandomization applies zero-sum masks to shares and nonces with merge-preserving structure.
 
 **Security.** The protocol assumes binding commitments and models the hash as a random oracle. Under these assumptions it achieves threshold unforgeability. Formal proofs reside in the Lean verification modules. Totality theorems ensure that validation functions always return either success or a structured error.
 
@@ -58,7 +58,8 @@ The implementation is organized into focused modules:
 
 **Share Management:**
 - `Protocol/Refresh.lean` - Share refresh with zero-sum masks
-- `Protocol/RefreshCoord.lean` - Distributed refresh coordination
+- `Protocol/RefreshCoord.lean` - Coordinator-based refresh protocol
+- `Protocol/RefreshDKG.lean` - DKG-based distributed refresh (no coordinator)
 - `Protocol/Repair.lean` - Share repair protocol
 - `Protocol/RepairCoord.lean` - Repair coordination with commit-reveal
 - `Protocol/Rerandomize.lean` - Signature rerandomization
@@ -102,9 +103,9 @@ The implementation includes comprehensive security documentation in `Protocol/Co
 
 **Randomness Requirements:** All secret values (shares, nonces, commitment openings) must be sampled from a CSPRNG. Nonce reuse is catastrophic—the session-typed API makes it a compile-time error.
 
-**Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives.
+**Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives. The `ConstantTimeEq` typeclass marks types requiring constant-time equality comparison.
 
-**Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust.
+**Memory Zeroization:** Sensitive values must be securely erased after use. Platform-specific APIs are documented for C, POSIX, Windows, and Rust. The `Zeroizable` typeclass marks types requiring secure erasure.
 
 **Secret Wrappers:** The `SecretBox` type wraps secret shares with a private constructor, discouraging accidental duplication or exposure.
 

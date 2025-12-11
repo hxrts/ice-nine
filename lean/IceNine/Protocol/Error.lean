@@ -84,12 +84,13 @@ class BlameableError (E : Type*) (PartyId : Type*) where
   /-- Get the party responsible for this error, if identifiable -/
   blamedParty : E → Option PartyId
 
-/-- DkgError is blameable for commitMismatch -/
+/-- DkgError is blameable for commitMismatch and invalidProofOfKnowledge -/
 instance {PartyId : Type*} : BlameableError (DkgError PartyId) PartyId where
   blamedParty
     | .lengthMismatch => none
     | .duplicatePids => none
     | .commitMismatch p => some p
+    | .invalidProofOfKnowledge p => some p
 
 /-- Complaint always identifies the accused party -/
 instance {PartyId : Type*} : BlameableError (Complaint PartyId) PartyId where
@@ -194,6 +195,7 @@ def showDkgError {PartyId : Type*} [ToString PartyId] : DkgError PartyId → Str
   | .lengthMismatch => "DKG Error: commits/reveals count mismatch"
   | .duplicatePids => "DKG Error: duplicate party IDs"
   | .commitMismatch p => s!"DKG Error: commitment mismatch for party {p}"
+  | .invalidProofOfKnowledge p => s!"DKG Error: invalid proof of knowledge from party {p}"
 
 /-- Display Complaint -/
 def showComplaint {PartyId : Type*} [ToString PartyId] : Complaint PartyId → String

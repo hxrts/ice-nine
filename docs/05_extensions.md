@@ -75,6 +75,48 @@ def collectBlame (config : ProtocolConfig) (errors : List E) : BlameResult Party
 | VSS | `VSSError` | Fatal/Recoverable | Depends on complaint count |
 | RepairCoord | `ContribCommitResult` | Result | Processing outcome |
 
+## Security Markers
+
+The `Protocol/Core.lean` module provides typeclass markers for implementation security requirements. These markers document FFI implementation obligations.
+
+### Zeroizable Typeclass
+
+Marks types containing secret material that must be securely erased from memory after use.
+
+```lean
+class Zeroizable (α : Type*) where
+  needsZeroization : Bool := true
+
+instance : Zeroizable (SecretBox α)
+```
+
+**Implementation guidance:**
+
+| Platform | API |
+|----------|-----|
+| Rust | `zeroize::Zeroize` trait, `ZeroizeOnDrop` |
+| C | `explicit_bzero()`, `SecureZeroMemory()` |
+| POSIX | `explicit_bzero()` |
+| Windows | `SecureZeroMemory()` |
+
+### ConstantTimeEq Typeclass
+
+Marks types requiring constant-time equality comparison to prevent timing side-channels.
+
+```lean
+class ConstantTimeEq (α : Type*) where
+  requiresConstantTime : Bool := true
+
+instance : ConstantTimeEq (SecretBox α)
+```
+
+**Implementation guidance:**
+
+- Use `subtle::ConstantTimeEq` in Rust
+- Use `CRYPTO_memcmp()` from OpenSSL
+- Never use early-exit comparison loops
+- Avoid branching on secret-dependent values
+
 ## Serialization
 
 The `Protocol/Serialize.lean` module provides type-safe serialization for network transport.
@@ -353,6 +395,53 @@ def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
     let sumOthers := (otherMasks.map (·.mask)).sum
     some (-sumOthers)
   else none
+```
+
+### DKG-Based Refresh Protocol
+
+The `Protocol/RefreshDKG.lean` module provides a fully distributed refresh protocol without a trusted coordinator. Each party contributes a zero-polynomial (polynomial with constant term 0), ensuring the master secret remains unchanged while all shares are updated.
+
+**Three-Round Protocol:**
+
+1. **Round 1 (Commit)**: Each party samples a random polynomial $f_i(x)$ with $f_i(0) = 0$ and broadcasts a commitment to its polynomial coefficients.
+
+2. **Round 2 (Share)**: Each party evaluates its polynomial at all other parties' identifiers and sends the shares privately.
+
+3. **Round 3 (Verify & Apply)**: Each party verifies received shares against commitments and computes its refresh delta as the sum of all received shares.
+
+```lean
+structure RefreshLocalState (S : Scheme) where
+  pid : S.PartyId
+  coefficients : List S.Secret  -- [0, a₁, a₂, ..., a_{t-1}]
+  opening : S.Opening
+
+structure RefreshDelta (S : Scheme) where
+  pid : S.PartyId
+  delta : S.Secret  -- sum of all f_j(pid)
+
+def refreshRound1 (S : Scheme) (pid : S.PartyId)
+    (randomCoeffs : List S.Secret) (opening : S.Opening)
+    : RefreshLocalState S × RefreshCommitMsg S
+
+def refreshRound3 (S : Scheme)
+    (st : RefreshLocalState S)
+    (commits : List (RefreshCommitMsg S))
+    (shares : List (RefreshShareMsg S))
+    : Except (RefreshDKGError S.PartyId) (RefreshDelta S)
+```
+
+**Security Properties:**
+
+- **No trusted coordinator**: Unlike `RefreshCoord.lean`, no single party learns all masks
+- **Verifiable**: Polynomial commitments allow verification of received shares
+- **Zero-sum by construction**: Since each $f_i(0) = 0$, the sum of deltas preserves the master secret:
+  $$\sum_j \delta_j = \sum_j \sum_i f_i(j) = \sum_i \sum_j f_i(j) = \sum_i f_i(0) \cdot n = 0$$
+
+**Verification:**
+
+```lean
+def verifyZeroSum (S : Scheme) (deltas : List (RefreshDelta S)) : Bool :=
+  (deltas.map (·.delta)).sum = 0
 ```
 
 ### Public Key Invariance Theorem
