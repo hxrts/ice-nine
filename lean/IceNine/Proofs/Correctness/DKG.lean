@@ -55,29 +55,32 @@ lemma checkPair_ok_pred
 
 /-- Helper: forM on zipped list returning ok implies Forall₂.
     Induction on the lists, using checkPair_ok_pred at each step.
-    Note: When list lengths differ, zip truncates silently. The mismatch cases
-    are unreachable via checkPairs which validates lengths first. -/
+    Requires equal lengths since zip truncates silently on mismatch. -/
 lemma forM_zip_ok_forall2
   (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Commitment] [DecidableEq S.Public]
   (commits : List (DkgCommitMsg S))
   (reveals : List (DkgRevealMsg S))
+  (hlen : commits.length = reveals.length)
   (h : (List.zip commits reveals).forM (fun (c, r) => checkPair S c r) = Except.ok ()) :
   List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk) commits reveals := by
   induction commits generalizing reveals with
   | nil =>
     match reveals with
     | [] => exact List.Forall₂.nil
-    | _::_ => simp [List.zip] at h
+    | _::_ => simp at hlen
   | cons c cs ih =>
     match reveals with
-    | [] => simp [List.zip] at h
+    | [] => simp at hlen
     | r::rs =>
-      simp only [List.zip_cons_cons] at h
+      simp only [List.zip_cons_cons, List.forM_cons] at h
       cases hcp : checkPair S c r with
-      | error e => simp [hcp] at h
+      | error e =>
+        -- checkPair returned error, but forM must return ok - contradiction
+        simp only [hcp] at h
       | ok _ =>
-        simp [hcp] at h
-        exact List.Forall₂.cons (checkPair_ok_pred S c r hcp) (ih rs h)
+        simp only [hcp, pure_bind] at h
+        have hlen' : cs.length = rs.length := by simp at hlen; exact hlen
+        exact List.Forall₂.cons (checkPair_ok_pred S c r hcp) (ih rs hlen' h)
 
 /-- checkPairs success → Forall₂ validity on pairs.
     Each commit/reveal pair has matching IDs and correct opening. -/
@@ -89,8 +92,9 @@ lemma checkPairs_ok_forall2
   List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk) commits reveals := by
   unfold checkPairs at h
   split_ifs at h with hlen
-  · contradiction
-  · exact forM_zip_ok_forall2 S commits reveals h
+  · simp at h
+  · have hlen' : commits.length = reveals.length := by push_neg at hlen; exact hlen
+    exact forM_zip_ok_forall2 S commits reveals hlen' h
 
 /-- Checked aggregation is total: always Ok or Error. -/
 lemma dkgAggregateChecked_total
@@ -148,10 +152,7 @@ lemma dkgAggregateWithComplaints_correct
   · -- Length matched and no complaints: pk is explicitly set to sum
     simp only [Except.ok.injEq] at h
     exact h.symm
-  · -- Complaints exist: returns error, contradicts h
-    simp at h
-  · -- Length mismatch: returns error, contradicts h
-    simp at h
+  all_goals simp at h
 
 /-!
 ## Dealer Properties

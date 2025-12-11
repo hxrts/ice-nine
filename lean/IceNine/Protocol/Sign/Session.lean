@@ -84,28 +84,6 @@ and carry the data accumulated up to that point. Transitions consume the
 current state and produce the next state.
 -/
 
-/-- Initial state: party has key share and fresh dual nonces, ready to commit. -/
-structure ReadyToCommit (S : Scheme) where
-  /-- Party's long-term key share -/
-  keyShare : KeyShare S
-  /-- Fresh dual nonces (will be consumed on commit) -/
-  nonce : FreshNonce S
-  /-- Message to sign -/
-  message : S.Message
-  /-- Session identifier -/
-  session : Nat
-  /-- Session tracker to prevent reuse of session IDs for this party -/
-  tracker : SessionTracker S
-  /-- Nonce registry to detect commitment reuse across sessions -/
-  nonceReg : NonceRegistry S
-
-/-- State bundle carrying updated trackers after commit. -/
-structure CommitResult (S : Scheme) where
-  committed : Committed S
-  msg : SignCommitMsg S
-  tracker : SessionTracker S
-  nonceReg : NonceRegistry S
-
 /-- After committing: nonces are consumed, commitments are published. -/
 structure Committed (S : Scheme) where
   /-- Party's key share -/
@@ -128,6 +106,32 @@ structure Committed (S : Scheme) where
   commitment : S.Commitment
   /-- Proof the nonces were consumed -/
   nonceConsumed : NonceConsumed S
+
+/-- Initial state: party has key share and fresh dual nonces, ready to commit. -/
+structure ReadyToCommit (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment] where
+  /-- Party's long-term key share -/
+  keyShare : KeyShare S
+  /-- Fresh dual nonces (will be consumed on commit) -/
+  nonce : FreshNonce S
+  /-- Message to sign -/
+  message : S.Message
+  /-- Session identifier -/
+  session : Nat
+  /-- Session tracker to prevent reuse of session IDs for this party -/
+  tracker : SessionTracker S
+  /-- Nonce registry to detect commitment reuse across sessions -/
+  nonceReg : NonceRegistry S
+
+/-- State bundle carrying updated trackers after commit. -/
+structure CommitResult (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment] where
+  committed : Committed S
+  msg : SignCommitMsg S
+  tracker : SessionTracker S
+  nonceReg : NonceRegistry S
 
 /-- After revealing: nonce openings revealed, ready to compute partial sig. -/
 structure Revealed (S : Scheme) where
@@ -194,7 +198,10 @@ The type signatures enforce the linear protocol flow.
     along with a hash commitment to the hiding nonce for equivocation prevention.
 
     Enforces session freshness for the signer via `SessionTracker`. -/
-def commit (S : Scheme) (ready : ReadyToCommit S)
+def commit (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ready : ReadyToCommit S)
     : Except (SignError S.PartyId) (CommitResult S) :=
   if ready.tracker.isFresh ready.session then
     -- Extract nonce data (consumes the FreshNonce)
@@ -237,7 +244,9 @@ def commit (S : Scheme) (ready : ReadyToCommit S)
 
     **FROST Protocol**: The binding factor ρ is computed from the message, public key,
     and all participants' commitments. This binds the effective nonce to the signing context. -/
-def reveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+def reveal (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (committed : Committed S)
     (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
     (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
@@ -268,7 +277,10 @@ def reveal (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
     **FROST Protocol**: The effective nonce incorporates the binding factor,
     which ties this signer's contribution to the specific signing context. -/
-def sign (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S)
+def sign (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (revealed : Revealed S)
     (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
     : Sum (Signed S × SessionTracker S × NonceRegistry S) (Revealed S × String) :=
   -- Derive effective nonce: y_eff = hiding + ρ·binding
@@ -326,7 +338,9 @@ preventing any reuse of the old nonce.
 
     **Alternative Design**: If independent session IDs per retry are needed (e.g., for
     independent parallel attempts), use `retryWithNewSession` instead. -/
-structure RetryContext (S : Scheme) where
+structure RetryContext (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment] where
   /-- Current attempt number (1-indexed) -/
   attempt : Nat
   /-- Maximum allowed attempts -/
@@ -345,7 +359,10 @@ structure RetryContext (S : Scheme) where
 /-- Create retry context from revealed state after norm failure.
     The revealed state is consumed—it cannot be used again.
     Requires tracker and nonceReg to be passed through from the commit phase. -/
-def mkRetryContext (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S) (maxAttempts : Nat)
+def mkRetryContext (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (revealed : Revealed S) (maxAttempts : Nat)
     (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
     : RetryContext S :=
   { attempt := 1
@@ -358,7 +375,10 @@ def mkRetryContext (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed :
 
 /-- Advance retry context for next attempt.
     Returns None if max attempts exceeded. -/
-def advanceRetry {S : Scheme} (ctx : RetryContext S) : Option (RetryContext S) :=
+def advanceRetry {S : Scheme}
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ctx : RetryContext S) : Option (RetryContext S) :=
   if ctx.attempt < ctx.maxAttempts then
     some { ctx with attempt := ctx.attempt + 1 }
   else
@@ -369,7 +389,10 @@ def advanceRetry {S : Scheme} (ctx : RetryContext S) : Option (RetryContext S) :
 
     **Note**: Uses same session ID for threshold coordination. All parties in the
     signing group should retry together with the same base session ID. -/
-def retryWithFreshNonce (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshNonce S)
+def retryWithFreshNonce (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ctx : RetryContext S) (freshNonce : FreshNonce S)
     : ReadyToCommit S :=
   { keyShare := ctx.keyShare
     nonce := freshNonce
@@ -383,7 +406,10 @@ def retryWithFreshNonce (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshN
 
     **Warning**: New session requires coordination with other parties to ensure
     they also use the new session ID. -/
-def retryWithNewSession (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshNonce S) (newSession : Nat)
+def retryWithNewSession (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ctx : RetryContext S) (freshNonce : FreshNonce S) (newSession : Nat)
     : ReadyToCommit S :=
   { keyShare := ctx.keyShare
     nonce := freshNonce
@@ -393,7 +419,10 @@ def retryWithNewSession (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshN
     nonceReg := ctx.nonceReg }
 
 /-- Create aborted state when max retries exceeded. -/
-def abort (S : Scheme) (ctx : RetryContext S) : Aborted S :=
+def abort (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ctx : RetryContext S) : Aborted S :=
   { session := ctx.session
     reason := s!"max retries ({ctx.maxAttempts}) exceeded"
     attempts := ctx.attempt }
@@ -407,18 +436,23 @@ Each step consumes the previous state.
 
 /-- Result of a signing attempt. -/
 inductive SignResult (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
   | success (done : Done S)
   | needsRetry (ctx : RetryContext S)
   | aborted (aborted : Aborted S)
 
 /-- Run signing from Revealed state through to completion or retry.
     Requires tracker and nonceReg for creating retry context. -/
-def trySign (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] (revealed : Revealed S)
+def trySign (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (revealed : Revealed S)
     (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
     (maxAttempts : Nat := 16)
     : SignResult S :=
-  match sign S revealed with
-  | Sum.inl signed =>
+  match sign S revealed tracker nonceReg with
+  | Sum.inl (signed, _, _) =>
       .success (finalize S signed)
   | Sum.inr (revealed', _) =>
       let ctx := mkRetryContext S revealed' maxAttempts tracker nonceReg
@@ -437,7 +471,9 @@ Create the initial session state from key share and sampled randomness.
     Caller must provide freshly sampled hiding and binding nonces.
 
     **CRITICAL**: Both nonces must be fresh from CSPRNG. -/
-def initSession (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+def initSession (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (keyShare : KeyShare S)
     (message : S.Message)
     (session : Nat)
@@ -604,7 +640,9 @@ Use standard two-round signing when these assumptions don't hold.
     Use standard two-round signing when these assumptions don't hold.
 
     Returns None if norm check fails (caller should retry with fresh nonce). -/
-def signFast (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+def signFast (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     [DecidableEq S.Secret]
     (keyShare : KeyShare S)
     (precomputed : PrecomputedNonce S)
@@ -625,7 +663,9 @@ def signFast (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
 /-- Initialize a fast-path signing session from precomputed nonce.
     Use when commitments have been pre-shared and you want to skip commit phase. -/
-def initFastSession (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
+def initFastSession (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
     (keyShare : KeyShare S)
     (message : S.Message)
     (session : Nat)

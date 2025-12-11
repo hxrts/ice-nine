@@ -15,6 +15,7 @@ import Mathlib
 namespace IceNine.Protocol
 
 open List
+open IceNine.Protocol.Serialize
 
 /-!
 ## Lagrange Interpolation

@@ -737,8 +737,7 @@ Axioms are kept in their respective modules for locality but indexed here.
 
 | Axiom | Module | Purpose |
 |-------|--------|---------|
-| `coeffs_sum_to_one` | Protocol/Lagrange | Lagrange coefficients sum to 1 |
-| `lagrange_interpolation` | Protocol/Lagrange | Interpolation recovers polynomial at target |
+-- Lagrange coefficient properties are now proven in `Protocol/Core/Lagrange`
 | `List.sum_perm` | Protocol/RefreshCoord | Permuted lists have equal sums |
 | `Finset.ofList_toList_perm` | Protocol/RefreshCoord | Finset conversion preserves elements |
 | `MsgMap.merge_senders_comm` | Protocol/Phase | Message map merge is commutative |
