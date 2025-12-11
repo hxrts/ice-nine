@@ -68,6 +68,42 @@ The map $A$ connects private shares to their public counterparts. If $s_i$ is a 
 
 Linearity ensures that aggregation in $\mathcal{S}$ corresponds to aggregation in $\mathcal{P}$. The sum of public shares equals the image of the sum of secret shares. This property underlies the threshold aggregation.
 
+### Design Choice: No Explicit Error Term
+
+In Dilithium, the public key includes an error term: $t = As_1 + s_2$ where $s_2$ is small. This makes $t$ indistinguishable from random under MLWE. During verification, Dilithium uses a `HighBits()` function to absorb the error term $c \cdot s_2$.
+
+We deliberately keep the abstract map $A : \mathcal{S} \to \mathcal{P}$ without an explicit error term for these reasons:
+
+1. **Abstraction boundary.** The error term is a key generation detail. Once the public key $t$ is computed, signing and verification only need the linear relationship $A(z) = A(y) + c \cdot A(s_1)$.
+
+2. **HighBits is an implementation detail.** The truncation that absorbs $c \cdot s_2$ can be encoded in the concrete instantiation:
+   - The `hash` function can hash `HighBits(w)` rather than full $w$
+   - The `normOK` predicate can include the HighBits consistency check
+
+3. **Clean protocol logic.** The signing and verification math stays clean:
+   $$z = y + c \cdot s$$
+   $$A(z) - c \cdot \mathsf{pk} = A(y) = w$$
+   The error handling lives in the concrete instantiation, not the abstract protocol.
+
+4. **Instantiation flexibility.** Different lattice schemes handle errors differently (Dilithium vs Falcon vs others). The abstract Scheme lets each instantiation encode its approach appropriately.
+
+For a Dilithium instantiation, the Scheme record would be configured as:
+
+```lean
+def dilithiumScheme (params : DilithiumParams) : Scheme :=
+  { Secret := PolyVec params.l      -- s₁ ∈ R_q^l
+  , Public := PolyVec params.k      -- t = As₁ + s₂ (precomputed at keygen)
+  , A := dilithiumKeyMap            -- maps response z to Az
+  , normOK := fun z =>
+      dilithiumNormCheck z params ∧
+      highBitsConsistent z params   -- both quality checks
+  , hash := fun m pk ... w =>
+      hashHighBits (highBits w params.gamma2) m  -- hash truncated w
+  , ... }
+```
+
+The error term $s_2$ is baked into the public key during key generation. The `normOK` predicate enforces both the coefficient bound $\|z\|_\infty < \gamma_1 - \beta$ and the HighBits consistency check. The `hash` function operates on truncated values as Dilithium requires.
+
 ## Challenges
 
 The challenge space is a separate type. In typical instantiations challenges are scalars from $R$ or a related ring. Challenges act on secrets and publics via scalar multiplication.

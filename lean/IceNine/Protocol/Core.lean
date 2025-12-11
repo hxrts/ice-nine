@@ -98,8 +98,46 @@ structure Scheme where
   [challengeSMulSecret : SMul Challenge Secret]
   [challengeSMulPublic : SMul Challenge Public]
 
-  -- The one-way linear map: pk = A(sk). Security relies on
-  -- hardness of inverting A (SIS/LWE in lattice setting).
+  /-
+  ## The Linear Map A
+
+  The one-way linear map: pk = A(sk). Security relies on hardness of
+  inverting A (SIS/LWE in lattice setting).
+
+  ### Design Choice: Why No Explicit Error Term
+
+  In Dilithium, the public key is t = As₁ + s₂ where s₂ is a small error term.
+  This error term serves a specific purpose: making the public key
+  indistinguishable from random under MLWE.
+
+  We deliberately keep the abstract map A : S → P without an explicit error
+  term for these reasons:
+
+  1. **Abstraction boundary**: The error term is a key generation detail.
+     Once the public key t is computed, signing and verification only need
+     the linear relationship A(z) = A(y) + c·A(sk).
+
+  2. **HighBits is an implementation detail**: Dilithium uses HighBits() to
+     absorb c·s₂ during verification. This truncation can be encoded in:
+     - The `hash` function (hash truncated w, not full w)
+     - The `normOK` predicate (include HighBits consistency check)
+
+  3. **Clean protocol logic**: The signing/verification math stays clean:
+        z = y + c·sk
+        A(z) - c·pk = A(y) = w
+     The error handling lives in the concrete instantiation, not the abstract protocol.
+
+  4. **Instantiation flexibility**: Different lattice schemes handle errors
+     differently (Dilithium vs Falcon vs others). The abstract Scheme lets
+     each instantiation encode its approach appropriately.
+
+  For a Dilithium instantiation, define:
+  - `A` maps the signing key s₁ (the public key t = As₁ + s₂ is precomputed)
+  - `normOK` checks both ||z||∞ < γ₁ - β AND HighBits consistency
+  - `hash` operates on HighBits(w) rather than full w
+
+  Reference: Lyubashevsky et al., "CRYSTALS-Dilithium", TCHES 2018.
+  -/
   A : Secret →ₗ[Scalar] Public
 
   /-
