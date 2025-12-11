@@ -54,6 +54,64 @@ import Mathlib
 namespace IceNine.Protocol.PhaseIndexed
 
 open IceNine.Protocol
+open IceNine.Protocol.Sign
+
+/-!
+## Per-Phase Data Structures
+
+Each phase has different data available. Structures defined before
+PhaseState to allow forward reference in the inductive type.
+-/
+
+/-- Data available in commit phase.
+
+    NOTE: Repr not derived because DkgCommitMsg contains scheme-dependent types. -/
+structure CommitPhaseData (S : Scheme) where
+  /-- Commits received so far -/
+  commits : List (DkgCommitMsg S)
+  /-- Expected number of parties -/
+  expectedParties : Nat
+
+/-- Data available in reveal phase (includes all commit data).
+
+    NOTE: Repr not derived because message types contain scheme-dependent types. -/
+structure RevealPhaseData (S : Scheme) where
+  /-- All commits (now complete) -/
+  commits : List (DkgCommitMsg S)
+  /-- Reveals received so far -/
+  reveals : List (DkgRevealMsg S)
+  /-- Expected parties count -/
+  expectedParties : Nat
+  /-- Proof that we have enough commits -/
+  commitsComplete : commits.length = expectedParties
+
+/-- Data available in share phase (includes all reveal data).
+
+    NOTE: Repr not derived because message types contain scheme-dependent types. -/
+structure SharePhaseData (S : Scheme) where
+  /-- All commits -/
+  commits : List (DkgCommitMsg S)
+  /-- All reveals (now complete) -/
+  reveals : List (DkgRevealMsg S)
+  /-- Signature shares received so far -/
+  shares : List (SignShareMsg S)
+  /-- Active signers -/
+  activeSigners : Finset S.PartyId
+  /-- Message being signed -/
+  message : S.Message
+  /-- Threshold for completion -/
+  threshold : Nat
+
+/-- Data available in done phase (final signature).
+
+    NOTE: Repr not derived because Signature and scheme types don't have Repr. -/
+structure DonePhaseData (S : Scheme) where
+  /-- Final aggregated signature -/
+  signature : Sign.Signature S
+  /-- Public key used -/
+  publicKey : S.Public
+  /-- Message signed -/
+  message : S.Message
 
 /-!
 ## Phase-Indexed State
@@ -68,52 +126,6 @@ inductive PhaseState (S : Scheme) : Phase → Type where
   | reveal  : RevealPhaseData S → PhaseState S .reveal
   | shares  : SharePhaseData S → PhaseState S .shares
   | done    : DonePhaseData S → PhaseState S .done
-
-/-- Data available in commit phase. -/
-structure CommitPhaseData (S : Scheme) where
-  /-- Commits received so far -/
-  commits : List (DkgCommitMsg S)
-  /-- Expected number of parties -/
-  expectedParties : Nat
-deriving Repr
-
-/-- Data available in reveal phase (includes all commit data). -/
-structure RevealPhaseData (S : Scheme) where
-  /-- All commits (now complete) -/
-  commits : List (DkgCommitMsg S)
-  /-- Reveals received so far -/
-  reveals : List (DkgRevealMsg S)
-  /-- Proof that we have enough commits -/
-  commitsComplete : commits.length = expectedParties
-  /-- Expected parties count -/
-  expectedParties : Nat
-deriving Repr
-
-/-- Data available in share phase (includes all reveal data). -/
-structure SharePhaseData (S : Scheme) where
-  /-- All commits -/
-  commits : List (DkgCommitMsg S)
-  /-- All reveals (now complete) -/
-  reveals : List (DkgRevealMsg S)
-  /-- Signature shares received so far -/
-  shares : List (SignShareMsg S)
-  /-- Active signers -/
-  activeSigners : Finset S.PartyId
-  /-- Message being signed -/
-  message : S.Message
-  /-- Threshold for completion -/
-  threshold : Nat
-deriving Repr
-
-/-- Data available in done phase (final signature). -/
-structure DonePhaseData (S : Scheme) where
-  /-- Final aggregated signature -/
-  signature : Sign.Signature S
-  /-- Public key used -/
-  publicKey : S.Public
-  /-- Message signed -/
-  message : S.Message
-deriving Repr
 
 /-!
 ## Phase Transition Functions

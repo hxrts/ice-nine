@@ -29,10 +29,10 @@ Add commitment messages. Uses append (⊔) for monotonic update.
 /-- Add a commit message to commit phase state.
     Monotone: st ≤ stepCommit(st, msg). -/
 def stepCommit
-  (S : Scheme)
+  (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   (msg : DkgCommitMsg S)
   (st  : CommitState S) : CommitState S :=
-{ commits := st.commits ⊔ [msg] }
+st.addCommit msg
 
 /-!
 ## Reveal Phase Handler
@@ -43,10 +43,10 @@ Add reveal messages. Commits are preserved, reveals are appended.
 /-- Add a reveal message to reveal phase state.
     Monotone: st ≤ stepReveal(st, msg). -/
 def stepReveal
-  (S : Scheme)
+  (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
   (msg : DkgRevealMsg S)
   (st  : RevealState S) : RevealState S :=
-{ commits := st.commits, reveals := st.reveals ⊔ [msg] }
+st.addReveal msg
 
 /-!
 ## Share Phase Handler
@@ -57,15 +57,11 @@ Add signature shares. Active set and threshold context preserved.
 /-- Add a signature share to share phase state.
     Monotone: st ≤ stepShare(st, msg). -/
 def stepShare
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
   (msg : SignShareMsg S)
   (st  : ShareWithCtx S) : ShareWithCtx S :=
--- Append share to list, preserve everything else
-let st' : ShareState S := { commits := st.state.commits,
-                            reveals := st.state.reveals,
-                            shares  := st.state.shares ⊔ [msg],
-                            active  := st.state.active }
-⟨st', st.ctx⟩
+-- Add share using MsgMap insertion, preserve everything else
+⟨st.state.addShare msg, st.ctx⟩
 
 /-!
 ## Finalization
@@ -75,16 +71,18 @@ Attempt to produce final signature when threshold of shares collected.
 
 /-- Try to aggregate into final signature.
     Succeeds only if all shares are from declared active set. -/
-def tryAggregate
-  (S : Scheme) [DecidableEq S.PartyId]
+noncomputable def tryAggregate
+  (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
   (swc : ShareWithCtx S)
   (challenge : S.Challenge)
   : Option (DoneState S) :=
   let ctx := swc.ctx
   let st  := swc.state
+  let shareList := st.shareList  -- convert MsgMap to List
+  let commitList := st.commitList  -- convert MsgMap to List
   -- Check all shares come from active signers
-  if hfrom : ∀ sh ∈ st.shares, sh.sender ∈ ctx.active then
-    match aggregateSignatureWithCtx S challenge ctx (st.commits.map (·.commitW)) st.shares with
+  if hfrom : ∀ sh ∈ shareList, sh.sender ∈ ctx.active then
+    match aggregateSignatureWithCtx S challenge ctx (commitList.map (·.commitPk)) shareList with
     | some sig => some ⟨sig⟩
     | none => none
   else none

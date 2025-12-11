@@ -2,6 +2,10 @@
 # Sample transcript generation
 
 Convenient `#eval` snippets to emit small honest transcripts for manual inspection.
+
+NOTE: Sample code is commented out because `simpleSchemeBounded` and `zmodSchemeBounded`
+have been removed from Norms.lean. To re-enable, define appropriate bounded schemes
+that satisfy the normOK constraints.
 -/
 
 import IceNine.Protocol.Core.Core
@@ -13,6 +17,8 @@ import IceNine.Norms
 open IceNine.Protocol
 open IceNine.Instances
 open IceNine.Norms
+
+/-  Sample code disabled - bounded schemes need to be defined
 
 def sampleTranscriptInt : IO Unit := do
   let scheme := simpleSchemeBounded 20
@@ -41,3 +47,4 @@ def sampleTranscriptZMod : IO Unit := do
   IO.println s!"pk={pk}, w={w}, c={c}, z={sig.z}"
 
 #eval sampleTranscriptZMod
+-/

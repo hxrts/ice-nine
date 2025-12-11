@@ -30,11 +30,13 @@ with a ThresholdCtx that tracks the active set and proves t ≤ |active|.
 This coupling ensures we can always aggregate validly after merge.
 -/
 
+variable (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+
 /-- Share phase state paired with threshold context.
     Invariant: ctx.card_ge proves ctx.t ≤ |ctx.active|.
 
     NOTE: Repr is not auto-derived because ThresholdCtx contains proofs. -/
-structure ShareWithCtx (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] where
+structure ShareWithCtx where
   state : ShareState S    -- accumulated commits/reveals/shares
   ctx   : ThresholdCtx S  -- threshold + active set + proof
 
@@ -57,8 +59,7 @@ Three approaches to merging threshold contexts:
 
 /-- Conservative merge: fall back to n-of-n (all-parties).
     Safe when Field is unavailable or undesired. -/
-def mergeShareWithCtxOnes (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
-  (a b : ShareWithCtx S) : ShareWithCtx S :=
+def mergeShareWithCtxOnes (a b : ShareWithCtx S) : ShareWithCtx S :=
   -- Union the active sets from both replicas
   let mergedActive : Finset S.PartyId := a.state.active ∪ b.state.active
   -- Merge state via semilattice join (list append)
@@ -70,7 +71,7 @@ def mergeShareWithCtxOnes (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Dec
   }
   -- n-of-n: threshold = full set size
   let t := mergedActive.card
-  have hcard : t ≤ mergedActive.card := by simp
+  have hcard : t ≤ mergedActive.card := Nat.le_refl _
   let ctx : ThresholdCtx S := {
     active := mergedActive,
     t := t,
@@ -81,10 +82,11 @@ def mergeShareWithCtxOnes (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Dec
   }
   { state := state, ctx := ctx }
 
+variable [Field S.Scalar] [DecidableEq S.Scalar]
+
 /-- Full merge with Lagrange coefficient recomputation.
     Preserves t-of-n semantics after merge. -/
 noncomputable def mergeShareWithCtx
-  (S : Scheme) [Field S.Scalar] [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
   (pidToScalar : S.PartyId → S.Scalar)
   (a b : ShareWithCtx S) : ShareWithCtx S :=
   -- Union active sets
@@ -117,25 +119,15 @@ noncomputable def mergeShareWithCtx
     mode := SignMode.threshold,
     strategy := CoeffStrategy.lagrange coeffs,
     card_ge := hcard,
-    strategy_ok := by
-      simp only [strategyOK]
-      constructor
-      · rw [hlen]; simp
-      · exact hpid
+    strategy_ok := ⟨hlen, hpid⟩
   }
   { state := state, ctx := ctx }
 
 /-- Auto-merge: recompute coeffs if Field available, else fall back.
     Pass `some inferInstance` for field-backed schemes, `none` for lattice. -/
 noncomputable def mergeShareWithCtxAuto
-  (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [DecidableEq S.Scalar]
-  (fieldInst : Option (Field S.Scalar))
   (pidToScalar : S.PartyId → S.Scalar)
   (a b : ShareWithCtx S) : ShareWithCtx S :=
-  match fieldInst with
-  | none      => mergeShareWithCtxOnes S a b
-  | some inst =>
-      -- Install field instance and use full merge
-      @mergeShareWithCtx S inst _ _ _ _ pidToScalar a b
+  mergeShareWithCtx S pidToScalar a b
 
 end IceNine.Protocol
