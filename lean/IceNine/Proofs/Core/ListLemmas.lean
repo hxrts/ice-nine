@@ -24,17 +24,17 @@ Core lemma: Σ(a_i + b_i) = Σa_i + Σb_i (when lengths match).
     Handles the general case where list lengths may differ. -/
 theorem sum_zipWith_add {α : Type*} [AddCommMonoid α] :
     ∀ (as bs : List α),
-      (zipWith (· + ·) as bs).sum = (as.take bs.length).sum + (bs.take as.length).sum
+      (zipWith (· + ·) as bs).sum = (List.take bs.length as).sum + (List.take as.length bs).sum
   | [], _ => by simp
   | _, [] => by simp
   | a::as, b::bs => by
-      simp only [zipWith_cons_cons, sum_cons, take_succ_cons, length_cons]
+      simp only [zipWith_cons_cons, sum_cons, List.take_succ_cons, length_cons]
       rw [sum_zipWith_add as bs]
       abel
 
 /-- When lists have equal length, take is identity. -/
 theorem take_eq_self_of_length_eq {α : Type*} (as bs : List α) (h : as.length = bs.length) :
-    as.take bs.length = as := by
+    List.take bs.length as = as := by
   rw [← h]
   simp only [List.take_length]
 
@@ -62,12 +62,12 @@ lemma sum_zipWith_add_mul (c : Int) (ys sks : List Int) (hlen : ys.length = sks.
   | nil =>
     match sks with
     | [] => simp
-    | _::_ => simp_all
+    | _::_ => simp only [length_nil, length_cons] at hlen; omega
   | cons y ys ih =>
     match sks with
-    | [] => simp_all
+    | [] => simp only [length_nil, length_cons] at hlen; omega
     | s::sks' =>
-      simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
+      simp only [length_cons, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons]
       rw [ih sks' hlen]
       ring
@@ -85,12 +85,12 @@ lemma sum_zipWith_add_smul
   | nil =>
     match sks with
     | [] => simp
-    | _::_ => simp_all
+    | _::_ => simp only [length_nil, length_cons] at hlen; omega
   | cons y ys ih =>
     match sks with
-    | [] => simp_all
+    | [] => simp only [length_nil, length_cons] at hlen; omega
     | s::sks' =>
-      simp only [length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
+      simp only [length_cons, add_left_inj] at hlen
       simp only [zipWith_cons_cons, sum_cons, smul_add]
       rw [ih sks' hlen]
       abel

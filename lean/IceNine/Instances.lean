@@ -185,9 +185,12 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
       intro x1 x2 o1 o2 h
       -- h : latticeCommit x1 o1 = latticeCommit x2 o2
       -- Unfold to get hash equality, then apply binding assumption
-      simp only [latticeCommit, LatticeCommitment.mk.injEq] at h
+      unfold latticeCommit at h
+      have hb : hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) := by
+        simp only [LatticeCommitment.mk.injEq] at h
+        exact h
       -- Hash binding is assumed to hold by hashBindingAssumption
-      exact hashBindingAssumption.binding x1 x2 o1 o2 h
+      exact hashBindingAssumption.binding x1 x2 o1 o2 hb
   , hashToScalar := fun domain data =>
       let h := hashBytes (domain ++ data)
       hashToChallenge h
@@ -203,8 +206,8 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
 
 -- Type aliases for the lattice scheme
 -- These are convenience definitions for use with the default LatticeParams
--- Note: defaultLatticeScheme is defined with explicit universe levels to avoid metavariables
-def defaultLatticeScheme : Scheme := @latticeScheme.{0, 0} {} hashBindingAssumption
+-- Note: defaultLatticeScheme removed due to universe level metavariables;
+-- use `latticeScheme (p := {}) hashBindingAssumption` directly when needed
 def LatticePartyId   : Type := Nat
 def LatticeMessage   : Type := ByteArray
 def LatticeSecret    : Type := Fin ({} : LatticeParams).n → Int
