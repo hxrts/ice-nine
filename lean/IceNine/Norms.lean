@@ -21,11 +21,15 @@ via rejection sampling produces signatures independent of the secret.
 -/
 
 import IceNine.Instances
+import IceNine.Protocol.Core.NormBounded
+import IceNine.Protocol.Core.ThresholdConfig
 import Mathlib
 
 namespace IceNine.Norms
 
 open IceNine.Instances
+open IceNine.Protocol.NormBounded
+open IceNine.Protocol.ThresholdConfig
 
 /-!
 ## Scalar Norm Bounds
@@ -359,5 +363,111 @@ lemma response_norm_bound (y s : List Int) (c : Int) (γ₁ η τ : Nat)
     _ ≤ γ₁ + τ * η := by
         apply Nat.add_le_add_left
         exact Nat.mul_le_mul_left _ hs
+
+/-!
+## NormBounded Integration
+
+Connect existing norm functions to the NormBounded typeclass.
+-/
+
+/-- Verify that our vecInfNorm matches the NormBounded instance for List Int -/
+theorem vecInfNorm_eq_norm (v : List Int) : vecInfNorm v = norm v := rfl
+
+/-!
+## Threshold Extensions for DilithiumParams
+
+Extensions to DilithiumParams for local rejection sampling configuration.
+-/
+
+/-- Convert DilithiumParams to a ThresholdConfig for n parties.
+
+    Uses the global bound (γ₁ - β) as globalBound.
+    Local bound is derived as globalBound / maxSigners.
+
+    **Example**:
+    ```lean
+    let params := dilithium2
+    let cfg := params.toThresholdConfig 5  -- 5-party scheme
+    -- cfg.globalBound = 130994
+    -- cfg.threshold = 4 (2/3+1 of 5)
+    -- cfg.localBound = 130994 / 4 = 32748
+    ``` -/
+def DilithiumParams.toThresholdConfig (p : DilithiumParams) (n : Nat)
+    (hn : n > 0 := by omega) : ThresholdConfig :=
+  let globalBound := p.zBound.natAbs  -- Convert Int to Nat (always positive for valid params)
+  ThresholdConfig.mk n globalBound
+
+/-- Get the local rejection bound for a given number of signers.
+    This is the per-signer bound B_local such that T · B_local ≤ B_global. -/
+def DilithiumParams.localBound (p : DilithiumParams) (maxSigners : Nat)
+    (hpos : maxSigners > 0 := by omega) : Nat :=
+  p.zBound.natAbs / maxSigners
+
+/-- Expected local rejection attempts given local bound.
+    Tighter local bounds require more rejection attempts. -/
+def DilithiumParams.expectedLocalAttempts (p : DilithiumParams) (maxSigners : Nat)
+    (hpos : maxSigners > 0 := by omega) : Nat :=
+  let localB := p.localBound maxSigners
+  if p.gamma1 > 2 * localB then
+    p.gamma1 / (p.gamma1 - 2 * localB)
+  else
+    256  -- Fallback for very tight bounds
+
+/-!
+## Local Rejection Bound Proofs
+
+Key lemmas for local rejection sampling correctness.
+-/
+
+/-- Sum of T local bounds doesn't exceed global bound.
+    This is the fundamental guarantee for local rejection. -/
+theorem local_bounds_sum_le_global (p : DilithiumParams) (maxSigners : Nat)
+    (hpos : maxSigners > 0) :
+    maxSigners * p.localBound maxSigners ≤ p.zBound.natAbs := by
+  simp only [DilithiumParams.localBound]
+  exact Nat.div_mul_le_self _ _
+
+/-- Each signer's contribution within local bound ensures aggregate within global bound. -/
+theorem aggregate_within_global_bound (p : DilithiumParams) (maxSigners : Nat)
+    (contributions : List Nat)
+    (hlen : contributions.length ≤ maxSigners)
+    (hpos : maxSigners > 0)
+    (hbounds : ∀ c ∈ contributions, c ≤ p.localBound maxSigners) :
+    contributions.sum ≤ p.zBound.natAbs := by
+  calc contributions.sum
+      ≤ contributions.length * p.localBound maxSigners := by
+        induction contributions with
+        | nil => simp
+        | cons x xs ih =>
+          simp only [List.sum_cons, List.length_cons]
+          have hx := hbounds x (List.mem_cons_self x xs)
+          have hxs : ∀ c ∈ xs, c ≤ p.localBound maxSigners := fun c hc =>
+            hbounds c (List.mem_cons_of_mem x hc)
+          have ih' := ih (by simp at hlen; omega) hxs
+          calc x + xs.sum
+              ≤ p.localBound maxSigners + xs.length * p.localBound maxSigners := by
+                apply Nat.add_le_add hx ih'
+            _ = (xs.length + 1) * p.localBound maxSigners := by ring
+            _ = (x :: xs).length * p.localBound maxSigners := by simp
+    _ ≤ maxSigners * p.localBound maxSigners := by
+        apply Nat.mul_le_mul_right
+        exact hlen
+    _ ≤ p.zBound.natAbs := local_bounds_sum_le_global p maxSigners hpos
+
+/-!
+## NormBounded Compatibility
+
+Show that vecInfNorm-based checks are compatible with NormBounded.
+-/
+
+/-- Local bound check via NormBounded is equivalent to vecInfLeqBound -/
+theorem localBoundOK_iff_vecInfLeqBound (cfg : ThresholdConfig) (v : List Int) :
+    localBoundOK cfg v ↔ vecInfLeqBound cfg.localBound v := by
+  simp only [localBoundOK, vecInfLeqBound, vecInfNorm_eq_norm]
+
+/-- Global bound check via NormBounded is equivalent to vecInfLeqBound -/
+theorem globalBoundOK_iff_vecInfLeqBound (cfg : ThresholdConfig) (v : List Int) :
+    globalBoundOK cfg v ↔ vecInfLeqBound cfg.globalBound v := by
+  simp only [globalBoundOK, vecInfLeqBound, vecInfNorm_eq_norm]
 
 end IceNine.Norms

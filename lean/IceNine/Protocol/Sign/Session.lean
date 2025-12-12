@@ -22,8 +22,12 @@ There is no way to "go back" or reuse a consumed state.
 -/
 
 import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Core.ThresholdConfig
+import IceNine.Protocol.Core.NormBounded
+import IceNine.Protocol.Core.Error
 import IceNine.Protocol.State.Phase
 import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.LocalRejection
 import Mathlib
 
 namespace IceNine.Protocol.SignSession
@@ -704,5 +708,154 @@ def PreSharedCommitment.fromPrecomputed (S : Scheme)
     publicHiding := pn.publicHiding
     publicBinding := pn.publicBinding
     expiresAt := pn.generatedAt + pn.maxAge }
+
+/-!
+## Local Rejection Integration
+
+Functions that integrate local rejection sampling with session types.
+These replace the retry-based norm check with upfront local rejection.
+
+**Key change**: With local rejection, `signWithLocalRejection` never fails
+norm check because rejection happens before computing z_i.
+-/
+
+/-- Signed state with local rejection statistics. -/
+structure SignedWithStats (S : Scheme) extends Signed S where
+  /-- Number of local rejection attempts -/
+  localAttempts : Nat
+  /-- The hiding nonce used (needed for verification) -/
+  hidingNonce : S.Secret
+  /-- The binding nonce used (needed for verification) -/
+  bindingNonce : S.Secret
+
+/-- Transition: Revealed → SignedWithStats using local rejection.
+
+    Unlike `sign`, this function uses local rejection sampling to find
+    a valid z_i before returning. It never returns a norm failure because
+    rejection is handled internally.
+
+    **Inputs**:
+    - `revealed`: State with challenge and binding factor
+    - `cfg`: Threshold configuration with local bound
+    - `sampleNonce`: IO action to sample fresh nonce pairs
+
+    **Guarantee**: The returned z_i satisfies ‖z_i‖∞ ≤ cfg.localBound.
+
+    **Note**: This consumes the revealed state. On success, the nonces
+    in `revealed` are replaced with the successful nonces from rejection. -/
+def signWithLocalRejection (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [SMul S.Challenge S.Secret] [inst : Protocol.NormBounded.NormBounded S.Secret]
+    (revealed : Revealed S)
+    (cfg : Protocol.ThresholdConfig.ThresholdConfig)
+    (sampleNonce : IO (S.Secret × S.Secret))
+    : IO (Except (Protocol.Error.LocalRejectionError S.PartyId) (SignedWithStats S)) := do
+  -- Run local rejection sampling
+  let result ← Protocol.LocalRejection.localRejectionLoop S
+      cfg revealed.keyShare.pid revealed.keyShare.secret
+      revealed.challenge revealed.bindingFactor sampleNonce
+  match result with
+  | .success z hiding binding attempts =>
+      -- Build signed state with statistics
+      let signed : Signed S :=
+        { keyShare := revealed.keyShare
+          partialSig := z
+          message := revealed.message
+          session := revealed.session
+          challenge := revealed.challenge }
+      return .ok { toSigned := signed
+                   localAttempts := attempts
+                   hidingNonce := hiding
+                   bindingNonce := binding }
+  | .failure err =>
+      return .error err
+
+/-- Transition: Revealed → SignedWithStats using parallel local rejection.
+
+    Parallel variant that samples nonces in batches for better throughput.
+
+    **Inputs**:
+    - `revealed`: State with challenge and binding factor
+    - `cfg`: Threshold configuration with local bound
+    - `parallelCfg`: Parallelization settings
+    - `sampleBatch`: IO action to sample batch of nonce pairs
+
+    **Guarantee**: The returned z_i satisfies ‖z_i‖∞ ≤ cfg.localBound. -/
+def signWithLocalRejectionParallel (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [SMul S.Challenge S.Secret] [inst : Protocol.NormBounded.NormBounded S.Secret]
+    (revealed : Revealed S)
+    (cfg : Protocol.ThresholdConfig.ThresholdConfig)
+    (parallelCfg : Protocol.LocalRejection.ParallelConfig)
+    (sampleBatch : Nat → IO (List (S.Secret × S.Secret)))
+    : IO (Except (Protocol.Error.LocalRejectionError S.PartyId) (SignedWithStats S)) := do
+  -- Run parallel local rejection sampling
+  let result ← Protocol.LocalRejection.localRejectionLoopParallel S
+      cfg parallelCfg revealed.keyShare.pid revealed.keyShare.secret
+      revealed.challenge revealed.bindingFactor sampleBatch
+  match result with
+  | .success z hiding binding attempts =>
+      let signed : Signed S :=
+        { keyShare := revealed.keyShare
+          partialSig := z
+          message := revealed.message
+          session := revealed.session
+          challenge := revealed.challenge }
+      return .ok { toSigned := signed
+                   localAttempts := attempts
+                   hidingNonce := hiding
+                   bindingNonce := binding }
+  | .failure err =>
+      return .error err
+
+/-- Fast path signing with local rejection.
+
+    Combines precomputed nonces with local rejection for single-round signing.
+    Unlike `signFast`, this runs rejection sampling internally.
+
+    **Inputs**:
+    - `keyShare`: Party's key share
+    - `precomputed`: Precomputed nonce (consumed)
+    - `challenge`: Fiat-Shamir challenge
+    - `bindingFactor`: Binding factor ρ_i
+    - `cfg`: Threshold configuration
+    - `session`: Session ID
+    - `sampleNonce`: IO action for fresh nonces (used if precomputed fails)
+
+    **Returns**: Share message with local rejection statistics. -/
+def signFastWithLocalRejection (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [SMul S.Challenge S.Secret] [inst : Protocol.NormBounded.NormBounded S.Secret]
+    (keyShare : KeyShare S)
+    (precomputed : PrecomputedNonce S)
+    (challenge : S.Challenge)
+    (bindingFactor : S.Scalar)
+    (cfg : Protocol.ThresholdConfig.ThresholdConfig)
+    (session : Nat)
+    (sampleNonce : IO (S.Secret × S.Secret))
+    (context : ExternalContext := {})
+    : IO (Except (Protocol.Error.LocalRejectionError S.PartyId) (SignShareMsg S × Nat)) := do
+  -- First try the precomputed nonce
+  let hiding := precomputed.nonce.hidingNonce
+  let binding := precomputed.nonce.bindingNonce
+  match Protocol.LocalRejection.RejectionOp.tryOnce cfg keyShare.secret challenge hiding binding bindingFactor with
+  | some z =>
+      -- Precomputed nonce works!
+      return .ok ({ sender := keyShare.pid, session := session, z_i := z, context := context }, 1)
+  | none =>
+      -- Precomputed nonce failed, run full rejection loop
+      let result ← Protocol.LocalRejection.localRejectionLoop S
+          cfg keyShare.pid keyShare.secret challenge bindingFactor sampleNonce
+      match result with
+      | .success z _ _ attempts =>
+          return .ok ({ sender := keyShare.pid, session := session, z_i := z, context := context }, attempts + 1)
+      | .failure err =>
+          return .error err
 
 end IceNine.Protocol.SignSession

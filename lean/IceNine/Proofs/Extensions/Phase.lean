@@ -329,6 +329,7 @@ private lemma foldl_step_noop {K V : Type*}
     This is provable using `Std.HashMap.fold_eq_foldl_toList` and `Std.HashMap.mem_toList` lemmas. -/
 theorem MsgMap.merge_idem {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [LawfulBEq S.PartyId]
     (a : MsgMap S M) : a ⊔ a = a := by
   classical
   cases a with
@@ -344,9 +345,11 @@ theorem MsgMap.merge_idem {S : Scheme} {M : Type*}
       have hfoldl : m.toList.foldl (fun acc kv => step acc kv.1 kv.2) m = m := by
         apply foldl_step_noop
         intro kv hkv
-        -- kv ∈ m.toList means kv.1 ∈ m, hence m.contains kv.1
-        have hmem : kv.1 ∈ m := (Std.HashMap.mem_toList_iff.mp hkv).1
-        exact Std.HashMap.contains_iff_mem.mpr hmem
+        -- kv ∈ m.toList means m.getElem? kv.1 = some kv.2
+        -- which implies kv.1 ∈ m, hence m.contains kv.1 = true
+        have hget := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hkv
+        -- getElem? returns some → contains is true
+        simp only [Std.HashMap.contains_eq_isSome_getElem?, hget, Option.isSome_some]
       -- Combine to get the record equality
       rw [hfold, hfoldl]
 
@@ -360,6 +363,7 @@ Key property for CRDT correctness.
 /-- `MsgMap.insert` is monotone with respect to key-set inclusion (`≤`). -/
 private lemma msgMap_insert_monotone (S : Scheme) {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [LawfulBEq S.PartyId]
     (getSender : M → S.PartyId)
     (msg : M) :
     ∀ a b : MsgMap S M, a ≤ b → MsgMap.insert getSender a msg ≤ MsgMap.insert getSender b msg := by
@@ -406,7 +410,7 @@ private lemma msgMap_insert_monotone (S : Scheme) {M : Type*}
 
     This relies on `Std.HashMap.contains_insert`/`contains_congr` to reason about key membership. -/
 lemma stepCommit_monotone (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-    [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [EquivBEq S.PartyId] [LawfulHashable S.PartyId] [LawfulBEq S.PartyId]
     (msg : DkgCommitMsg S) :
   ∀ a b, a ≤ b → stepCommit S msg a ≤ stepCommit S msg b := by
   intro a b hab
@@ -418,7 +422,7 @@ lemma stepCommit_monotone (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
     This relies on `Std.HashMap.contains_insert`/`contains_congr` to reason about key membership. -/
 lemma stepReveal_monotone (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
-    [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [EquivBEq S.PartyId] [LawfulHashable S.PartyId] [LawfulBEq S.PartyId]
     (msg : DkgRevealMsg S) :
   ∀ a b, a ≤ b → stepReveal S msg a ≤ stepReveal S msg b := by
   intro a b hab
@@ -433,7 +437,7 @@ lemma stepReveal_monotone (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
     This relies on `Std.HashMap.contains_insert`/`contains_congr` to reason about key membership. -/
 lemma stepShare_monotone (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
-    [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [EquivBEq S.PartyId] [LawfulHashable S.PartyId] [LawfulBEq S.PartyId]
     (msg : SignShareMsg S) :
   ∀ a b, a.state ≤ b.state → (stepShare S msg a).state ≤ (stepShare S msg b).state := by
   intro a b hab

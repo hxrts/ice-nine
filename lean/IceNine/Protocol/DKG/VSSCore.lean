@@ -29,15 +29,13 @@ and mapping lemmas.
 -/
 
 /-- Secret polynomials (coefficients in `S.Secret`). -/
-abbrev SecretPoly (S : Scheme) [CommRing S.Scalar] :=
-  PolynomialModule S.Scalar S.Secret
+abbrev SecretPoly (S : Scheme) (R : Type*) (M : Type*) := PolynomialModule R M
 
 /-- Commitment polynomials (coefficients in `S.Public`). -/
-abbrev PublicPoly (S : Scheme) [CommRing S.Scalar] :=
-  PolynomialModule S.Scalar S.Public
+abbrev PublicPoly (S : Scheme) (R : Type*) (M : Type*) := PolynomialModule R M
 
 /-- Build a polynomial module element from a coefficient list `[a₀, a₁, ...]`. -/
-def polyOfList {R M : Type*} [CommRing R] [AddCommGroup M] [Module R M]
+noncomputable def polyOfList {R M : Type*} [CommRing R] [AddCommGroup M] [Module R M]
     (coeffs : List M) : PolynomialModule R M :=
   let rec go (i : Nat) (cs : List M) : PolynomialModule R M :=
     match cs with
@@ -47,10 +45,10 @@ def polyOfList {R M : Type*} [CommRing R] [AddCommGroup M] [Module R M]
 
 /-- Create the degree-(t-1) polynomial with constant term `secret`.
     `randomCoeffs` are `[a₁, ..., a_{t-1}]`. -/
-def mkPolynomial (S : Scheme) [CommRing S.Scalar]
+noncomputable def mkPolynomial (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (secret : S.Secret) (randomCoeffs : List S.Secret) : SecretPoly S :=
-  polyOfList (R := S.Scalar) (M := S.Secret) (secret :: randomCoeffs)
+    (secret : S.Secret) (randomCoeffs : List S.Secret) : PolynomialModule S.Scalar S.Secret :=
+  polyOfList (secret :: randomCoeffs)
 
 /-!
 ## Polynomial Commitment (Feldman)
@@ -63,9 +61,10 @@ For Ice Nine, we use A(a_i) where A is the one-way linear map.
 
 /-- Commitment to polynomial coefficients, as a commitment polynomial
     (coefficient-wise application of `A`). -/
-structure PolyCommitment (S : Scheme) [CommRing S.Scalar] where
+structure PolyCommitment (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   /-- Commitment polynomial with coefficients `[A(a₀), A(a₁), ...]`. -/
-  poly : PublicPoly S
+  poly : PolynomialModule S.Scalar S.Public
   /-- Threshold (degree bound + 1). -/
   threshold : Nat
 
@@ -73,10 +72,8 @@ structure PolyCommitment (S : Scheme) [CommRing S.Scalar] where
 noncomputable def commitPolynomial (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (p : SecretPoly S) (threshold : Nat) : PolyCommitment S :=
-  { poly :=
-      (PolynomialModule.map (R := S.Scalar) (M := S.Secret) (R' := S.Scalar) (M' := S.Public) S.A)
-        p
+    (p : PolynomialModule S.Scalar S.Secret) (threshold : Nat) : PolyCommitment S :=
+  { poly := PolynomialModule.map S.A p
     threshold := threshold }
 
 /-- Commit directly from a coefficient list `[a₀, ..., a_{t-1}]`. -/
@@ -84,7 +81,7 @@ noncomputable def commitPolynomialFromCoeffs (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (coeffs : List S.Secret) : PolyCommitment S :=
-  commitPolynomial S (polyOfList (R := S.Scalar) (M := S.Secret) coeffs) coeffs.length
+  commitPolynomial S (polyOfList coeffs) coeffs.length
 
 /-!
 ## Share Generation
@@ -104,16 +101,16 @@ structure VSSShare (S : Scheme) where
 /-- Generate share for a party at a given evaluation point. -/
 noncomputable def generateShare (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S) (recipient : S.PartyId) (evalPoint : S.Scalar)
+    (p : PolynomialModule S.Scalar S.Secret) (recipient : S.PartyId) (evalPoint : S.Scalar)
     : VSSShare S :=
   { recipient := recipient
     evalPoint := evalPoint
-    value := PolynomialModule.eval (R := S.Scalar) (M := S.Secret) evalPoint p }
+    value := PolynomialModule.eval evalPoint p }
 
 /-- Generate shares for all parties. -/
 noncomputable def generateShares (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S)
+    (p : PolynomialModule S.Scalar S.Secret)
     (parties : List (S.PartyId × S.Scalar))  -- (party, eval point) pairs
     : List (VSSShare S) :=
   parties.map fun (pid, pt) => generateShare S p pid pt
@@ -137,7 +134,7 @@ This works because `A` is linear:
 noncomputable def expectedPublicValue (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (comm : PolyCommitment S) (evalPoint : S.Scalar) : S.Public :=
-  PolynomialModule.eval (R := S.Scalar) (M := S.Public) evalPoint comm.poly
+  PolynomialModule.eval evalPoint comm.poly
 
 /-- Verify a share against the polynomial commitment.
     Checks: `A(share.value) = expectedPublicValue(commitment, share.evalPoint)`. -/
@@ -170,7 +167,8 @@ def evalPointsDistinctBool {S : Scheme} [DecidableEq S.Scalar]
   (shares.map (·.evalPoint)).Nodup
 
 /-- Complete VSS dealing transcript. -/
-structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar] where
+structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   /-- Polynomial commitment (public). -/
   commitment : PolyCommitment S
   /-- Shares distributed to parties (each share sent privately). -/
@@ -181,23 +179,30 @@ structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar] 
 /-- Helper lemma: generateShare preserves evalPoint. -/
 theorem generateShare_evalPoint (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S) (pid : S.PartyId) (pt : S.Scalar) :
-    (generateShare S p pid pt).evalPoint = pt := rfl
+    (p : PolynomialModule S.Scalar S.Secret) (pid : S.PartyId) (pt : S.Scalar) :
+    (generateShare S p pid pt).evalPoint = pt := by
+  simp only [generateShare]
 
 /-- Helper lemma: generateShares preserves eval points in order. -/
 theorem generateShares_evalPoints (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S)
+    (p : PolynomialModule S.Scalar S.Secret)
     (parties : List (S.PartyId × S.Scalar)) :
     (generateShares S p parties).map (·.evalPoint) = parties.map Prod.snd := by
-  simp [generateShares, generateShare]
+  induction parties with
+  | nil => rfl
+  | cons hd tl ih =>
+    simp only [generateShares, List.map]
+    constructor
+    · rfl
+    · exact ih
 
 /-- Create VSS transcript from a polynomial and party list.
     Requires that party evaluation points are distinct. -/
 noncomputable def createVSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (p : SecretPoly S) (threshold : Nat)
+    (p : PolynomialModule S.Scalar S.Secret) (threshold : Nat)
     (parties : List (S.PartyId × S.Scalar))
     (hnodup : (parties.map Prod.snd).Nodup)
     : VSSTranscript S :=
@@ -212,7 +217,7 @@ noncomputable def createVSSTranscript (S : Scheme) [CommRing S.Scalar] [Decidabl
 noncomputable def tryCreateVSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (p : SecretPoly S) (threshold : Nat)
+    (p : PolynomialModule S.Scalar S.Secret) (threshold : Nat)
     (parties : List (S.PartyId × S.Scalar))
     : Option (VSSTranscript S) :=
   if h : (parties.map Prod.snd).Nodup then

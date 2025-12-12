@@ -8,6 +8,7 @@ This prevents returning incomplete signatures by construction.
 
 import IceNine.Protocol.State.Phase
 import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Threshold
 
 namespace IceNine.Protocol
 

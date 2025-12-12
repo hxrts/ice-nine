@@ -501,7 +501,7 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
     the proof from `hmasks` and `hzero`. -/
 def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S) (maskFn : MaskFn S)
-    (hsum : st.parties.toFinset.sum maskFn.mask = 0)
+    (hsum : (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0)
     : ZeroSumMaskFn S (List.toFinset st.parties) :=
   { fn := maskFn
     sum_zero := hsum
@@ -517,13 +517,19 @@ private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
   unfold computeFinalMasks at hmasks
   unfold makeMaskFn at hmaskFn
   cases hadj : st.adjustment with
-  | none => simp only [hadj] at hmasks hmaskFn
+  | none =>
+    -- Impossible: adjustment = none means computeFinalMasks throws error
+    simp only [hadj] at hmasks
+    exact Except.noConfusion hmasks
   | some adj =>
     simp only [hadj] at hmasks hmaskFn ⊢
     cases hcoord : st.coordinator with
-    | error _ => simp only [hcoord] at hmaskFn hmasks
+    | error e =>
+      -- Impossible: coordinator = error means computeFinalMasks throws error
+      simp only [hcoord, Except.mapError] at hmasks
+      exact Except.noConfusion hmasks
     | ok coord =>
-      simp only [hcoord, Except.bind, Except.ok.injEq] at hmaskFn hmasks
+      simp only [hcoord] at hmaskFn hmasks
       injection hmaskFn with hfn
       injection hmasks with heq
       rw [← hfn, ← heq]
@@ -536,7 +542,7 @@ private lemma nodup_count_eq_one {α : Type*} [DecidableEq α]
   exact List.count_eq_one_of_mem hnodup hx
 
 /-- Helper: derive zero-sum proof from runtime checks.
-    This uses the fact that Finset.sum over a nodup list equals the list sum. -/
+    This uses the fact that for nodup lists, toFinset.toList is a permutation. -/
 private theorem constructZeroSumMask_proof (S : Scheme)
     [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S)
@@ -545,15 +551,16 @@ private theorem constructZeroSumMask_proof (S : Scheme)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    st.parties.toFinset.sum maskFn.mask = 0 := by
+    (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0 := by
   have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
-  -- For nodup lists, Finset.sum over toFinset equals List.sum
-  have hsum : st.parties.toFinset.sum maskFn.mask = (st.parties.map maskFn.mask).sum := by
-    rw [← List.sum_toFinset_eq_sum_of_nodup _ hnodup]
-    congr 1
-    ext x
-    simp [List.count_toFinset hnodup]
-  rw [hsum, heq, hzero]
+  -- For nodup lists, toFinset.toList is a permutation of the original list
+  have hperm : List.Perm st.parties.toFinset.toList st.parties := List.toFinset_toList hnodup
+  -- Map preserves permutations
+  have hperm_map : List.Perm (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid))
+                            (st.parties.map (fun pid => maskFn.mask pid)) :=
+    hperm.map (fun pid => maskFn.mask pid)
+  -- Sum is invariant under permutation
+  rw [hperm_map.sum_eq, heq, hzero]
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/

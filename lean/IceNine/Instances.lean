@@ -3,9 +3,12 @@
 
 This module provides concrete instantiations of `IceNine.Protocol.Scheme` for
 testing and verification. We use a hash-based commitment and a SHAKE-like hash
-for Fiat–Shamir, plus a Dilithium-style ℓ∞ norm check. Hiding of the commitment
-is treated as an **assumption** (computational) while binding is proved from the
-injectivity of the hash input tuple.
+for Fiat–Shamir. Hiding of the commitment is treated as an **assumption**
+(computational) while binding is proved from the injectivity of the hash input tuple.
+
+**Norm bounds**: Dilithium-style ℓ∞ norm checking is provided via the `NormBounded`
+typeclass (see `Protocol/Core/NormBounded.lean`), not as part of the Scheme record.
+The `intVecNormBounded` instance provides norm checking for integer vectors.
 
 **NOTE**: The hash/commitment here are still abstracted; to connect to a real
 SHAKE implementation, wire in `Std.Digest` (or a SHAKE binding) with collision
@@ -14,6 +17,7 @@ resistance assumptions.
 
 import Mathlib
 import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Core.NormBounded
 -- import Std.Data.Digest  -- Not available in this Lean version
 
 namespace IceNine.Instances
@@ -92,29 +96,41 @@ def hashToChallenge (h : HashOut) : Int :=
   Int.ofNat (asNat % 256) - 128  -- Range [-128, 127] for simple bound
 
 /-!
-## Dilithium-style norm check
+## NormBounded Instance for Integer Vectors
 
-We model secrets/publics as integer vectors and enforce an ℓ∞ bound.
+Norm bounds for lattice security are provided via the NormBounded typeclass.
+This replaces the old `normOK` predicate on Scheme.
 -/
+
+open IceNine.Protocol.NormBounded
 
 /-- Compute ℓ∞ norm of an integer vector (max absolute value), as a Nat. -/
 def intVecInfNorm {n : Nat} (v : Fin n → Int) : Nat :=
   Finset.univ.sup (fun i => Int.natAbs (v i))
 
+/-- NormBounded instance for fixed-dimension integer vectors.
+    This provides norm checking for lattice scheme secrets/publics. -/
+instance intVecNormBounded {n : Nat} : NormBounded (Fin n → Int) where
+  norm := intVecInfNorm
+
 def intVecInfLeq (B : Nat) {n : Nat} (v : Fin n → Int) : Prop :=
   intVecInfNorm v ≤ B
 
-/-- Decidability instance for intVecInfLeq (needed for normOKDecidable). -/
+/-- Decidability instance for intVecInfLeq. -/
 instance intVecInfLeqDecidable (B : Nat) {n : Nat} : DecidablePred (intVecInfLeq B (n := n)) :=
   fun v => inferInstanceAs (Decidable (intVecInfNorm v ≤ B))
 
-/-- Honest vectors with all coefficients ≤ bound satisfy normOK. -/
+/-- Honest vectors with all coefficients ≤ bound satisfy the norm check. -/
 lemma intVecInfLeq_of_coeff_bound {n : Nat} {B : Nat} (v : Fin n → Int)
   (h : ∀ i, Int.natAbs (v i) ≤ B) : intVecInfLeq B v := by
   unfold intVecInfLeq intVecInfNorm
   classical
   apply Finset.sup_le_iff.mpr
   intro i _; exact h i
+
+/-- The norm function matches intVecInfNorm. -/
+theorem norm_eq_intVecInfNorm {n : Nat} (v : Fin n → Int) :
+    norm v = intVecInfNorm v := rfl
 
 /-!
 ## Concrete lattice-friendly scheme
@@ -200,8 +216,6 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , hash := fun m pk Sset commits w =>
       hashToChallenge (hashFS m pk Sset commits w)
   , hashCollisionResistant := True
-  , normOK := fun v => intVecInfLeq p.bound v
-  , normOKDecidable := intVecInfLeqDecidable p.bound
 }
 
 -- Type aliases for the lattice scheme

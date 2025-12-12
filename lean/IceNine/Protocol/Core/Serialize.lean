@@ -866,7 +866,7 @@ def checkInjective {α : Type} [Serializable α] [BEq α] (x y : α) : Bool :=
 /-- Property: deserialization consumes all bytes for exact-length input -/
 def checkExactConsumption {α : Type} [Serializable α] (x : α) : Bool :=
   let bytes := Serializable.toBytes x
-  match Serializable.fromBytes bytes with
+  match Serializable.fromBytes (α := α) bytes with
   | some (_, consumed) => consumed = bytes.size
   | none => false
 

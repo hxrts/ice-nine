@@ -71,7 +71,11 @@ The Scheme bundles all algebraic and cryptographic parameters:
 - Secret/Public modules connected by linear map A
 - Commitment scheme for hiding values until reveal
 - Hash function for Fiat-Shamir challenges
-- Norm predicate for lattice signature security
+
+**Norm checking**: Norm bounds for lattice security are handled via the
+`NormBounded` typeclass (see `Protocol/Core/NormBounded.lean`), not as
+part of the Scheme record. This separates algebraic structure from
+bound checking, enabling configurable local/global bounds.
 -/
 structure Scheme where
   -- Party identifiers (e.g., Nat or a finite type)
@@ -124,7 +128,7 @@ structure Scheme where
   2. **HighBits is an implementation detail**: Dilithium uses HighBits() to
      absorb c·s₂ during verification. This truncation can be encoded in:
      - The `hash` function (hash truncated w, not full w)
-     - The `normOK` predicate (include HighBits consistency check)
+     - The `NormBounded` instance (include HighBits consistency check)
 
   3. **Clean protocol logic**: The signing/verification math stays clean:
         z = y + c·sk
@@ -137,7 +141,8 @@ structure Scheme where
 
   For a Dilithium instantiation, define:
   - `A` maps the signing key s₁ (the public key t = As₁ + s₂ is precomputed)
-  - `normOK` checks both ||z||∞ < γ₁ - β AND HighBits consistency
+  - Provide a `NormBounded` instance for the Secret type
+  - Use `ThresholdConfig` to configure local/global bounds
   - `hash` operates on HighBits(w) rather than full w
 
   Reference: Lyubashevsky et al., "CRYSTALS-Dilithium", TCHES 2018.
@@ -276,13 +281,6 @@ structure Scheme where
   -- Returns none if the derived value is zero (invalid identifier)
   deriveIdentifier : ByteArray → Option PartyId := fun _ => none
 
-  -- Norm bound predicate for lattice security.
-  -- Rejects signatures with large z to prevent leakage.
-  normOK : Secret → Prop
-
-  -- Decidability of normOK for runtime checking.
-  -- Default: trivially decidable (True or compute-based).
-  [normOKDecidable : DecidablePred normOK]
 
 attribute [instance] Scheme.scalarSemiring Scheme.secretAdd Scheme.publicAdd
 
@@ -500,7 +498,6 @@ def Scheme.deriveId (S : Scheme) (data : ByteArray) : Option S.PartyId :=
   S.deriveIdentifier data
 attribute [instance] Scheme.secretModule Scheme.publicModule
 attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
-attribute [instance] Scheme.normOKDecidable
 
 /-!
 ## Randomness Requirements

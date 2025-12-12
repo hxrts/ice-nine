@@ -30,6 +30,8 @@ Error types in Ice Nine follow these principles:
 | Sign | `SignError` | Fatal | ✓ | Signing failed |
 | Sign | `BindingError` | Fatal | ✓ | Binding validation failed |
 | Sign | `AbortReason` | Info | ✓ | Abort details |
+| Sign | `LocalRejectionError` | Recoverable | - | Local rejection exhausted |
+| Sign | `ShareValidationError` | Recoverable | ✓ | Invalid partial signature |
 | RefreshCoord | `CoordinatorError` | Fatal | - | Coordinator selection failed |
 | RefreshDKG | `RefreshDKGError` | Fatal | ✓ | Refresh failed |
 | Validation | `ValidationError` | Fatal | ✓ | Generic commit/reveal errors |
@@ -339,6 +341,89 @@ instance {PartyId : Type*} : BlameableError (RefreshDKGError PartyId) PartyId wh
     | .missingShare from _ => some from  -- blame sender
     | .invalidShare p => some p
     | .thresholdMismatch _ _ => none
+
+/-!
+## Local Rejection Errors
+
+Error types for local rejection sampling in threshold signing.
+-/
+
+/-- Errors during local rejection sampling.
+
+    These errors occur when a party cannot produce a valid partial signature
+    within the configured attempt limit.
+
+    **Blame**: The party ID is included for logging/diagnostics, but these
+    errors don't necessarily indicate malicious behavior - they may occur
+    due to unlucky randomness. -/
+inductive LocalRejectionError (PartyId : Type*)
+  | maxAttemptsExceeded (party : PartyId) (attempts : Nat) (localBound : Nat)
+      -- Exhausted all local rejection attempts without finding valid z_i
+  | invalidConfiguration (reason : String)
+      -- ThresholdConfig is invalid (should not happen in normal use)
+  deriving Repr
+
+/-- BlameableError instance for LocalRejectionError.
+    Note: maxAttemptsExceeded returns the party, but this is for diagnostics
+    not blame - failing to find a valid z_i after many attempts is unlucky,
+    not malicious. -/
+instance {PartyId : Type*} : BlameableError (LocalRejectionError PartyId) PartyId where
+  blamedParty
+    | .maxAttemptsExceeded p _ _ => some p  -- For diagnostics, not blame
+    | .invalidConfiguration _ => none
+
+/-- ToString for LocalRejectionError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (LocalRejectionError PartyId) where
+  toString
+    | .maxAttemptsExceeded p attempts bound =>
+        s!"local rejection: party {p} exceeded {attempts} attempts (bound={bound})"
+    | .invalidConfiguration reason =>
+        s!"local rejection: invalid configuration - {reason}"
+
+/-!
+## Share Validation Errors
+
+Errors during share validation in aggregation.
+-/
+
+/-- Errors during share validation at aggregation time.
+
+    These errors indicate a party sent an invalid partial signature.
+    Unlike LocalRejectionError, these DO indicate potential misbehavior
+    and are used for blame attribution.
+
+    **Blame**: All variants identify the misbehaving party. -/
+inductive ShareValidationError (PartyId : Type*)
+  | normExceeded (party : PartyId) (actualNorm : Nat) (localBound : Nat)
+      -- Share's z_i exceeds local norm bound
+  | algebraicInvalid (party : PartyId) (reason : String)
+      -- Share fails algebraic verification: A(z_i) ≠ w_eff_i + c·pk_i
+  | missingCommitment (party : PartyId)
+      -- No commitment found for this party
+  | missingBindingFactor (party : PartyId)
+      -- No binding factor computed for this party
+  deriving Repr
+
+/-- BlameableError instance for ShareValidationError.
+    All variants identify a potentially misbehaving party. -/
+instance {PartyId : Type*} : BlameableError (ShareValidationError PartyId) PartyId where
+  blamedParty
+    | .normExceeded p _ _ => some p
+    | .algebraicInvalid p _ => some p
+    | .missingCommitment p => some p
+    | .missingBindingFactor p => some p
+
+/-- ToString for ShareValidationError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (ShareValidationError PartyId) where
+  toString
+    | .normExceeded p actual bound =>
+        s!"share from {p} exceeded local bound: {actual} > {bound}"
+    | .algebraicInvalid p reason =>
+        s!"share from {p} algebraically invalid: {reason}"
+    | .missingCommitment p =>
+        s!"missing commitment for {p}"
+    | .missingBindingFactor p =>
+        s!"missing binding factor for {p}"
 
 /-!
 ## Generic Validation Errors

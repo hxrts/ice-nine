@@ -33,7 +33,8 @@ In VSS-DKG, each party i:
 -/
 
 /-- VSS commitment message: party broadcasts their polynomial commitment. -/
-structure VSSCommitMsg (S : Scheme) [CommRing S.Scalar] where
+structure VSSCommitMsg (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   sender : S.PartyId
   /-- Commitment to polynomial coefficients -/
   polyCommit : PolyCommitment S
@@ -46,7 +47,8 @@ structure VSSShareMsg (S : Scheme) [CommRing S.Scalar] where
   share : VSSShare S
 
 /-- VSS complaint: party j complains that party i's share is invalid. -/
-structure VSSComplaint (S : Scheme) [CommRing S.Scalar] where
+structure VSSComplaint (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   /-- Party filing the complaint -/
   complainant : S.PartyId
   /-- Party being accused -/
@@ -77,11 +79,13 @@ Each party maintains:
 /-- Party's local state during VSS-DKG.
     Uses `PolynomialModule` polynomials so coefficients live in `S.Secret`
     without needing a `Semiring S.Secret`. -/
-structure VSSLocalState (S : Scheme) [CommRing S.Scalar] where
+structure VSSLocalState (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   /-- This party's ID -/
   pid : S.PartyId
   /-- This party's secret polynomial f_i. -/
-  secretPoly : SecretPoly S
+  secretPoly : PolynomialModule S.Scalar S.Secret
   /-- This party's commitment (public) -/
   commitment : PolyCommitment S
   /-- Shares this party has generated for others -/
@@ -121,18 +125,25 @@ noncomputable def vssInit (S : Scheme) [CommRing S.Scalar]
     complaints := [] }
 
 /-- Generate commit message for broadcast. -/
-def vssCommitMsg (S : Scheme) (st : VSSLocalState S) : VSSCommitMsg S :=
+def vssCommitMsg (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    (st : VSSLocalState S) : VSSCommitMsg S :=
   { sender := st.pid
     polyCommit := st.commitment }
 
 /-- Get share message for a specific recipient. -/
-def vssShareMsgFor (S : Scheme) [DecidableEq S.PartyId]
+def vssShareMsgFor (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    [DecidableEq S.PartyId]
     (st : VSSLocalState S) (recipient : S.PartyId) : Option (VSSShareMsg S) :=
   st.outgoingShares.find? (fun m => m.recipient = recipient)
 
 /-- Receive and verify a share from another party.
     Returns updated state with share added (if valid) or complaint filed. -/
 noncomputable def vssReceiveShare (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (st : VSSLocalState S)
     (msg : VSSShareMsg S)
@@ -172,7 +183,7 @@ The global secret is sk = Σ_i sk_i = Σ_i f_i(0)
 
 /-- Aggregate received shares to compute party's final secret share.
     sk_j = Σ_i s_{i,j} where s_{i,j} is share from party i to party j. -/
-def aggregateReceivedShares (S : Scheme)
+def aggregateReceivedShares (S : Scheme) [CommRing S.Scalar]
     (incomingShares : List (VSSShareMsg S)) : S.Secret :=
   (incomingShares.map (·.share.value)).sum
 
@@ -182,7 +193,9 @@ def computePublicShare (S : Scheme) (sk_j : S.Secret) : S.Public :=
   S.A sk_j
 
 /-- Finalize VSS-DKG for a party: compute their KeyShare. -/
-def vssFinalize (S : Scheme)
+def vssFinalize (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (st : VSSLocalState S)
     (allCommitments : List (VSSCommitMsg S))
     : Option (KeyShare S) :=
@@ -210,7 +223,8 @@ Complete transcript for verification and blame attribution.
 -/
 
 /-- Complete VSS-DKG transcript. -/
-structure VSSDKGTranscript (S : Scheme) [CommRing S.Scalar] where
+structure VSSDKGTranscript (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
   /-- All commitment messages -/
   commitments : List (VSSCommitMsg S)
   /-- All share messages (normally private, revealed for disputes) -/

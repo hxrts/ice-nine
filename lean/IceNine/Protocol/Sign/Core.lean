@@ -335,7 +335,7 @@ For Schnorr-style signatures with linear map A:
 
     Returns true iff the signature is valid. -/
 def verifyWithNonce
-  (S : Scheme)
+  (S : Scheme) [DecidableEq S.Public]
   (pk : S.Public)
   (sig : Signature S)
   (w : S.Public)
@@ -350,7 +350,7 @@ def verifyWithNonce
     For production use, binding factors should be recomputed from (msg, pk, commits)
     rather than trusted from external sources. -/
 def verify
-  (S : Scheme) [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Challenge] [DecidableEq S.Public]
   (pk : S.Public)
   (m : S.Message)
   (commits : List (SignCommitMsg S))
@@ -365,7 +365,7 @@ def verify
 /-- Simplified verification for single (non-threshold) signatures.
     Uses the commitment directly as w (no Lagrange weighting). -/
 def verifySingle
-  (S : Scheme)
+  (S : Scheme) [DecidableEq S.Public]
   (pk : S.Public)
   (w : S.Public)
   (sig : Signature S)
