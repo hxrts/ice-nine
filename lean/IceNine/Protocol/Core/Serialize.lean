@@ -285,9 +285,75 @@ def SerializableWithHeader.fromBytesWithHeader {α : Type*} [inst : Serializable
   | some (h, rest) => if h.schemeId = inst.schemeId then (inst.fromBytes rest).map (·.1) else none
 
 /-!
+## ByteReader Monad
+
+Safe, bounds-checked byte reading with automatic position tracking.
+Eliminates manual byte counting and prevents out-of-bounds access.
+-/
+
+/-- State for ByteReader: the buffer and current position -/
+structure ByteReaderState where
+  buffer : ByteArray
+  pos : Nat
+  deriving Repr
+
+/-- ByteReader monad for safe deserialization.
+    Tracks position and fails gracefully on bounds errors. -/
+abbrev ByteReader := StateT ByteReaderState (Except String)
+
+/-- Run a ByteReader on a ByteArray -/
+def ByteReader.run (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
+  match r.run { buffer := bs, pos := 0 } with
+  | .ok (a, st) => some (a, st.pos)
+  | .error _ => none
+
+/-- Run a ByteReader and return error message on failure -/
+def ByteReader.runWithError (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
+  match r.run { buffer := bs, pos := 0 } with
+  | .ok (a, st) => .ok (a, st.pos)
+  | .error e => .error e
+
+/-- Read exactly n bytes, advancing position -/
+def ByteReader.readBytes (n : Nat) : ByteReader ByteArray := do
+  let st ← get
+  if st.pos + n > st.buffer.size then
+    throw s!"readBytes: need {n} bytes at position {st.pos}, but buffer size is {st.buffer.size}"
+  let result := st.buffer.extract st.pos (st.pos + n)
+  set { st with pos := st.pos + n }
+  return result
+
+/-- Read a single byte -/
+def ByteReader.readByte : ByteReader UInt8 := do
+  let bs ← readBytes 1
+  return bs.get! 0  -- Safe: we just read exactly 1 byte
+
+/-- Peek at current position without advancing -/
+def ByteReader.peek (n : Nat) : ByteReader ByteArray := do
+  let st ← get
+  if st.pos + n > st.buffer.size then
+    throw s!"peek: need {n} bytes at position {st.pos}"
+  return st.buffer.extract st.pos (st.pos + n)
+
+/-- Get remaining bytes count -/
+def ByteReader.remaining : ByteReader Nat := do
+  let st ← get
+  return st.buffer.size - st.pos
+
+/-- Read a value using its Serializable instance -/
+def ByteReader.read [Serializable α] : ByteReader α := do
+  let st ← get
+  let rest := st.buffer.extract st.pos st.buffer.size
+  match Serializable.fromBytes rest with
+  | some (a, consumed) =>
+      set { st with pos := st.pos + consumed }
+      return a
+  | none => throw s!"read: failed to deserialize at position {st.pos}"
+
+/-!
 ## Primitive Serializers
 
 Basic serialization for Nat, Int, and ByteArray.
+Uses ByteReader for safe deserialization.
 -/
 
 /-- Encode Nat as 8-byte little-endian -/
@@ -302,159 +368,235 @@ def natToBytes (n : Nat) : ByteArray :=
   let b7 := ((n >>> 56) &&& 0xFF).toUInt8
   ⟨#[b0, b1, b2, b3, b4, b5, b6, b7]⟩
 
-/-- Decode Nat from 8-byte little-endian -/
+/-- Decode Nat from 8-byte little-endian using ByteReader -/
+def natFromBytesReader : ByteReader Nat := do
+  let bs ← ByteReader.readBytes 8
+  let b0 := bs.get! 0 |>.toNat
+  let b1 := bs.get! 1 |>.toNat
+  let b2 := bs.get! 2 |>.toNat
+  let b3 := bs.get! 3 |>.toNat
+  let b4 := bs.get! 4 |>.toNat
+  let b5 := bs.get! 5 |>.toNat
+  let b6 := bs.get! 6 |>.toNat
+  let b7 := bs.get! 7 |>.toNat
+  return b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
+         b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56
+
+/-- Decode Nat from 8-byte little-endian (legacy wrapper) -/
 def natFromBytes (bs : ByteArray) : Option Nat :=
-  if bs.size < 8 then none
-  else
-    let b0 := bs.get! 0 |>.toNat
-    let b1 := bs.get! 1 |>.toNat
-    let b2 := bs.get! 2 |>.toNat
-    let b3 := bs.get! 3 |>.toNat
-    let b4 := bs.get! 4 |>.toNat
-    let b5 := bs.get! 5 |>.toNat
-    let b6 := bs.get! 6 |>.toNat
-    let b7 := bs.get! 7 |>.toNat
-    some (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
-          b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56)
+  (natFromBytesReader.run bs).map (·.1)
 
 /-- Encode Int as 8-byte little-endian (two's complement) -/
 def intToBytes (i : Int) : ByteArray :=
-  -- Convert to unsigned representation
   let n := if i < 0 then (2^64 : Nat) - i.natAbs else i.toNat
   natToBytes n
 
-/-- Decode Int from 8-byte little-endian (two's complement) -/
+/-- Decode Int from 8-byte little-endian using ByteReader -/
+def intFromBytesReader : ByteReader Int := do
+  let n ← natFromBytesReader
+  return if n ≥ 2^63 then Int.negOfNat (2^64 - n) else Int.ofNat n
+
+/-- Decode Int from 8-byte little-endian (legacy wrapper) -/
 def intFromBytes (bs : ByteArray) : Option Int :=
-  natFromBytes bs |>.map fun n =>
-    if n ≥ 2^63 then Int.negOfNat (2^64 - n)
-    else Int.ofNat n
+  (intFromBytesReader.run bs).map (·.1)
 
 instance : Serializable Nat where
   toBytes := natToBytes
-  fromBytes bs := natFromBytes bs |>.map (·, 8)
+  fromBytes bs := natFromBytesReader.run bs
 
 instance : Serializable Int where
   toBytes := intToBytes
-  fromBytes bs := intFromBytes bs |>.map (·, 8)
+  fromBytes bs := intFromBytesReader.run bs
+
+/-- Read 4-byte length prefix as Nat -/
+def ByteReader.readLen32 : ByteReader Nat := do
+  let bs ← ByteReader.readBytes 4
+  let b0 := bs.get! 0 |>.toNat
+  let b1 := bs.get! 1 |>.toNat
+  let b2 := bs.get! 2 |>.toNat
+  let b3 := bs.get! 3 |>.toNat
+  return b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24
+
+/-- Write 4-byte length prefix -/
+def writeLen32 (n : Nat) : ByteArray :=
+  natToBytes n |>.extract 0 4
+
+/-- ByteReader for ByteArray: 4-byte length + data -/
+def byteArrayReader : ByteReader ByteArray := do
+  let len ← ByteReader.readLen32
+  ByteReader.readBytes len
 
 instance : Serializable ByteArray where
-  toBytes bs :=
-    let len := natToBytes bs.size |>.extract 0 4
-    len ++ bs
-  fromBytes bs :=
-    if bs.size < 4 then none
-    else
-      let lenBytes := bs.extract 0 4
-      match natFromBytes (lenBytes ++ ⟨#[0, 0, 0, 0]⟩) with
-      | some len =>
-          if bs.size < 4 + len then none
-          else some (bs.extract 4 (4 + len), 4 + len)
-      | none => none
+  toBytes bs := writeLen32 bs.size ++ bs
+  fromBytes bs := byteArrayReader.run bs
 
 /-!
 ## Compound Type Serializers
 
 Serialization for Option, List, and product types.
+Uses ByteReader for safe, composable deserialization.
 -/
 
-/-- Serialize Option: 0x00 for none, 0x01 + value for some -/
+/-- ByteReader for Option: 0x00 for none, 0x01 + value for some -/
+def optionReader [Serializable α] : ByteReader (Option α) := do
+  let tag ← ByteReader.readByte
+  match tag with
+  | 0 => return none
+  | 1 => return some (← ByteReader.read)
+  | t => throw s!"optionReader: invalid tag {t}, expected 0 or 1"
+
 instance {α : Type*} [Serializable α] : Serializable (Option α) where
   toBytes
     | none => ⟨#[0]⟩
     | some x => ⟨#[1]⟩ ++ Serializable.toBytes x
-  fromBytes bs :=
-    if bs.size < 1 then none
-    else if bs.get! 0 = 0 then some (none, 1)
-    else if bs.get! 0 = 1 then
-      Serializable.fromBytes (bs.extract 1 bs.size) |>.map fun (x, n) => (some x, n + 1)
-    else none
+  fromBytes bs := optionReader.run bs
 
-/-- Helper to parse a list of length-prefixed elements from bytes.
-    Returns the parsed list and total bytes consumed. -/
-def parseList {α : Type*} [Serializable α] (count : Nat) (bs : ByteArray) (acc : List α) : Option (List α × Nat) :=
-  if count = 0 then some (acc.reverse, 0)
-  else
-    match Serializable.fromBytes bs with
-    | some (x, consumed) =>
-        if consumed = 0 ∨ consumed > bs.size then none
-        else
-          match parseList (count - 1) (bs.extract consumed bs.size) (x :: acc) with
-          | some (xs, tailConsumed) => some (xs, consumed + tailConsumed)
-          | none => none
-    | none => none
+/-- ByteReader for List: 4-byte count + elements -/
+def listReader [Serializable α] : ByteReader (List α) := do
+  let count ← ByteReader.readLen32
+  let mut acc : List α := []
+  for _ in [:count] do
+    let x ← ByteReader.read
+    acc := x :: acc
+  return acc.reverse
 
-/-- Serialize List: 4-byte count + concatenated elements -/
 instance {α : Type*} [Serializable α] : Serializable (List α) where
   toBytes xs :=
-    let count := natToBytes xs.length |>.extract 0 4
+    let count := writeLen32 xs.length
     let elements := xs.foldl (fun acc x => acc ++ Serializable.toBytes x) ByteArray.empty
     count ++ elements
-  fromBytes bs :=
-    if bs.size < 4 then none
-    else
-      let countBytes := bs.extract 0 4
-      match natFromBytes (countBytes ++ ⟨#[0, 0, 0, 0]⟩) with
-      | some count =>
-          -- Parse `count` elements from remaining bytes
-          let rest := bs.extract 4 bs.size
-          parseList count rest [] |>.map (fun (xs, consumed) => (xs, 4 + consumed))
-      | none => none
+  fromBytes bs := listReader.run bs
 
 /-!
 ## Protocol Message Serializers
 
-Serialization for DKG and signing messages.
+Bidirectional serialization for DKG and signing messages.
+Each message type has paired encode/decode functions using ByteReader.
 -/
 
-/-- Serialize DkgCommitMsg: sender (8 bytes) + commitment -/
-def serializeDkgCommitMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Commitment]
-    (msg : DkgCommitMsg S) : ByteArray :=
+/-- DkgCommitMsg: sender + commitment -/
+section DkgCommitMsg
+variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Commitment]
+
+def serializeDkgCommitMsg (msg : DkgCommitMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++ Serializable.toBytes msg.commitPk
 
-/-- Serialize DkgRevealMsg: sender + pk_i + opening -/
-def serializeDkgRevealMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Public] [Serializable S.Opening]
-    (msg : DkgRevealMsg S) : ByteArray :=
+def deserializeDkgCommitMsg : ByteReader (DkgCommitMsg S) := do
+  let sender ← ByteReader.read
+  let commitPk ← ByteReader.read
+  return { sender, commitPk }
+
+instance : Serializable (DkgCommitMsg S) where
+  toBytes := serializeDkgCommitMsg S
+  fromBytes bs := (deserializeDkgCommitMsg S).run bs
+end DkgCommitMsg
+
+/-- DkgRevealMsg: sender + pk_i + opening -/
+section DkgRevealMsg
+variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Public] [Serializable S.Opening]
+
+def serializeDkgRevealMsg (msg : DkgRevealMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.pk_i ++
   Serializable.toBytes msg.opening
 
-/-- Serialize SignCommitMsg: sender + session + commitW + hiding + binding -/
-def serializeSignCommitMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Commitment] [Serializable S.Public]
-    (msg : SignCommitMsg S) : ByteArray :=
+def deserializeDkgRevealMsg : ByteReader (DkgRevealMsg S) := do
+  let sender ← ByteReader.read
+  let pk_i ← ByteReader.read
+  let opening ← ByteReader.read
+  return { sender, pk_i, opening }
+
+instance : Serializable (DkgRevealMsg S) where
+  toBytes := serializeDkgRevealMsg S
+  fromBytes bs := (deserializeDkgRevealMsg S).run bs
+end DkgRevealMsg
+
+/-- SignCommitMsg: sender + session + commitW + hiding + binding -/
+section SignCommitMsg
+variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Commitment] [Serializable S.Public]
+
+def serializeSignCommitMsg (msg : SignCommitMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
   Serializable.toBytes msg.commitW ++
   Serializable.toBytes msg.hidingVal ++
   Serializable.toBytes msg.bindingVal
 
-/-- Serialize SignRevealWMsg: sender + session + opening -/
-def serializeSignRevealWMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Opening]
-    (msg : SignRevealWMsg S) : ByteArray :=
+def deserializeSignCommitMsg : ByteReader (SignCommitMsg S) := do
+  let sender ← ByteReader.read
+  let session ← ByteReader.read
+  let commitW ← ByteReader.read
+  let hidingVal ← ByteReader.read
+  let bindingVal ← ByteReader.read
+  return { sender, session, commitW, hidingVal, bindingVal }
+
+instance : Serializable (SignCommitMsg S) where
+  toBytes := serializeSignCommitMsg S
+  fromBytes bs := (deserializeSignCommitMsg S).run bs
+end SignCommitMsg
+
+/-- SignRevealWMsg: sender + session + opening -/
+section SignRevealWMsg
+variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Opening]
+
+def serializeSignRevealWMsg (msg : SignRevealWMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
   Serializable.toBytes msg.opening
 
-/-- Serialize SignShareMsg: sender + session + z_i -/
-def serializeSignShareMsg (S : Scheme)
-    [Serializable S.PartyId] [Serializable S.Secret]
-    (msg : SignShareMsg S) : ByteArray :=
+def deserializeSignRevealWMsg : ByteReader (SignRevealWMsg S) := do
+  let sender ← ByteReader.read
+  let session ← ByteReader.read
+  let opening ← ByteReader.read
+  return { sender, session, opening }
+
+instance : Serializable (SignRevealWMsg S) where
+  toBytes := serializeSignRevealWMsg S
+  fromBytes bs := (deserializeSignRevealWMsg S).run bs
+end SignRevealWMsg
+
+/-- SignShareMsg: sender + session + z_i -/
+section SignShareMsg
+variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Secret]
+
+def serializeSignShareMsg (msg : SignShareMsg S) : ByteArray :=
   Serializable.toBytes msg.sender ++
   Serializable.toBytes msg.session ++
   Serializable.toBytes msg.z_i
 
-/-- Serialize Signature: z + c + Sset + commits -/
-def serializeSignature (S : Scheme)
-    [Serializable S.Secret] [Serializable S.Challenge]
-    [Serializable S.PartyId] [Serializable S.Commitment]
-    (sig : Signature S) : ByteArray :=
+def deserializeSignShareMsg : ByteReader (SignShareMsg S) := do
+  let sender ← ByteReader.read
+  let session ← ByteReader.read
+  let z_i ← ByteReader.read
+  return { sender, session, z_i }
+
+instance : Serializable (SignShareMsg S) where
+  toBytes := serializeSignShareMsg S
+  fromBytes bs := (deserializeSignShareMsg S).run bs
+end SignShareMsg
+
+/-- Signature: z + c + Sset + commits -/
+section Signature
+variable (S : Scheme) [Serializable S.Secret] [Serializable S.Challenge]
+                      [Serializable S.PartyId] [Serializable S.Commitment]
+
+def serializeSignature (sig : Signature S) : ByteArray :=
   Serializable.toBytes sig.z ++
   Serializable.toBytes sig.c ++
   Serializable.toBytes sig.Sset ++
   Serializable.toBytes sig.commits
+
+def deserializeSignature : ByteReader (Signature S) := do
+  let z ← ByteReader.read
+  let c ← ByteReader.read
+  let Sset ← ByteReader.read
+  let commits ← ByteReader.read
+  return { z, c, Sset, commits }
+
+instance : Serializable (Signature S) where
+  toBytes := serializeSignature S
+  fromBytes bs := (deserializeSignature S).run bs
+end Signature
 
 /-!
 ## Message Wrapper for Network Transport
@@ -499,23 +641,25 @@ deriving DecidableEq
 
 /-- Serialize wrapped message: tag (1 byte) + length (4 bytes) + payload -/
 def WrappedMessage.toBytes (msg : WrappedMessage) : ByteArray :=
-  let tagByte : ByteArray := ⟨#[msg.tag.toByte]⟩
-  let lenBytes := natToBytes msg.payload.size |>.extract 0 4
-  tagByte ++ lenBytes ++ msg.payload
+  ⟨#[msg.tag.toByte]⟩ ++ writeLen32 msg.payload.size ++ msg.payload
+
+/-- ByteReader for wrapped message -/
+def wrappedMessageReader : ByteReader WrappedMessage := do
+  let tagByte ← ByteReader.readByte
+  match MessageTag.fromByte tagByte with
+  | some tag =>
+      let len ← ByteReader.readLen32
+      let payload ← ByteReader.readBytes len
+      return { tag, payload }
+  | none => throw s!"wrappedMessageReader: unknown tag {tagByte}"
 
 /-- Parse wrapped message -/
 def WrappedMessage.fromBytes (bs : ByteArray) : Option WrappedMessage :=
-  if bs.size < 5 then none
-  else
-    match MessageTag.fromByte (bs.get! 0) with
-    | some tag =>
-        let lenBytes := bs.extract 1 5
-        match natFromBytes (lenBytes ++ ⟨#[0, 0, 0, 0]⟩) with
-        | some len =>
-            if bs.size < 5 + len then none
-            else some { tag := tag, payload := bs.extract 5 (5 + len) }
-        | none => none
-    | none => none
+  (wrappedMessageReader.run bs).map (·.1)
+
+instance : Serializable WrappedMessage where
+  toBytes := WrappedMessage.toBytes
+  fromBytes bs := wrappedMessageReader.run bs
 
 /-!
 ## Convenience Functions
@@ -561,5 +705,55 @@ def isValidWrappedMessage (bs : ByteArray) : Bool :=
 def peekMessageTag (bs : ByteArray) : Option MessageTag :=
   if bs.size < 1 then none
   else MessageTag.fromByte (bs.get! 0)
+
+/-!
+## Round-Trip Testing
+
+Infrastructure for verifying serialization round-trips correctly.
+Use these in tests to catch encode/decode mismatches.
+-/
+
+/-- Check that a value round-trips through serialization.
+    Returns `true` if `fromBytes (toBytes x) = some (x, _)` -/
+def checkRoundTrip [Serializable α] [BEq α] (x : α) : Bool :=
+  match Serializable.fromBytes (Serializable.toBytes x) with
+  | some (y, _) => x == y
+  | none => false
+
+/-- Check round-trip with detailed error reporting -/
+def checkRoundTripWithError [Serializable α] [BEq α] [Repr α]
+    (x : α) : Except String Unit :=
+  let bytes := Serializable.toBytes x
+  match Serializable.fromBytes bytes with
+  | some (y, consumed) =>
+      if x == y then
+        if consumed = bytes.size then .ok ()
+        else .error s!"round-trip ok but consumed {consumed} of {bytes.size} bytes"
+      else .error s!"round-trip mismatch: input {repr x}, output {repr y}"
+  | none => .error s!"deserialization failed for {repr x} (bytes: {bytes.size})"
+
+/-- Check round-trip using ByteReader with error details -/
+def checkRoundTripReader [Serializable α] [BEq α] [Repr α]
+    (x : α) : Except String Unit :=
+  let bytes := Serializable.toBytes x
+  match ByteReader.runWithError ByteReader.read bytes with
+  | .ok (y, consumed) =>
+      if x == y then
+        if consumed = bytes.size then .ok ()
+        else .error s!"round-trip ok but consumed {consumed} of {bytes.size} bytes"
+      else .error s!"round-trip mismatch: input {repr x}, output {repr y}"
+  | .error e => .error s!"deserialization failed: {e}"
+
+/-- Property: serialization is injective (different values → different bytes) -/
+def checkInjective [Serializable α] [BEq α] (x y : α) : Bool :=
+  if x == y then true
+  else Serializable.toBytes x != Serializable.toBytes y
+
+/-- Property: deserialization consumes all bytes for exact-length input -/
+def checkExactConsumption [Serializable α] (x : α) : Bool :=
+  let bytes := Serializable.toBytes x
+  match Serializable.fromBytes bytes with
+  | some (_, consumed) => consumed = bytes.size
+  | none => false
 
 end IceNine.Protocol.Serialize
