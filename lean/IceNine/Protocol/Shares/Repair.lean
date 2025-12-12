@@ -48,9 +48,6 @@ structure RepairBundle (S : Scheme) where
 /-- CRDT merge: concatenate message lists. -/
 instance (S : Scheme) : Join (RepairBundle S) := ⟨fun a b => ⟨a.msgs ++ b.msgs⟩⟩
 
-/-- Sup instance for ⊔ notation compatibility -/
-instance (S : Scheme) : Sup (RepairBundle S) := ⟨fun a b => ⟨a.msgs ++ b.msgs⟩⟩
-
 /-- Repair session state for tracking progress.
     CRDT merge: union helpers, append messages, max threshold. -/
 structure RepairSession (S : Scheme) where
@@ -61,13 +58,6 @@ structure RepairSession (S : Scheme) where
 
 /-- CRDT merge for repair sessions: monotonic on all fields. -/
 instance (S : Scheme) [DecidableEq S.PartyId] : Join (RepairSession S) :=
-  ⟨fun a b => { request   := a.request
-                helpers   := a.helpers ∪ b.helpers
-                received  := a.received ⊔ b.received
-                threshold := max a.threshold b.threshold }⟩
-
-/-- Sup instance for ⊔ notation compatibility -/
-instance (S : Scheme) [DecidableEq S.PartyId] : Sup (RepairSession S) :=
   ⟨fun a b => { request   := a.request
                 helpers   := a.helpers ∪ b.helpers
                 received  := a.received ⊔ b.received

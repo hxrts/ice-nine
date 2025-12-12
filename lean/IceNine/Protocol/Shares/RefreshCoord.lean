@@ -410,12 +410,29 @@ def makeMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.
         | none => 0 }
   | none => { mask := fun _ => 0 }
 
-/-- The mask function applied to parties equals the computed mask list (on success). -/
+/-- The mask function applied to parties equals the computed mask list (on success).
+
+    **Mathematical justification**:
+    Both `makeMaskFn` and `computeFinalMasks` use identical logic:
+    - For each party pid, return `adj.adjustment` if pid is coordinator, else `r.mask`
+    - Default to 0 if no reveal exists
+
+    The only difference is that `computeFinalMasks` maps over `st.parties` explicitly
+    while `makeMaskFn` returns a function. When we map the function over parties,
+    we get the same list.
+
+    **Note**: Uses sorry because the proof requires:
+    1. Case analysis on `st.adjustment` (Option match)
+    2. Showing that in the `none` case, `hmasks` is a contradiction (throw ≠ ok)
+    3. In the `some adj` case, showing the two list comprehensions are equal
+
+    The definitions are definitionally identical, but Lean's elaboration of match
+    expressions and the Except monad makes direct proof complex. A fully elaborated
+    proof would use `cases st.adjustment` and `simp` with Except.ok.injEq. -/
 theorem makeMaskFn_eq_finalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
     (st : RefreshRoundState S) (masks : List S.Secret)
     (hmasks : computeFinalMasks S st = .ok masks) :
     st.parties.map (fun pid => (makeMaskFn S st).mask pid) = masks := by
-  -- Proof depends on match structure of computeFinalMasks and makeMaskFn
   sorry
 
 /-- Construct the final mask function from refresh round, returning errors explicitly. -/
@@ -440,17 +457,35 @@ theorem List.toFinset_toList_perm' {α : Type*} [DecidableEq α] (l : List α) :
   intro hnodup
   exact List.toFinset_toList hnodup
 
-/-- Construct zero-sum mask with proof, given precomputed masks. -/
+/-- Construct zero-sum mask with proof, given precomputed masks.
+
+    **Mathematical justification**:
+    We need to prove: `(st.parties.toFinset).sum (makeMaskFn S st).mask = 0`
+
+    Given:
+    - `hmasks`: `computeFinalMasks S st = .ok masks`
+    - `hzero`: `masks.sum = 0`
+    - `hnodup`: `st.parties.Nodup`
+
+    The proof requires:
+    1. `makeMaskFn_eq_finalMasks`: mapping mask function over parties equals `masks`
+    2. `List.sum_toFinset hnodup`: list sum equals finset sum when Nodup
+    3. Transitivity: finset sum = list sum = masks.sum = 0
+
+    **Note**: Uses sorry because it depends on `makeMaskFn_eq_finalMasks` (also sorry)
+    and the connection between List.sum and Finset.sum over a Nodup list requires
+    showing that the finset.toList permutation preserves sum, which involves
+    List.toFinset_toList_perm and List.sum_perm lemmas in combination. -/
 def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
     (st : RefreshRoundState S)
     (masks : List S.Secret)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
-    (hnodup : st.parties.Nodup)
+    (_hnodup : st.parties.Nodup)
     : ZeroSumMaskFn S (List.toFinset st.parties) :=
   { fn := makeMaskFn S st
     sum_zero := by
-      -- Proof depends on makeMaskFn_eq_finalMasks and permutation properties
+      -- Would chain: finset sum → list sum → masks.sum = 0
       sorry
     }
 

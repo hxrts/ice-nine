@@ -176,38 +176,6 @@ def mlweParamsOfLevel : PQSecurityLevel → MLWEParams
   | .L3 => mlweL3
   | .L5 => mlweL5
 
-/-- Instantiate lattice assumptions from a security level. -/
-def mkLatticeAssumptions
-  (S : Scheme)
-  (lvl : PQSecurityLevel)
-  (hashRO : Prop)
-  (commitCR : Prop)
-  (normLeakageBound : Prop)
-  (corruptionBound : Nat)
-  (sis_hard : SISHard (sisParamsOfLevel lvl))
-  (mlwe_hard : MLWEHard (mlweParamsOfLevel lvl))
-  : LatticeAssumptions S :=
-{ hashRO := hashRO
-  commitCR := commitCR
-  hashBinding := IceNine.Instances.hashBindingAssumption
-  normLeakageBound := normLeakageBound
-  corruptionBound := corruptionBound
-  sisParams := some (sisParamsOfLevel lvl)
-  mlweParams := some (mlweParamsOfLevel lvl)
-  sisInst := sisParamsOfLevel lvl
-  mlweInst := mlweParamsOfLevel lvl
-  sis_hard := sis_hard
-  mlwe_hard := mlwe_hard }
-
-/-- Default lattice assumptions for our concrete latticeScheme at Level 1. -/
-def latticeAssumptionsL1 : LatticeAssumptions (IceNine.Instances.latticeScheme ()) :=
-  mkLatticeAssumptions (S := IceNine.Instances.latticeScheme ()) PQSecurityLevel.L1
-    True   -- hashRO
-    True   -- commitCR (digest collision resistance)
-    True   -- normLeakageBound
-    0
-    (by trivial) (by trivial)
-
 /-!
 ## Rejection Sampling Model
 
@@ -377,6 +345,38 @@ structure LatticeAssumptions (S : Scheme) extends Assumptions S where
   /-- MLWE is hard for these parameters -/
   mlwe_hard : MLWEHard mlweInst
 
+/-- Instantiate lattice assumptions from a security level. -/
+def mkLatticeAssumptions
+  (S : Scheme)
+  (lvl : PQSecurityLevel)
+  (hashRO : Prop)
+  (commitCR : Prop)
+  (normLeakageBound : Prop)
+  (corruptionBound : Nat)
+  (sis_hard : SISHard (sisParamsOfLevel lvl))
+  (mlwe_hard : MLWEHard (mlweParamsOfLevel lvl))
+  : LatticeAssumptions S :=
+{ hashRO := hashRO
+  commitCR := commitCR
+  hashBinding := IceNine.Instances.hashBindingAssumption
+  normLeakageBound := normLeakageBound
+  corruptionBound := corruptionBound
+  sisParams := some (sisParamsOfLevel lvl)
+  mlweParams := some (mlweParamsOfLevel lvl)
+  sisInst := sisParamsOfLevel lvl
+  mlweInst := mlweParamsOfLevel lvl
+  sis_hard := sis_hard
+  mlwe_hard := mlwe_hard }
+
+/-- Default lattice assumptions for our concrete latticeScheme at Level 1. -/
+def latticeAssumptionsL1 : LatticeAssumptions IceNine.Instances.latticeScheme :=
+  mkLatticeAssumptions (S := IceNine.Instances.latticeScheme) PQSecurityLevel.L1
+    True   -- hashRO
+    True   -- commitCR (digest collision resistance)
+    True   -- normLeakageBound
+    0
+    (by trivial) (by trivial)
+
 /-!
 ## Security Theorems
 
@@ -402,7 +402,7 @@ def thresholdUFcma (S : Scheme) (A : Assumptions S) : Prop :=
     2. If adversary distinguishes sk from random, solve MLWE
     3. By MLWE hardness, pk reveals nothing about sk -/
 def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
-  A.mlwe_hard
+  MLWEHard A.mlweInst
 
 /-- Liveness: honest parties either complete signing or detect abort.
     No silent failures - either succeed or return error. -/

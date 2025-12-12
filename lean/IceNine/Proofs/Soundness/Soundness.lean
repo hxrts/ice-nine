@@ -62,7 +62,7 @@ theorem special_soundness_algebraic
   calc A (z₁ - z₂)
       = A z₁ - A z₂ := by rw [map_sub]
     _ = (w + c₁ • pk) - (w + c₂ • pk) := by rw [hv1, hv2]
-    _ = c₁ • pk - c₂ • pk := by ring
+    _ = c₁ • pk - c₂ • pk := by abel
     _ = (c₁ - c₂) • pk := by rw [sub_smul]
 
 /-- Corollary: In a field, if c₁ ≠ c₂, we can solve for the secret.
@@ -81,7 +81,7 @@ theorem nonce_reuse_key_recovery
     sk = (c₁ - c₂)⁻¹ • (z₁ - z₂) := by
   have hne' : c₁ - c₂ ≠ 0 := sub_ne_zero.mpr hne
   calc sk
-      = 1 • sk := by rw [one_smul]
+      = 1 • sk := (one_smul F sk).symm
     _ = ((c₁ - c₂)⁻¹ * (c₁ - c₂)) • sk := by rw [inv_mul_cancel₀ hne']
     _ = (c₁ - c₂)⁻¹ • ((c₁ - c₂) • sk) := by rw [mul_smul]
     _ = (c₁ - c₂)⁻¹ • (z₁ - z₂) := by rw [← heq]
@@ -104,13 +104,14 @@ theorem recoverSecretKey_correct
     recoverSecretKey z₁ z₂ c₁ c₂ = some sk := by
   simp only [recoverSecretKey, dif_neg hne]
   congr 1
-  have : z₁ - z₂ = (c₁ - c₂) * sk := by
+  have hdiff : z₁ - z₂ = (c₁ - c₂) * sk := by
     calc z₁ - z₂
         = (sk + c₁ * sk) - (sk + c₂ * sk) := by rw [h1, h2]
       _ = c₁ * sk - c₂ * sk := by ring
       _ = (c₁ - c₂) * sk := by ring
-  field_simp
-  linarith [this]
+  have hne' : c₁ - c₂ ≠ 0 := sub_ne_zero.mpr hne
+  rw [hdiff]
+  field_simp [hne']
 
 /-!
 ## Schnorr Signature Relation
@@ -128,7 +129,8 @@ structure ValidSchnorrSig (S : Scheme) [HSMul S.Challenge S.Public S.Public] whe
   z : S.Secret
   c : S.Challenge
   w : S.Public
-  relation : SchnorrRelation S z w S.A z c  -- pk = A(sk), so we use A applied to response
+  pk : S.Public  -- The public key
+  relation : SchnorrRelation S z w pk c
   normOK : S.normOK z
 
 /-!
@@ -221,31 +223,16 @@ def extractWitness (S : Scheme) [Sub S.Secret] (ft : ForkingTranscripts S) : S.S
 
     This is a short vector related to the secret key. -/
 theorem witness_extraction_correct
-    {R : Type*} [Ring R]
-    {M : Type*} [AddCommGroup M] [Module R M]
+    {R : Type} [Ring R]
+    {M : Type} [AddCommGroup M] [Module R M]
     (A : M →ₗ[R] M)
-    (ft : ForkingTranscripts { A := A, Secret := M, Public := M, Challenge := R,
-                                Scalar := R, PartyId := Unit, Message := Unit,
-                                Commitment := Unit, Opening := Unit,
-                                scalarSemiring := inferInstance,
-                                secretAdd := inferInstance,
-                                publicAdd := inferInstance,
-                                secretModule := inferInstance,
-                                publicModule := inferInstance,
-                                challengeSMulSecret := inferInstance,
-                                challengeSMulPublic := inferInstance,
-                                commit := fun _ _ => (),
-                                commitBinding := fun _ => rfl,
-                                hashCollisionResistant := True,
-                                hashToScalar := fun _ _ => 0,
-                                hashDkg := fun _ _ _ => 0,
-                                hash := fun _ _ _ _ _ => 0,
-                                normOK := fun _ => True })
+    (z₁ z₂ w : M)
+    (c₁ c₂ : R)
     (pk : M)
-    (hv1 : A ft.z₁ = ft.w + ft.c₁ • pk)
-    (hv2 : A ft.z₂ = ft.w + ft.c₂ • pk) :
-    A (ft.z₁ - ft.z₂) = (ft.c₁ - ft.c₂) • pk :=
-  special_soundness_algebraic A ft.z₁ ft.z₂ ft.w pk ft.c₁ ft.c₂ hv1 hv2
+    (hv1 : A z₁ = w + c₁ • pk)
+    (hv2 : A z₂ = w + c₂ • pk) :
+    A (z₁ - z₂) = (c₁ - c₂) • pk :=
+  special_soundness_algebraic A z₁ z₂ w pk c₁ c₂ hv1 hv2
 
 /-!
 ## Connection to Nonce Safety
@@ -340,7 +327,7 @@ structure ThresholdResponseIndependence (S : Scheme) where
   response_sum : aggregateResponse = (Finset.univ.sum fun i => responses i)
   secret_sum : masterSecret = (Finset.univ.sum fun i => shares i)
   /-- Local independence (axiomatized - follows from rejection sampling) -/
-  local_independence : ∀ i, True  -- Each z_i independent of s_i
+  local_independence : ∀ (i : Fin n), True  -- Each z_i independent of s_i
 
 /-- The composition lemma: linearity preserves independence.
 

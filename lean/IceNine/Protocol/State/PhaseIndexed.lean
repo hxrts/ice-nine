@@ -54,7 +54,7 @@ import Mathlib
 namespace IceNine.Protocol.PhaseIndexed
 
 open IceNine.Protocol
-open IceNine.Protocol.Sign
+-- open IceNine.Protocol.Sign  -- Types are in IceNine.Protocol namespace
 
 /-!
 ## Per-Phase Data Structures
@@ -107,7 +107,7 @@ structure SharePhaseData (S : Scheme) where
     NOTE: Repr not derived because Signature and scheme types don't have Repr. -/
 structure DonePhaseData (S : Scheme) where
   /-- Final aggregated signature -/
-  signature : Sign.Signature S
+  signature : Signature S
   /-- Public key used -/
   publicKey : S.Public
   /-- Message signed -/
@@ -143,7 +143,7 @@ def addCommit (S : Scheme)
       .commit { data with commits := msg :: data.commits }
 
 /-- Check if ready to transition to reveal phase. -/
-def canTransitionToReveal [DecidableEq S.PartyId]
+def canTransitionToReveal (S : Scheme) [DecidableEq S.PartyId]
     (data : CommitPhaseData S) : Bool :=
   data.commits.length = data.expectedParties
 
@@ -171,7 +171,7 @@ def addReveal (S : Scheme)
       .reveal { data with reveals := msg :: data.reveals }
 
 /-- Check if ready to transition to shares phase. -/
-def canTransitionToShares [DecidableEq S.PartyId]
+def canTransitionToShares (S : Scheme) [DecidableEq S.PartyId]
     (data : RevealPhaseData S) : Bool :=
   data.reveals.length = data.expectedParties
 
@@ -204,14 +204,14 @@ def addShare (S : Scheme)
       .shares { data with shares := msg :: data.shares }
 
 /-- Check if ready to transition to done phase. -/
-def canTransitionToDone [DecidableEq S.PartyId]
+def canTransitionToDone (S : Scheme) [DecidableEq S.PartyId]
     (data : SharePhaseData S) : Bool :=
   data.shares.length ≥ data.threshold
 
 /-- Transition from shares to done phase (requires threshold shares). -/
 def transitionToDone (S : Scheme)
     (st : PhaseState S .shares)
-    (aggregatedSig : Sign.Signature S)
+    (aggregatedSig : Signature S)
     (publicKey : S.Public)
     (hready : match st with
       | .shares data => data.shares.length ≥ data.threshold)
@@ -244,7 +244,7 @@ Type-level proof that phases only move forward.
 -/
 
 /-- Phase ordering: commit < reveal < shares < done. -/
-def Phase.toNat : Phase → Nat
+def phaseToNat : Phase → Nat
   | .commit => 0
   | .reveal => 1
   | .shares => 2
@@ -252,29 +252,29 @@ def Phase.toNat : Phase → Nat
 
 /-- Phase comparison. -/
 instance : LT Phase where
-  lt a b := a.toNat < b.toNat
+  lt a b := phaseToNat a < phaseToNat b
 
 instance : LE Phase where
-  le a b := a.toNat ≤ b.toNat
+  le a b := phaseToNat a ≤ phaseToNat b
 
 /-- Decidable phase comparison. -/
 instance : DecidableRel (α := Phase) (· < ·) :=
-  fun a b => Nat.decLt a.toNat b.toNat
+  fun a b => Nat.decLt (phaseToNat a) (phaseToNat b)
 
 instance : DecidableRel (α := Phase) (· ≤ ·) :=
-  fun a b => Nat.decLe a.toNat b.toNat
+  fun a b => Nat.decLe (phaseToNat a) (phaseToNat b)
 
 /-- transitionToReveal advances the phase. -/
 theorem reveal_advances : Phase.commit < Phase.reveal := by
-  simp [LT.lt, Phase.toNat]
+  native_decide
 
 /-- transitionToShares advances the phase. -/
 theorem shares_advances : Phase.reveal < Phase.shares := by
-  simp [LT.lt, Phase.toNat]
+  native_decide
 
 /-- transitionToDone advances the phase. -/
 theorem done_advances : Phase.shares < Phase.done := by
-  simp [LT.lt, Phase.toNat]
+  native_decide
 
 /-!
 ## Extraction Functions
@@ -304,7 +304,7 @@ def getShares (S : Scheme) : {p : Phase} → PhaseState S p → List (SignShareM
   | .done, .done _ => []
 
 /-- Get final signature (only available in done phase). -/
-def getSignature (S : Scheme) (st : PhaseState S .done) : Sign.Signature S :=
+def getSignature (S : Scheme) (st : PhaseState S .done) : Signature S :=
   match st with
   | .done data => data.signature
 
@@ -327,22 +327,28 @@ def processCommitMsg (S : Scheme) (p : Phase)
     : Σ p', PhaseState S p' :=
   match p, st with
   | .commit, st' => ⟨.commit, addCommit S st' msg⟩
-  | _, st' => ⟨p, st'⟩  -- ignore in other phases
+  | .reveal, st' => ⟨.reveal, st'⟩
+  | .shares, st' => ⟨.shares, st'⟩
+  | .done, st' => ⟨.done, st'⟩
 
 /-- Process a reveal message if in reveal phase, otherwise no-op. -/
 def processRevealMsg (S : Scheme) (p : Phase)
     (st : PhaseState S p) (msg : DkgRevealMsg S)
     : Σ p', PhaseState S p' :=
   match p, st with
+  | .commit, st' => ⟨.commit, st'⟩
   | .reveal, st' => ⟨.reveal, addReveal S st' msg⟩
-  | _, st' => ⟨p, st'⟩
+  | .shares, st' => ⟨.shares, st'⟩
+  | .done, st' => ⟨.done, st'⟩
 
 /-- Process a share message if in shares phase, otherwise no-op. -/
 def processShareMsg (S : Scheme) (p : Phase)
     (st : PhaseState S p) (msg : SignShareMsg S)
     : Σ p', PhaseState S p' :=
   match p, st with
+  | .commit, st' => ⟨.commit, st'⟩
+  | .reveal, st' => ⟨.reveal, st'⟩
   | .shares, st' => ⟨.shares, addShare S st' msg⟩
-  | _, st' => ⟨p, st'⟩
+  | .done, st' => ⟨.done, st'⟩
 
 end IceNine.Protocol.PhaseIndexed

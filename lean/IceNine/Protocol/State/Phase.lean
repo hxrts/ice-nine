@@ -205,7 +205,18 @@ This makes conflicting messages **un-expressable** in the type system.
 left-biased merge definition; associativity follows similarly from fold order. -/
 
 /-- Helper: senders of merge = senders of left ++ new senders from right.
-    Note: Internal HashMap API, proof deferred. -/
+
+    **Mathematical justification**:
+    The merge operation `a ⊔ b` folds over `b.map`, adding entries whose keys
+    are not already in `a.map`. Therefore the resulting senders list contains:
+    - All senders from `a` (unchanged)
+    - Senders from `b` that were not already in `a`
+
+    This is exactly `a.senders ++ b.senders.filter (not in a)`.
+
+    **Note**: Uses sorry because Std.HashMap doesn't expose the fold/toList
+    relationship lemmas needed. The property is semantically obvious from
+    the merge definition but not directly provable with current HashMap API. -/
 theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId]
     (a b : MsgMap S M) :
@@ -213,14 +224,38 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
   sorry
 
 /-- MsgMap merge preserves the union of sender sets (as Finset).
-    Note: Depends on senders_merge and HashMap ordering properties. -/
+
+    **Mathematical justification**:
+    - `(a ⊔ b).senders` contains all senders from `a` plus senders from `b` not in `a`
+    - `(b ⊔ a).senders` contains all senders from `b` plus senders from `a` not in `b`
+    - As Finsets, both equal `a.senders ∪ b.senders` (set union is commutative)
+
+    The list ordering differs between `a ⊔ b` and `b ⊔ a`, but the sender *sets*
+    are identical. This is the key CRDT property: message order doesn't matter
+    for determining which parties have contributed.
+
+    **Note**: Uses sorry because it depends on `senders_merge` and Finset.toFinset
+    properties that require HashMap ordering lemmas not exposed by Std. -/
 theorem MsgMap.merge_senders_comm {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (a b : MsgMap S M) :
     (a ⊔ b).senders.toFinset = (b ⊔ a).senders.toFinset := by
   sorry
 
-/-- MsgMap merge is idempotent. -/
+/-- MsgMap merge is idempotent.
+
+    **Mathematical justification**:
+    When merging a MsgMap with itself, we fold over `a.map` with `a.map` as the
+    accumulator. For each `(k, v)` in `a.map`:
+    - We check `acc.contains k`
+    - Since `acc` is initially `a.map` and `k ∈ a.map`, this is always true
+    - So we always take the "then" branch, returning `acc` unchanged
+
+    Therefore `a.map.fold f a.map = a.map` and `a ⊔ a = a`.
+
+    **Note**: Uses sorry because Std.HashMap doesn't expose the required
+    extensionality lemmas for fold operations. The property is semantically
+    obvious but not directly provable with current HashMap API. -/
 theorem MsgMap.merge_idem {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId]
     (a : MsgMap S M) : a ⊔ a = a := by

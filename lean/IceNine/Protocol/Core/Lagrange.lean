@@ -99,13 +99,28 @@ def coeffAtZeroFinset {F : Type*} [Field F] [DecidableEq F] (s : Finset F) (part
   ∏ xj ∈ s.erase partyScalar, (xj / (xj - partyScalar))
 
 /-- Our coefficient matches the evaluation of Mathlib's Lagrange basis at 0.
-    This is the key connection to Mathlib's Lagrange interpolation theory. -/
+    This is the key connection to Mathlib's Lagrange interpolation theory.
+
+    **Mathematical justification**:
+    Our definition: `coeffAtZeroFinset s x = ∏ xj ∈ s.erase x, (xj / (xj - x))`
+
+    Mathlib's basis uses `basisDivisor`:
+      basis s v i = ∏ j ∈ s.erase i, basisDivisor (v i) (v j)
+      basisDivisor a b = (X - C b) / (C a - C b)
+
+    Evaluating basis at 0 with v = id:
+      eval 0 (basis s id x) = ∏ j ∈ s.erase x, eval 0 (basisDivisor x j)
+                            = ∏ j ∈ s.erase x, (0 - j) / (x - j)
+                            = ∏ j ∈ s.erase x, j / (j - x)
+
+    This matches our definition exactly.
+
+    **Note**: Uses sorry because the proof requires unfolding Mathlib's `basisDivisor`
+    definition and polynomial evaluation lemmas that are somewhat complex to compose.
+    The mathematical equivalence is straightforward. -/
 theorem coeffAtZeroFinset_eq_eval_basis {F : Type*} [Field F] [DecidableEq F]
     (s : Finset F) (x : F) :
     coeffAtZeroFinset s x = eval 0 (Lagrange.basis s id x) := by
-  classical
-  -- Proof via direct computation of Lagrange basis at 0
-  -- Both sides are products over s.erase x of x_j / (x_j - x)
   sorry
 
 /-- When the list is `Nodup`, the list and finset formulations coincide. -/
@@ -352,7 +367,33 @@ theorem coeff_nonzero_in_set {F : Type*} [Field F] [DecidableEq F]
     where λᵢ are the Lagrange coefficients at 0.
 
     This is the core property used in threshold cryptography: to reconstruct
-    the secret f(0), signers compute weighted combinations of their shares f(xᵢ). -/
+    the secret f(0), signers compute weighted combinations of their shares f(xᵢ).
+
+    **Mathematical justification**:
+    The theorem is mathematically straightforward - it's just Lagrange interpolation.
+    The proof has reduced the goal to showing:
+
+      `(List.zipWith (· * ·) coeffs values).sum = s.sum (fun x => r x * coeff x)`
+
+    where we've already established `coeff x = eval 0 (Lagrange.basis s id x)`.
+
+    **Note**: Uses sorry because the final step requires connecting:
+    1. List-based `zipWith` sum over paired (coeff, value) elements
+    2. Finset-based sum over `s = partyScalars.toFinset`
+    3. The value retrieval function `r` (using `findIdx?`)
+
+    The alignment is subtle:
+    - List indexing is positional: `coeffs[i] * values[i]`
+    - Finset sum is by element: `Σ_{x ∈ s} r(x) * coeff(x)`
+    - Must show `r(partyScalars[i]) = values[i]` for the mapping
+
+    With `Nodup`, the list-to-finset correspondence is bijective, but Mathlib
+    doesn't provide a direct lemma for `zipWith` over parallel lists mapping
+    to finset sums. The `List.sum_toFinset` lemma handles single lists but
+    not paired/zipped operations.
+
+    The `lagrange_weighted_sum` theorem below provides the finset-based version
+    that avoids this list/finset alignment issue. -/
 theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     (values : List F)
@@ -384,8 +425,8 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     rw [coeffAtZero_list_nodup x partyScalars hnodup]
     exact coeffAtZeroFinset_eq_eval_basis s x
   -- The zipWith sum equals the finset sum when properly aligned
-  -- This requires showing the list operations align with finset sum
-  sorry  -- The full proof requires careful list/finset alignment lemmas
+  -- Remaining: connect List.zipWith positional sum to Finset element-wise sum
+  sorry
 
 /-- Simplified interpolation for the common case where we just need the weighted sum.
     This avoids dealing with polynomial evaluation directly. -/
