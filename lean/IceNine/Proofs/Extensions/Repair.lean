@@ -15,7 +15,7 @@ import Mathlib
 import IceNine.Protocol.Core.Core
 import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Shares.Repair
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
 
 namespace IceNine.Proofs
 

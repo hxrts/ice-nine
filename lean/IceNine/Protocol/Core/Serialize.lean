@@ -305,7 +305,7 @@ This gives us:
 structure ByteRead where
   buffer : ByteArray
   pos : Nat
-  deriving Repr, BEq
+  deriving BEq
 
 /-- Result of a read operation: value and updated state -/
 abbrev ReadResult (α : Type) := Except String (α × ByteRead)
@@ -401,13 +401,13 @@ namespace ByteReader
 
 /-- Run a reader on a ByteArray, returning value and bytes consumed -/
 def run {α : Type} (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
-  match r.run (ByteRead.init bs) with
+  match StateT.run r (ByteRead.init bs) with
   | .ok (a, st) => some (a, st.pos)
   | .error _ => none
 
 /-- Run with error reporting -/
 def runWithError {α : Type} (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
-  match r.run (ByteRead.init bs) with
+  match StateT.run r (ByteRead.init bs) with
   | .ok (a, st) => .ok (a, st.pos)
   | .error e => .error e
 
@@ -490,10 +490,6 @@ def natFromBytesReader : ByteReader Nat := do
   return b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
          b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56
 
-/-- Decode Nat from 8-byte little-endian (legacy wrapper) -/
-def natFromBytes (bs : ByteArray) : Option Nat :=
-  (natFromBytesReader.run bs).map (·.1)
-
 /-- Encode Int as 8-byte little-endian (two's complement) -/
 def intToBytes (i : Int) : ByteArray :=
   let n := if i < 0 then (2^64 : Nat) - i.natAbs else i.toNat
@@ -503,10 +499,6 @@ def intToBytes (i : Int) : ByteArray :=
 def intFromBytesReader : ByteReader Int := do
   let n ← natFromBytesReader
   return if n ≥ 2^63 then Int.negOfNat (2^64 - n) else Int.ofNat n
-
-/-- Decode Int from 8-byte little-endian (legacy wrapper) -/
-def intFromBytes (bs : ByteArray) : Option Int :=
-  (intFromBytesReader.run bs).map (·.1)
 
 instance : Serializable Nat where
   toBytes := natToBytes
@@ -541,10 +533,10 @@ def optionReader {α : Type} [Serializable α] : ByteReader (Option α) := do
   let tag ← ByteReader.readByte
   match tag with
   | 0 => return none
-  | 1 => return some (← ByteReader.read)
+  | 1 => return some (← (ByteReader.read : ByteReader α))
   | t => throw s!"optionReader: invalid tag {t}, expected 0 or 1"
 
-instance {α : Type*} [Serializable α] : Serializable (Option α) where
+instance {α : Type} [Serializable α] : Serializable (Option α) where
   toBytes
     | none => ⟨#[0]⟩
     | some x => ⟨#[1]⟩ ++ Serializable.toBytes x
@@ -555,11 +547,11 @@ def listReader {α : Type} [Serializable α] : ByteReader (List α) := do
   let count ← ByteReader.readLen32
   let mut acc : List α := []
   for _ in [:count] do
-    let x ← ByteReader.read
+    let x ← (ByteReader.read : ByteReader α)
     acc := x :: acc
   return acc.reverse
 
-instance {α : Type*} [Serializable α] : Serializable (List α) where
+instance {α : Type} [Serializable α] : Serializable (List α) where
   toBytes xs :=
     let count := writeLen32 xs.length
     let elements := xs.foldl (fun acc x => acc ++ Serializable.toBytes x) ByteArray.empty
@@ -573,24 +565,45 @@ Bidirectional serialization for DKG and signing messages.
 Each message type has paired encode/decode functions using ByteReader.
 -/
 
-/-- DkgCommitMsg: sender + commitment -/
+-- ProofOfKnowledge: commitment (R) + response (μ)
+section ProofOfKnowledge
+variable (S : Scheme) [Serializable S.Public] [Serializable S.Secret]
+
+def serializeProofOfKnowledge (pok : ProofOfKnowledge S) : ByteArray :=
+  Serializable.toBytes pok.commitment ++ Serializable.toBytes pok.response
+
+def deserializeProofOfKnowledge : ByteReader (ProofOfKnowledge S) := do
+  let commitment ← (ByteReader.read : ByteReader S.Public)
+  let response ← (ByteReader.read : ByteReader S.Secret)
+  return { commitment, response }
+
+instance : Serializable (ProofOfKnowledge S) where
+  toBytes := serializeProofOfKnowledge S
+  fromBytes bs := (deserializeProofOfKnowledge S).run bs
+end ProofOfKnowledge
+
+-- DkgCommitMsg: sender + commitment + proof of knowledge
 section DkgCommitMsg
 variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Commitment]
+         [Serializable S.Public] [Serializable S.Secret]
 
 def serializeDkgCommitMsg (msg : DkgCommitMsg S) : ByteArray :=
-  Serializable.toBytes msg.sender ++ Serializable.toBytes msg.commitPk
+  Serializable.toBytes msg.sender ++
+  Serializable.toBytes msg.commitPk ++
+  serializeProofOfKnowledge S msg.pok
 
 def deserializeDkgCommitMsg : ByteReader (DkgCommitMsg S) := do
-  let sender ← ByteReader.read
-  let commitPk ← ByteReader.read
-  return { sender, commitPk }
+  let sender ← (ByteReader.read : ByteReader S.PartyId)
+  let commitPk ← (ByteReader.read : ByteReader S.Commitment)
+  let pok ← deserializeProofOfKnowledge S
+  return { sender, commitPk, pok }
 
 instance : Serializable (DkgCommitMsg S) where
   toBytes := serializeDkgCommitMsg S
   fromBytes bs := (deserializeDkgCommitMsg S).run bs
 end DkgCommitMsg
 
-/-- DkgRevealMsg: sender + pk_i + opening -/
+-- DkgRevealMsg: sender + pk_i + opening
 section DkgRevealMsg
 variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Public] [Serializable S.Opening]
 
@@ -600,9 +613,9 @@ def serializeDkgRevealMsg (msg : DkgRevealMsg S) : ByteArray :=
   Serializable.toBytes msg.opening
 
 def deserializeDkgRevealMsg : ByteReader (DkgRevealMsg S) := do
-  let sender ← ByteReader.read
-  let pk_i ← ByteReader.read
-  let opening ← ByteReader.read
+  let sender ← (ByteReader.read : ByteReader S.PartyId)
+  let pk_i ← (ByteReader.read : ByteReader S.Public)
+  let opening ← (ByteReader.read : ByteReader S.Opening)
   return { sender, pk_i, opening }
 
 instance : Serializable (DkgRevealMsg S) where
@@ -610,7 +623,7 @@ instance : Serializable (DkgRevealMsg S) where
   fromBytes bs := (deserializeDkgRevealMsg S).run bs
 end DkgRevealMsg
 
-/-- SignCommitMsg: sender + session + commitW + hiding + binding -/
+-- SignCommitMsg: sender + session + commitW + hiding + binding
 section SignCommitMsg
 variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Commitment] [Serializable S.Public]
 
@@ -622,11 +635,11 @@ def serializeSignCommitMsg (msg : SignCommitMsg S) : ByteArray :=
   Serializable.toBytes msg.bindingVal
 
 def deserializeSignCommitMsg : ByteReader (SignCommitMsg S) := do
-  let sender ← ByteReader.read
-  let session ← ByteReader.read
-  let commitW ← ByteReader.read
-  let hidingVal ← ByteReader.read
-  let bindingVal ← ByteReader.read
+  let sender ← (ByteReader.read : ByteReader S.PartyId)
+  let session ← (ByteReader.read : ByteReader Nat)
+  let commitW ← (ByteReader.read : ByteReader S.Commitment)
+  let hidingVal ← (ByteReader.read : ByteReader S.Public)
+  let bindingVal ← (ByteReader.read : ByteReader S.Public)
   return { sender, session, commitW, hidingVal, bindingVal }
 
 instance : Serializable (SignCommitMsg S) where
@@ -634,7 +647,7 @@ instance : Serializable (SignCommitMsg S) where
   fromBytes bs := (deserializeSignCommitMsg S).run bs
 end SignCommitMsg
 
-/-- SignRevealWMsg: sender + session + opening -/
+-- SignRevealWMsg: sender + session + opening
 section SignRevealWMsg
 variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Opening]
 
@@ -644,9 +657,9 @@ def serializeSignRevealWMsg (msg : SignRevealWMsg S) : ByteArray :=
   Serializable.toBytes msg.opening
 
 def deserializeSignRevealWMsg : ByteReader (SignRevealWMsg S) := do
-  let sender ← ByteReader.read
-  let session ← ByteReader.read
-  let opening ← ByteReader.read
+  let sender ← (ByteReader.read : ByteReader S.PartyId)
+  let session ← (ByteReader.read : ByteReader Nat)
+  let opening ← (ByteReader.read : ByteReader S.Opening)
   return { sender, session, opening }
 
 instance : Serializable (SignRevealWMsg S) where
@@ -654,7 +667,7 @@ instance : Serializable (SignRevealWMsg S) where
   fromBytes bs := (deserializeSignRevealWMsg S).run bs
 end SignRevealWMsg
 
-/-- SignShareMsg: sender + session + z_i -/
+-- SignShareMsg: sender + session + z_i
 section SignShareMsg
 variable (S : Scheme) [Serializable S.PartyId] [Serializable S.Secret]
 
@@ -664,9 +677,9 @@ def serializeSignShareMsg (msg : SignShareMsg S) : ByteArray :=
   Serializable.toBytes msg.z_i
 
 def deserializeSignShareMsg : ByteReader (SignShareMsg S) := do
-  let sender ← ByteReader.read
-  let session ← ByteReader.read
-  let z_i ← ByteReader.read
+  let sender ← (ByteReader.read : ByteReader S.PartyId)
+  let session ← (ByteReader.read : ByteReader Nat)
+  let z_i ← (ByteReader.read : ByteReader S.Secret)
   return { sender, session, z_i }
 
 instance : Serializable (SignShareMsg S) where
@@ -674,7 +687,7 @@ instance : Serializable (SignShareMsg S) where
   fromBytes bs := (deserializeSignShareMsg S).run bs
 end SignShareMsg
 
-/-- Signature: z + c + Sset + commits -/
+-- Signature: z + c + Sset + commits
 section Signature
 variable (S : Scheme) [Serializable S.Secret] [Serializable S.Challenge]
                       [Serializable S.PartyId] [Serializable S.Commitment]
@@ -686,10 +699,10 @@ def serializeSignature (sig : Signature S) : ByteArray :=
   Serializable.toBytes sig.commits
 
 def deserializeSignature : ByteReader (Signature S) := do
-  let z ← ByteReader.read
-  let c ← ByteReader.read
-  let Sset ← ByteReader.read
-  let commits ← ByteReader.read
+  let z ← (ByteReader.read : ByteReader S.Secret)
+  let c ← (ByteReader.read : ByteReader S.Challenge)
+  let Sset ← (ByteReader.read : ByteReader (List S.PartyId))
+  let commits ← (ByteReader.read : ByteReader (List S.Commitment))
   return { z, c, Sset, commits }
 
 instance : Serializable (Signature S) where
@@ -769,6 +782,7 @@ High-level serialization functions for common operations.
 /-- Wrap a DKG commit message for transport -/
 def wrapDkgCommit (S : Scheme)
     [Serializable S.PartyId] [Serializable S.Commitment]
+    [Serializable S.Public] [Serializable S.Secret]
     (msg : DkgCommitMsg S) : WrappedMessage :=
   { tag := .dkgCommit, payload := serializeDkgCommitMsg S msg }
 
@@ -796,8 +810,9 @@ def isValidWrappedMessage (bs : ByteArray) : Bool :=
   if bs.size < 5 then false
   else
     let lenBytes := bs.extract 1 5
-    match natFromBytes (lenBytes ++ ⟨#[0, 0, 0, 0]⟩) with
-    | some len => bs.size ≥ 5 + len
+    -- Use ByteReader to parse 4-byte length (padded to 8 bytes for natFromBytesReader)
+    match natFromBytesReader.run (lenBytes ++ ⟨#[0, 0, 0, 0]⟩) with
+    | some (len, _) => bs.size ≥ 5 + len
     | none => false
 
 /-- Get message tag without full parsing -/
@@ -835,7 +850,7 @@ def checkRoundTripWithError {α : Type} [Serializable α] [BEq α] [Repr α]
 def checkRoundTripReader {α : Type} [Serializable α] [BEq α] [Repr α]
     (x : α) : Except String Unit :=
   let bytes := Serializable.toBytes x
-  match ByteReader.runWithError ByteReader.read bytes with
+  match ByteReader.runWithError (ByteReader.read : ByteReader α) bytes with
   | .ok (y, consumed) =>
       if x == y then
         if consumed = bytes.size then .ok ()

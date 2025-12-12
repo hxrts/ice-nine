@@ -10,7 +10,8 @@ that satisfy the normOK constraints.
 
 import IceNine.Protocol.Core.Core
 import IceNine.Protocol.DKG.Core
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
 import IceNine.Instances
 import IceNine.Norms
 

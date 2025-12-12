@@ -13,7 +13,9 @@ This ensures CRDT convergence regardless of message order.
 import IceNine.Protocol.State.Phase
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Threshold
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
+import IceNine.Protocol.Sign.Threshold
 import IceNine.Protocol.Sign.ThresholdMerge
 
 namespace IceNine.Protocol

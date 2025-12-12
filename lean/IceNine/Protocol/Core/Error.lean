@@ -1,9 +1,13 @@
 /-
 # Error Handling Patterns
 
-Unified documentation and utilities for error types across the protocol.
-Each module defines domain-specific error types; this module provides
-the common patterns and re-exports for convenience.
+Unified error infrastructure for the Ice Nine protocol. This module provides:
+
+1. **BlameableError typeclass**: Identifies misbehaving parties for accountability
+2. **ToString instances**: Unified logging for all protocol error types
+3. **Error aggregation**: Utilities for collecting and categorizing errors
+4. **Result conversion**: Helpers for Except/Option interop
+5. **Generic validation errors**: Unified commit/reveal validation across protocols
 
 ## Design Philosophy
 
@@ -13,31 +17,39 @@ Error types in Ice Nine follow these principles:
 2. **Blame attribution**: Errors carry party IDs to identify misbehavior
 3. **Recoverable vs fatal**: Some errors allow continuation (complaints), others abort
 4. **Result types**: Use `Except` for operations that can fail
+5. **ToString consistency**: All errors have ToString instances for logging
 
 ## Error Categories
 
-| Module | Type | Category | Description |
-|--------|------|----------|-------------|
-| DKGCore | `DkgError` | Fatal | Protocol abort required |
-| DKGThreshold | `Complaint` | Recoverable | Party exclusion possible |
-| DKGThreshold | `ExclusionResult` | Result | Quorum check outcome |
-| VSS | `VSSError` | Fatal/Recoverable | Depends on complaint count |
-| RefreshCoord | `CommitValidationError` | Validation | Commit validation outcome |
-| RefreshCoord | `RevealValidationError` | Validation | Reveal validation outcome |
-| RepairCoord | `ContribCommitValidationError` | Validation | Commit validation outcome |
-| RepairCoord | `ContribRevealValidationError` | Validation | Reveal validation outcome |
+| Module | Type | Category | Blameable | Description |
+|--------|------|----------|-----------|-------------|
+| DKGCore | `DkgError` | Fatal | ✓ | Protocol abort required |
+| DKGThreshold | `Complaint` | Recoverable | ✓ | Party exclusion possible |
+| VSS | `VSSError` | Fatal/Recoverable | ✓ | Depends on complaint count |
+| Dealer | `DealerError` | Fatal | - | Setup failed |
+| Sign | `SignError` | Fatal | ✓ | Signing failed |
+| Sign | `BindingError` | Fatal | ✓ | Binding validation failed |
+| Sign | `AbortReason` | Info | ✓ | Abort details |
+| RefreshCoord | `CoordinatorError` | Fatal | - | Coordinator selection failed |
+| RefreshDKG | `RefreshDKGError` | Fatal | ✓ | Refresh failed |
+| Validation | `ValidationError` | Fatal | ✓ | Generic commit/reveal errors |
 -/
 
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Dealer
 import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.DKG.VSS
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.Shares.RefreshCoord
 import IceNine.Protocol.Shares.RepairCoord
+import IceNine.Protocol.Shares.RefreshDKG
 
 namespace IceNine.Protocol.Error
 
 open IceNine.Protocol
+open IceNine.Protocol.RefreshCoord
+open IceNine.Protocol.RefreshDKG
 
 /-!
 ## Cheater Detection Configuration
@@ -190,9 +202,10 @@ def optionToExcept {E A : Type*} (defaultErr : E) : Option A → Except E A
   | none => .error defaultErr
 
 /-!
-## Error Display
+## ToString Instances
 
-String conversion for logging/debugging.
+Unified string conversion for all protocol error types.
+Wire show* helper functions to ToString typeclass instances.
 -/
 
 /-- Display DkgError -/
@@ -202,10 +215,18 @@ def showDkgError {PartyId : Type*} [ToString PartyId] : DkgError PartyId → Str
   | .commitMismatch p => s!"DKG Error: commitment mismatch for party {p}"
   | .invalidProofOfKnowledge p => s!"DKG Error: invalid proof of knowledge from party {p}"
 
+/-- ToString instance for DkgError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (DkgError PartyId) :=
+  ⟨showDkgError⟩
+
 /-- Display Complaint -/
 def showComplaint {PartyId : Type*} [ToString PartyId] : Complaint PartyId → String
   | .openingMismatch p => s!"Complaint: opening mismatch by {p}"
   | .missingReveal p => s!"Complaint: missing reveal from {p}"
+
+/-- ToString instance for Complaint -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (Complaint PartyId) :=
+  ⟨showComplaint⟩
 
 /-- Display VSSError -/
 def showVSSError {PartyId : Type*} [ToString PartyId] : VSS.VSSError PartyId → String
@@ -217,11 +238,9 @@ def showVSSError {PartyId : Type*} [ToString PartyId] : VSS.VSSError PartyId →
       s!"VSS Error: threshold mismatch (expected {expected}, got {got})"
   | .duplicateDealer p => s!"VSS Error: duplicate dealer {p}"
 
-/-!
-## DealerError and CoordinatorError Display
-
-These errors are defined in their respective modules.
--/
+/-- ToString instance for VSSError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (VSS.VSSError PartyId) :=
+  ⟨showVSSError⟩
 
 /-- Display DealerError -/
 def showDealerError : DealerError → String := DealerError.toString
@@ -229,5 +248,208 @@ def showDealerError : DealerError → String := DealerError.toString
 /-- Display CoordinatorError -/
 def showCoordinatorError : RefreshCoord.CoordinatorError → String :=
   RefreshCoord.CoordinatorError.toString
+
+/-- Display SignError -/
+def showSignError {PartyId : Type*} [ToString PartyId] : SignError PartyId → String
+  | .lengthMismatch => "Sign Error: commits/reveals/shares count mismatch"
+  | .participantMismatch p => s!"Sign Error: unexpected participant {p}"
+  | .duplicateParticipants p => s!"Sign Error: duplicate participant {p}"
+  | .commitMismatch p => s!"Sign Error: commitment mismatch for party {p}"
+  | .sessionMismatch expected got =>
+      s!"Sign Error: session mismatch (expected {expected}, got {got})"
+  | .normCheckFailed p => s!"Sign Error: norm check failed for party {p}"
+  | .maxRetriesExceeded p => s!"Sign Error: max retries exceeded for party {p}"
+  | .sessionAborted sess => s!"Sign Error: session {sess} was aborted"
+
+/-- ToString instance for SignError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (SignError PartyId) :=
+  ⟨showSignError⟩
+
+/-- Display AbortReason -/
+def showAbortReason {PartyId : Type*} [ToString PartyId] : AbortReason PartyId → String
+  | .normBoundExceeded p attempt =>
+      s!"Abort: norm bound exceeded for party {p} (attempt {attempt})"
+  | .maxRetriesReached p => s!"Abort: max retries reached for party {p}"
+  | .coordinationFailure => "Abort: coordination failure"
+  | .timeout => "Abort: timeout"
+
+/-- ToString instance for AbortReason -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (AbortReason PartyId) :=
+  ⟨showAbortReason⟩
+
+/-- Display BindingError -/
+def showBindingError {PartyId : Type*} [ToString PartyId] : BindingError PartyId → String
+  | .missingBindingFactor p => s!"Binding Error: missing binding factor for party {p}"
+  | .bindingMismatch p => s!"Binding Error: binding mismatch for party {p}"
+  | .contextMismatch => "Binding Error: context mismatch"
+
+/-- ToString instance for BindingError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (BindingError PartyId) :=
+  ⟨showBindingError⟩
+
+/-- Display RefreshDKGError -/
+def showRefreshDKGError {PartyId : Type*} [ToString PartyId] : RefreshDKGError PartyId → String
+  | .missingCommit p => s!"RefreshDKG Error: missing commitment from party {p}"
+  | .missingShare from to => s!"RefreshDKG Error: missing share from {from} to {to}"
+  | .invalidShare p => s!"RefreshDKG Error: invalid share from party {p}"
+  | .thresholdMismatch expected got =>
+      s!"RefreshDKG Error: threshold mismatch (expected {expected}, got {got})"
+
+/-- ToString instance for RefreshDKGError -/
+instance {PartyId : Type*} [ToString PartyId] : ToString (RefreshDKGError PartyId) :=
+  ⟨showRefreshDKGError⟩
+
+/-!
+## Additional BlameableError Instances
+
+Add blame attribution for SignError, BindingError, AbortReason, and RefreshDKGError.
+-/
+
+/-- SignError is blameable for participant-specific errors -/
+instance {PartyId : Type*} : BlameableError (SignError PartyId) PartyId where
+  blamedParty
+    | .lengthMismatch => none
+    | .participantMismatch p => some p
+    | .duplicateParticipants p => some p
+    | .commitMismatch p => some p
+    | .sessionMismatch _ _ => none
+    | .normCheckFailed p => some p
+    | .maxRetriesExceeded p => some p
+    | .sessionAborted _ => none
+
+/-- BindingError is blameable for party-specific errors -/
+instance {PartyId : Type*} : BlameableError (BindingError PartyId) PartyId where
+  blamedParty
+    | .missingBindingFactor p => some p
+    | .bindingMismatch p => some p
+    | .contextMismatch => none
+
+/-- AbortReason is blameable for party-specific aborts -/
+instance {PartyId : Type*} : BlameableError (AbortReason PartyId) PartyId where
+  blamedParty
+    | .normBoundExceeded p _ => some p
+    | .maxRetriesReached p => some p
+    | .coordinationFailure => none
+    | .timeout => none
+
+/-- RefreshDKGError is blameable for party-specific errors -/
+instance {PartyId : Type*} : BlameableError (RefreshDKGError PartyId) PartyId where
+  blamedParty
+    | .missingCommit p => some p
+    | .missingShare from _ => some from  -- blame sender
+    | .invalidShare p => some p
+    | .thresholdMismatch _ _ => none
+
+/-!
+## Generic Validation Errors
+
+Unified validation error type for commit/reveal protocols.
+Replaces duplicate types in RefreshCoord and RepairCoord.
+-/
+
+/-- Protocol phase for validation context -/
+inductive ValidationPhase
+  | commit
+  | reveal
+  deriving DecidableEq, Repr
+
+/-- Generic validation error for commit/reveal protocols.
+    Unifies `CommitValidationError`, `RevealValidationError`,
+    `ContribCommitValidationError`, and `ContribRevealValidationError`. -/
+inductive ValidationError (PartyId Phase : Type*)
+  | wrongPhase (expected : Phase) (current : Phase)
+      -- Operation attempted in wrong phase
+  | notParticipant (sender : PartyId)
+      -- Sender is not a valid participant
+  | noCommit (sender : PartyId)
+      -- Reveal without prior commit
+  | invalidOpening (sender : PartyId)
+      -- Commitment doesn't open correctly
+  | conflict (sender : PartyId)
+      -- Conflicting message from same sender
+  deriving DecidableEq
+
+/-- ToString instance for ValidationError -/
+instance {PartyId Phase : Type*} [ToString PartyId] [ToString Phase]
+    : ToString (ValidationError PartyId Phase) where
+  toString
+    | .wrongPhase exp cur => s!"Validation Error: wrong phase (expected {exp}, got {cur})"
+    | .notParticipant p => s!"Validation Error: {p} is not a participant"
+    | .noCommit p => s!"Validation Error: reveal without commit from {p}"
+    | .invalidOpening p => s!"Validation Error: invalid opening from {p}"
+    | .conflict p => s!"Validation Error: conflicting message from {p}"
+
+/-- BlameableError instance for ValidationError -/
+instance {PartyId Phase : Type*} : BlameableError (ValidationError PartyId Phase) PartyId where
+  blamedParty
+    | .wrongPhase _ _ => none
+    | .notParticipant p => some p
+    | .noCommit p => some p
+    | .invalidOpening p => some p
+    | .conflict p => some p
+
+/-- Repr instance for ValidationError -/
+instance {PartyId Phase : Type*} [Repr PartyId] [Repr Phase]
+    : Repr (ValidationError PartyId Phase) where
+  reprPrec e _ := match e with
+    | .wrongPhase exp cur => s!"ValidationError.wrongPhase {repr exp} {repr cur}"
+    | .notParticipant p => s!"ValidationError.notParticipant {repr p}"
+    | .noCommit p => s!"ValidationError.noCommit {repr p}"
+    | .invalidOpening p => s!"ValidationError.invalidOpening {repr p}"
+    | .conflict p => s!"ValidationError.conflict {repr p}"
+
+/-!
+## Convenience Type Aliases
+
+Specialized validation errors for common protocol phases.
+-/
+
+/-- Validation error for commit phase -/
+abbrev CommitValidationErr (PartyId Phase : Type*) := ValidationError PartyId Phase
+
+/-- Validation error for reveal phase -/
+abbrev RevealValidationErr (PartyId Phase : Type*) := ValidationError PartyId Phase
+
+/-!
+## Error Conversion Utilities
+
+Convert between domain-specific and generic validation errors.
+These functions extract the sender from the conflicting message where available.
+-/
+
+/-- Convert RefreshCoord CommitValidationError to generic ValidationError.
+    Extracts the sender from the existing message for conflict cases.
+    Note: RefreshCoord.CommitValidationError has fewer cases than the generic type. -/
+def fromRefreshCommitError {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
+    (e : RefreshCoord.CommitValidationError S) : ValidationError S.PartyId RefreshPhase :=
+  match e with
+  | .wrongPhase p => .wrongPhase .commit p
+  | .conflict existing => .conflict existing.sender
+
+/-- Convert RefreshCoord RevealValidationError to generic ValidationError -/
+def fromRefreshRevealError {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
+    (e : RefreshCoord.RevealValidationError S) : ValidationError S.PartyId RefreshPhase :=
+  match e with
+  | .wrongPhase p => .wrongPhase .reveal p
+  | .noCommit p => .noCommit p
+  | .invalidOpening p => .invalidOpening p
+  | .conflict existing => .conflict existing.sender
+
+/-- Convert RepairCoord ContribCommitValidationError to generic ValidationError -/
+def fromRepairCommitError {S : Scheme}
+    (e : RepairCoord.ContribCommitValidationError S) : ValidationError S.PartyId RepairCoord.RepairPhase :=
+  match e with
+  | .wrongPhase p => .wrongPhase .commit p
+  | .notHelper p => .notParticipant p
+  | .conflict existing => .conflict existing.sender
+
+/-- Convert RepairCoord ContribRevealValidationError to generic ValidationError -/
+def fromRepairRevealError {S : Scheme}
+    (e : RepairCoord.ContribRevealValidationError S) : ValidationError S.PartyId RepairCoord.RepairPhase :=
+  match e with
+  | .wrongPhase p => .wrongPhase .reveal p
+  | .noCommit p => .noCommit p
+  | .invalidOpening p => .invalidOpening p
+  | .conflict existing => .conflict existing.sender
 
 end IceNine.Protocol.Error

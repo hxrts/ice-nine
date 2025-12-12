@@ -286,7 +286,7 @@ inductive SignError (PartyId : Type*) where
   | normCheckFailed : PartyId → SignError PartyId
   | maxRetriesExceeded : PartyId → SignError PartyId
   | sessionAborted : Nat → SignError PartyId
-deriving DecidableEq
+  deriving DecidableEq
 
 /-- Abort reason for detailed error reporting -/
 inductive AbortReason (PartyId : Type*) where
@@ -505,12 +505,6 @@ def ValidatableShare.session {S : Scheme} (vs : ValidatableShare S) : Nat :=
 /-- Access external context from a ValidatableShare. -/
 def ValidatableShare.context {S : Scheme} (vs : ValidatableShare S) : ExternalContext :=
   vs.share.context
-
-/-- Check if share is well-formed (basic syntax validation).
-    Does NOT verify cryptographic correctness - that requires the Scheme. -/
-def ValidatableShare.isWellFormed {S : Scheme} (_vs : ValidatableShare S) : Bool :=
-  -- Basic structural check - real validation would use the Scheme
-  true
 
 /-- EvidenceCarrier instance for ValidatableShare. -/
 instance (S : Scheme) : EvidenceCarrier (ValidatableShare S) where

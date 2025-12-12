@@ -200,7 +200,7 @@ inductive RefreshDKGError (PartyId : Type*)
   | missingShare : PartyId → PartyId → RefreshDKGError PartyId  -- from, to
   | invalidShare : PartyId → RefreshDKGError PartyId
   | thresholdMismatch : Nat → Nat → RefreshDKGError PartyId
-  deriving DecidableEq
+  deriving DecidableEq, Repr
 
 /-- Round 3: Aggregate all received shares to compute refresh delta.
     Each party sums: δ_i = f_i(i) + Σⱼ≠ᵢ f_j(i) -/

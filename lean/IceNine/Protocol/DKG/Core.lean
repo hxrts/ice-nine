@@ -175,6 +175,7 @@ inductive DkgError (PartyId : Type*) where
   | duplicatePids  : DkgError PartyId           -- same party appears twice
   | commitMismatch : PartyId → DkgError PartyId -- party's reveal doesn't match commit
   | invalidProofOfKnowledge : PartyId → DkgError PartyId -- party's PoK failed verification
+  deriving DecidableEq
 
 /-- Verify a single commit message's proof of knowledge.
     Called when commit is received, before reveal phase.

@@ -72,62 +72,33 @@ These protocol functions then compose domain prefixes with serialized data.
 
     **Protocol structure**: `H4(msg) = H(domain_msg || serialize(msg))`
 
-    **Usage**: Call this before computing binding factors or challenge.
-    The pre-hashed message is used in place of the raw message.
-
-    **Implementation note**: This function returns the domain prefix concatenated
-    with a placeholder. Concrete Schemes should override or extend this with
-    actual message serialization. The important invariant is that all parties
-    use the same serialization for the same message. -/
-def hashMessage (S : Scheme) (msg : S.Message) : ByteArray :=
-  -- Protocol structure: domain || serialized_message
-  -- The Message type is abstract; concrete schemes provide serialization
+    **Abstract function**: Returns domain prefix only. Concrete Scheme instantiations
+    must extend with actual message serialization via `S.serializeMessage`. -/
+def hashMessage (S : Scheme) (_msg : S.Message) : ByteArray :=
   HashDomain.message
-  -- In a concrete scheme: HashDomain.message ++ S.serializeMessage msg
 
 /-- Encode a list of commitments for hashing (FROST H5).
     Produces a canonical encoding of the commitment list.
 
-    **Protocol structure**: For each commitment in order:
-    ```
-    encode(commits) = domain_com ||
-      (pid_1 || hiding_1 || binding_1) ||
-      (pid_2 || hiding_2 || binding_2) || ...
-    ```
+    **Protocol structure**:
+    `encode(commits) = domain_com || (pid_1 || hiding_1 || binding_1) || ...`
 
-    **Usage**: Used in binding factor computation to ensure all parties
-    agree on the same commitment ordering and encoding.
-
-    **Ordering requirement**: Commits must be in a canonical order (e.g., sorted
-    by sender ID) before encoding. The protocol should ensure this.
-
-    **Implementation note**: This returns domain prefix only. Concrete Schemes
-    should extend with actual commitment serialization. -/
+    **Abstract function**: Returns domain prefix only. Concrete Scheme instantiations
+    must extend with serialization of party IDs and public commitments. -/
 def encodeCommitmentList (S : Scheme)
-    (commits : List (SignCommitMsg S)) : ByteArray :=
-  -- Protocol structure: domain || (pid || hiding || binding) for each commit
-  -- Length prefix could be added for unambiguous parsing
-  let _numCommits := commits.length
+    (_commits : List (SignCommitMsg S)) : ByteArray :=
   HashDomain.commitmentList
-  -- In a concrete scheme:
-  -- HashDomain.commitmentList ++
-  --   commits.foldl (fun acc c =>
-  --     acc ++ S.serializePartyId c.sender ++
-  --           S.serializePublic c.hidingVal ++
-  --           S.serializePublic c.bindingVal) ByteArray.empty
 
 /-- Hash a commitment list (FROST H5).
     Used in binding factor computation.
 
     **Protocol structure**: `H5(commits) = H(encode(commits))`
 
-    This applies the hash function to the encoded commitment list.
-    The encoding ensures canonical representation. -/
+    **Abstract function**: Returns encoded commitment list. Concrete Scheme instantiations
+    should apply their hash function to the result. -/
 def hashCommitmentList (S : Scheme)
     (commits : List (SignCommitMsg S)) : ByteArray :=
-  let encoded := encodeCommitmentList S commits
-  -- In production: apply S.hash or S.hashToScalar to encoded
-  encoded
+  encodeCommitmentList S commits
 
 /-!
 ## Binding Factor Computation (FROST H1)
@@ -248,7 +219,7 @@ inductive BindingError (PartyId : Type*)
   | missingBindingFactor : PartyId → BindingError PartyId
   | bindingMismatch : PartyId → BindingError PartyId
   | contextMismatch : BindingError PartyId
-  deriving DecidableEq
+  deriving DecidableEq, Repr
 
 /-- Validate that all signers have binding factors. -/
 def validateBindingFactorsPresent (S : Scheme) [DecidableEq S.PartyId]

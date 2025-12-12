@@ -22,7 +22,6 @@ import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.Sign.Threshold
-import IceNine.Protocol.Sign.Sign
 import IceNine.Protocol.Sign.Session
 import IceNine.Protocol.Core.Serialize
 import IceNine.Protocol.DKG.Dealer

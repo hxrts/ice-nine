@@ -25,6 +25,7 @@ other parties can file a complaint identifying the offender.
 inductive Complaint (PartyId : Type*) where
   | openingMismatch (accused : PartyId)  -- reveal doesn't match commitment
   | missingReveal (accused : PartyId)    -- party committed but never revealed
+  deriving DecidableEq
 
 /-!
 ## Complaint Collection

@@ -10,7 +10,7 @@ by making each party's contribution look random.
 -/
 
 import IceNine.Protocol.Core.Core
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
 
 namespace IceNine.Protocol
 

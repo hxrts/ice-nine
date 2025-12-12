@@ -33,7 +33,7 @@ for Module Lattices", Designs, Codes and Cryptography, 2015.
 -/
 
 import IceNine.Protocol.Core.Core
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.DKG.Core
 import IceNine.Instances
 import Mathlib
@@ -60,8 +60,14 @@ structure SISParams where
   q : Nat
   /-- Solution norm bound -/
   beta : Nat
-  /-- Security requirement: m > n log q for meaningful hardness -/
-  m_large : m > n * Nat.log2 q := by decide
+
+/-- Heuristic parameter-growth requirement for classic SIS hardness.
+
+This condition does **not** hold for standard Dilithium parameter sets; Dilithium’s
+security relies on different module/ring assumptions (MLWE/MSIS).
+-/
+def SISParams.mLarge (p : SISParams) : Prop :=
+  p.m > p.n * Nat.log2 p.q
 
 /-- SIS problem instance: public matrix A -/
 structure SISInstance (p : SISParams) where
@@ -89,18 +95,15 @@ def SISHard (p : SISParams) : Prop :=
     NOTE: The m_large constraint is not satisfied by standard Dilithium parameters.
     Dilithium's security relies on different lattice hardness arguments (MLWE/MSIS). -/
 def sisL1 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 78
-    m_large := by sorry }  -- Dilithium security uses different argument
+  { n := 256, m := 512, q := 8380417, beta := 78 }
 
 /-- NIST PQC (Dilithium3-ish) SIS parameters, Level 3 (~192-bit) -/
 def sisL3 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 120
-    m_large := by sorry }  -- Dilithium security uses different argument
+  { n := 256, m := 512, q := 8380417, beta := 120 }
 
 /-- NIST PQC (Dilithium5-ish) SIS parameters, Level 5 (~256-bit) -/
 def sisL5 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 196
-    m_large := by sorry }  -- Dilithium security uses different argument
+  { n := 256, m := 512, q := 8380417, beta := 196 }
 
 /-!
 ## Module Learning With Errors (MLWE) Problem

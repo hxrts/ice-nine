@@ -175,18 +175,6 @@ instance : ToString CoordinatorError := ⟨CoordinatorError.toString⟩
 ## Coordinator Selection
 -/
 
-/-- Select coordinator from party list (legacy, uses default on failure). -/
-def selectCoordinator {PartyId : Type*} [Inhabited PartyId]
-    (parties : List PartyId) (strategy : CoordinatorStrategy PartyId) : PartyId :=
-  match strategy with
-  | .fixed pid => pid
-  | .roundRobin round =>
-      let idx := round % parties.length
-      parties[idx]?.getD default
-  | .random seed =>
-      let idx := seed % parties.length
-      parties[idx]?.getD default
-
 /-- Select coordinator with explicit error handling.
 
     **Effect pattern**: Returns `Except CoordinatorError` for explicit error handling.
@@ -285,13 +273,8 @@ def initRefreshRound (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 ## Protocol Functions
 -/
 
-/-- Get the coordinator for this round (legacy, uses default on failure). -/
-def RefreshRoundState.coordinator {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) : S.PartyId :=
-  selectCoordinator st.parties st.coordStrategy
-
 /-- Get the coordinator for this round with explicit error handling. -/
-def RefreshRoundState.coordinatorE {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
+def RefreshRoundState.coordinator {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
     (st : RefreshRoundState S) : Except CoordinatorError S.PartyId :=
   selectCoordinatorE st.parties st.coordStrategy
 
@@ -425,33 +408,36 @@ def processRevealValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [De
 
 /-- Coordinator computes adjustment to achieve zero-sum.
     adjustment = -Σ_{i≠coord} m_i -/
-def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) : Option S.Secret :=
-  if st.phase = .adjust then
-    let coord := st.coordinator
-    -- Sum all revealed masks except coordinator's
-    let otherMasks := st.maskReveals.toList.filter (fun r => decide (r.sender ≠ coord))
-    let sumOthers := (otherMasks.map (·.mask)).sum
-    -- Adjustment is negation of sum
-    some (-sumOthers)
-  else none
+def computeAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RefreshRoundState S) : Except CoordinatorError S.Secret := do
+  if st.phase ≠ .adjust then
+    throw .emptyPartyList  -- reusing error type for wrong phase
+  let coord ← st.coordinator
+  -- Sum all revealed masks except coordinator's
+  let otherMasks := st.maskReveals.toList.filter (fun r => decide (r.sender ≠ coord))
+  let sumOthers := (otherMasks.map (·.mask)).sum
+  -- Adjustment is negation of sum
+  pure (-sumOthers)
 
 /-- Process adjustment from coordinator. -/
-def processAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
+def processAdjustment (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S) (msg : AdjustmentMsg S)
     : RefreshRoundState S :=
-  if st.phase = .adjust ∧ msg.coordinator = st.coordinator then
-    { st with
-      adjustment := some msg
-      phase := .apply }
-  else st
+  match st.coordinator with
+  | .ok coord =>
+      if st.phase = .adjust ∧ msg.coordinator = coord then
+        { st with
+          adjustment := some msg
+          phase := .apply }
+      else st
+  | .error _ => st
 
 /-- Compute masks for all parties, substituting coordinator's mask with adjustment. -/
-def computeFinalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) : Except String (List S.Secret) :=
+def computeFinalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RefreshRoundState S) : Except String (List S.Secret) := do
   match st.adjustment with
   | some adj =>
-      let coord := st.coordinator
+      let coord ← st.coordinator.mapError toString
       let masks := st.parties.map fun pid =>
         match st.maskReveals.get? pid with
         | some r => if pid = coord then adj.adjustment else r.mask
@@ -461,14 +447,14 @@ def computeFinalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidab
 
 /-- Verify zero-sum property after adjustment.
     Returns proof-friendly Prop rather than Bool. -/
-def zeroSumProp (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
+def zeroSumProp (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S) : Prop :=
   match computeFinalMasks S st with
   | .ok masks => masks.sum = 0
   | .error _ => False
 
 /-- Decidable zero-sum check. -/
-def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
+def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) : Bool :=
   match computeFinalMasks S st with
   | .ok masks => decide (masks.sum = 0)
@@ -479,27 +465,29 @@ def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq
 -/
 
 /-- Construct the mask lookup function. -/
-def makeMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) : MaskFn S :=
+def makeMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RefreshRoundState S) : Except CoordinatorError (MaskFn S) := do
   match st.adjustment with
   | some adj =>
-      let coord := st.coordinator
-      { mask := fun pid =>
+      let coord ← st.coordinator
+      pure { mask := fun pid =>
         match st.maskReveals.get? pid with
         | some r => if pid = coord then adj.adjustment else r.mask
         | none => 0 }
-  | none => { mask := fun _ => 0 }
+  | none => pure { mask := fun _ => 0 }
 
 /-- Construct the final mask function from refresh round, returning errors explicitly. -/
-def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
+def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) : Except String (MaskFn S) := do
   if ¬ decide (st.phase = .apply) then
     throw "not in apply phase"
   match computeFinalMasks S st with
   | .error e => throw e
   | .ok masks =>
-      if hzero : masks.sum = 0 then
-        pure (makeMaskFn S st)
+      if masks.sum = 0 then
+        match makeMaskFn S st with
+        | .ok fn => pure fn
+        | .error e => throw (toString e)
       else
         throw "zero-sum check failed"
 
@@ -512,50 +500,57 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
 
     See `Proofs/Extensions/RefreshCoord.lean` for helper theorems to construct
     the proof from `hmasks` and `hzero`. -/
-def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S)
-    (hsum : st.parties.toFinset.sum (makeMaskFn S st).mask = 0)
+def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RefreshRoundState S) (maskFn : MaskFn S)
+    (hsum : st.parties.toFinset.sum maskFn.mask = 0)
     : ZeroSumMaskFn S (List.toFinset st.parties) :=
-  { fn := makeMaskFn S st
+  { fn := maskFn
     sum_zero := hsum
     }
 
 /-- Helper: prove mask function equals computed masks. -/
 private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) (masks : List S.Secret)
+    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
+    (st : RefreshRoundState S) (masks : List S.Secret) (maskFn : MaskFn S)
+    (hmaskFn : makeMaskFn S st = .ok maskFn)
     (hmasks : computeFinalMasks S st = .ok masks) :
-    st.parties.map (fun pid => (makeMaskFn S st).mask pid) = masks := by
+    st.parties.map (fun pid => maskFn.mask pid) = masks := by
   unfold computeFinalMasks at hmasks
-  unfold makeMaskFn
+  unfold makeMaskFn at hmaskFn
   cases hadj : st.adjustment with
-  | none => simp only [hadj] at hmasks
+  | none => simp only [hadj] at hmasks hmaskFn
   | some adj =>
-    simp only [hadj] at hmasks ⊢
-    injection hmasks with heq
-    exact heq.symm
+    simp only [hadj] at hmasks hmaskFn ⊢
+    cases hcoord : st.coordinator with
+    | error _ => simp only [hcoord] at hmaskFn hmasks
+    | ok coord =>
+      simp only [hcoord, Except.bind_ok] at hmaskFn hmasks
+      injection hmaskFn with hfn
+      injection hmasks with heq
+      rw [← hfn, ← heq]
 
 /-- Helper: derive zero-sum proof from runtime checks. -/
 private theorem constructZeroSumMask_proof (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
+    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S)
-    (masks : List S.Secret)
+    (masks : List S.Secret) (maskFn : MaskFn S)
+    (hmaskFn : makeMaskFn S st = .ok maskFn)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    st.parties.toFinset.sum (makeMaskFn S st).mask = 0 := by
-  have heq := makeMaskFn_eq_finalMasks_aux S st masks hmasks
+    st.parties.toFinset.sum maskFn.mask = 0 := by
+  have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
   have hperm : st.parties.toFinset.toList.Perm st.parties :=
     List.toFinset_toList hnodup
   rw [Finset.sum_toList]
-  have hmap_perm : (st.parties.toFinset.toList.map (makeMaskFn S st).mask).Perm
-                   (st.parties.map (makeMaskFn S st).mask) :=
+  have hmap_perm : (st.parties.toFinset.toList.map maskFn.mask).Perm
+                   (st.parties.map maskFn.mask) :=
     List.Perm.map _ hperm
   rw [hmap_perm.sum_eq, heq, hzero]
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/
-def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
+def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S)
     : Option (ZeroSumMaskFn S (List.toFinset st.parties)) :=
   if _hphase : st.phase = .apply then
@@ -564,8 +559,11 @@ def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [D
     | .ok masks =>
         if hzero : masks.sum = 0 then
           if hnodup : st.parties.Nodup then
-            let hsum := constructZeroSumMask_proof S st masks hmatch hzero hnodup
-            some (constructZeroSumMask S st hsum)
+            match hmaskFn : makeMaskFn S st with
+            | .error _ => none
+            | .ok maskFn =>
+                let hsum := constructZeroSumMask_proof S st masks maskFn hmaskFn hmatch hzero hnodup
+                some (constructZeroSumMask S st maskFn hsum)
           else none
         else none
   else none

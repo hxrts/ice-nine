@@ -48,7 +48,7 @@ This module provides an alternative to the runtime-checked Phase.lean.
 
 import IceNine.Protocol.Core.Core
 import IceNine.Protocol.State.Phase
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
 import Mathlib
 
 namespace IceNine.Protocol.PhaseIndexed

@@ -12,7 +12,8 @@ NOTE: Some theorems are stubbed due to API changes in the signing protocol
 -/
 
 import Mathlib
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.Core.Serialize
 

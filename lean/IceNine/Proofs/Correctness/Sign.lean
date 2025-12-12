@@ -11,7 +11,9 @@ signing protocol (validateSigning now requires BindingFactors parameter).
 These will be updated once the binding factor infrastructure is stabilized.
 -/
 
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
+import IceNine.Protocol.Sign.Threshold
 
 namespace IceNine.Proofs.Correctness.Sign
 

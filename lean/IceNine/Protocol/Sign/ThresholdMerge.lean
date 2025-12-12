@@ -17,7 +17,9 @@ This module provides three merge strategies:
 -/
 
 import IceNine.Protocol.State.Phase
-import IceNine.Protocol.Sign.Sign
+import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Core
+import IceNine.Protocol.Sign.Threshold
 
 namespace IceNine.Protocol
 
