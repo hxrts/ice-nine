@@ -162,7 +162,7 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
                     simp only [hx, Bool.false_or]
                 -- Finish by induction.
                 simp only [List.foldl_cons]
-                rw [step_preserves, ih hxs]
+                rw [ih hxs (stepKV init x), step_preserves]
           have hPrefix :
               (as.foldl stepKV a.map).contains k = a.map.contains k :=
             prefix_preserves as has a.map

@@ -1,9 +1,10 @@
 # Summary
 
-- [Ice Nine Protocol Specification](00_overview.md)
-- [Algebraic Setting](01_algebra.md)
-- [Key Generation](02_keygen.md)
-- [Two-Round Threshold Signing](03_signing.md)
-- [Verification](04_verification.md)
-- [Extensions](05_extensions.md)
-- [Protocol Integration](06_integration.md)
+- [Ice Nine Protocol Specification](000_overview.md)
+- [Algebraic Setting](001_algebra.md)
+- [Key Generation](002_keygen.md)
+- [Two-Round Threshold Signing](003_signing.md)
+- [Verification](004_verification.md)
+- [Extensions](005_extensions.md)
+- [Protocol Integration](006_integration.md)
+- [Configuration](100_configuration.md)
