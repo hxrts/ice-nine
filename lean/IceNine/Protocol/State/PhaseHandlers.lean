@@ -61,7 +61,8 @@ def stepShare
   (msg : SignShareMsg S)
   (st  : ShareWithCtx S) : ShareWithCtx S :=
 -- Add share using MsgMap insertion, preserve everything else
-⟨st.state.addShare msg, st.ctx⟩
+-- active_inv is preserved since addShare only modifies shares, not active
+⟨st.state.addShare msg, st.ctx, st.active_inv⟩
 
 /-!
 ## Finalization

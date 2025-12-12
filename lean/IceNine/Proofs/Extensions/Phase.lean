@@ -342,11 +342,11 @@ theorem MsgMap.merge_idem {S : Scheme} {M : Type*}
       have hfoldl : m.toList.foldl (fun acc kv => step acc kv.1 kv.2) m = m := by
         apply foldl_step_noop
         intro kv hkv
-        -- Membership in toList implies contains
-        have : kv.1 ∈ m := Std.HashMap.mem_toList.mp hkv
-        exact Std.HashMap.contains_of_mem this
+        -- kv ∈ m.toList means kv.1 ∈ m, hence m.contains kv.1
+        have hmem : kv.1 ∈ m := (Std.HashMap.mem_toList_iff.mp hkv).1
+        exact Std.HashMap.contains_iff_mem.mpr hmem
       -- Combine to get the record equality
-      simp only [hfold, hfoldl]
+      rw [hfold, hfoldl]
 
 /-!
 ## Handler Monotonicity
@@ -365,16 +365,16 @@ private lemma msgMap_insert_monotone (S : Scheme) {M : Type*}
   classical
   let sender : S.PartyId := getSender msg
   -- Unfold MsgMap.insert for both a and b
-  simp only [MsgMap.insert] at hk ⊢
+  unfold MsgMap.insert at hk ⊢
   by_cases hbSender : b.map.contains sender = true
   · -- `b` already contains the sender, so insertion is a no-op for `b`.
-    simp only [hbSender, ↓reduceIte]
+    rw [if_pos hbSender]
     by_cases haSender : a.map.contains sender = true
     · -- Insertion is also a no-op for `a`.
-      simp only [haSender, ↓reduceIte] at hk
+      rw [if_pos haSender] at hk
       exact hab k hk
     · -- `a` inserts the sender.
-      simp only [haSender, Bool.false_eq_true, ↓reduceIte] at hk
+      rw [if_neg haSender] at hk
       rw [Std.HashMap.contains_insert] at hk
       rcases (Bool.or_eq_true _ _).mp hk with hEq | hkA
       · -- k = sender
@@ -384,13 +384,13 @@ private lemma msgMap_insert_monotone (S : Scheme) {M : Type*}
       · -- k ∈ a
         exact hab k hkA
   · -- `b` does not contain the sender, so insertion updates `b`.
-    simp only [hbSender, Bool.false_eq_true, ↓reduceIte]
+    rw [if_neg hbSender]
     by_cases haSender : a.map.contains sender = true
     · -- Impossible: `a ≤ b` would force `b` to contain the sender.
-      have : b.map.contains sender = true := hab sender haSender
-      simp only [this, not_true_eq_false] at hbSender
+      have hbHas : b.map.contains sender = true := hab sender haSender
+      exact absurd hbHas hbSender
     · -- Both maps insert the sender.
-      simp only [haSender, Bool.false_eq_true, ↓reduceIte] at hk
+      rw [if_neg haSender] at hk
       rw [Std.HashMap.contains_insert] at hk ⊢
       rcases (Bool.or_eq_true _ _).mp hk with hEq | hkA
       · -- k = sender

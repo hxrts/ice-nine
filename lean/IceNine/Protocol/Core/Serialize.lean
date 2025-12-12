@@ -358,27 +358,31 @@ def skip (n : Nat) (st : ByteRead) : ReadResult Unit :=
     .ok ((), { st with pos := st.pos + n })
 
 /-- Read 4-byte little-endian length prefix -/
-def readLen32 (st : ByteRead) : ReadResult Nat := do
-  let (bs, st') ← readBytes 4 st
-  let b0 := bs.get! 0 |>.toNat
-  let b1 := bs.get! 1 |>.toNat
-  let b2 := bs.get! 2 |>.toNat
-  let b3 := bs.get! 3 |>.toNat
-  return (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24, st')
+def readLen32 (st : ByteRead) : ReadResult Nat :=
+  match readBytes 4 st with
+  | .error e => .error e
+  | .ok (bs, st') =>
+      let b0 := bs.get! 0 |>.toNat
+      let b1 := bs.get! 1 |>.toNat
+      let b2 := bs.get! 2 |>.toNat
+      let b3 := bs.get! 3 |>.toNat
+      .ok (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24, st')
 
 /-- Read 8-byte little-endian Nat -/
-def readNat64 (st : ByteRead) : ReadResult Nat := do
-  let (bs, st') ← readBytes 8 st
-  let b0 := bs.get! 0 |>.toNat
-  let b1 := bs.get! 1 |>.toNat
-  let b2 := bs.get! 2 |>.toNat
-  let b3 := bs.get! 3 |>.toNat
-  let b4 := bs.get! 4 |>.toNat
-  let b5 := bs.get! 5 |>.toNat
-  let b6 := bs.get! 6 |>.toNat
-  let b7 := bs.get! 7 |>.toNat
-  return (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
-          b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56, st')
+def readNat64 (st : ByteRead) : ReadResult Nat :=
+  match readBytes 8 st with
+  | .error e => .error e
+  | .ok (bs, st') =>
+      let b0 := bs.get! 0 |>.toNat
+      let b1 := bs.get! 1 |>.toNat
+      let b2 := bs.get! 2 |>.toNat
+      let b3 := bs.get! 3 |>.toNat
+      let b4 := bs.get! 4 |>.toNat
+      let b5 := bs.get! 5 |>.toNat
+      let b6 := bs.get! 6 |>.toNat
+      let b7 := bs.get! 7 |>.toNat
+      .ok (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
+           b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56, st')
 
 end ByteRead
 
@@ -396,19 +400,19 @@ abbrev ByteReader := StateT ByteRead (Except String)
 namespace ByteReader
 
 /-- Run a reader on a ByteArray, returning value and bytes consumed -/
-def run (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
+def run {α : Type} (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
   match r.run (ByteRead.init bs) with
   | .ok (a, st) => some (a, st.pos)
   | .error _ => none
 
 /-- Run with error reporting -/
-def runWithError (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
+def runWithError {α : Type} (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
   match r.run (ByteRead.init bs) with
   | .ok (a, st) => .ok (a, st.pos)
   | .error e => .error e
 
 /-- Lift ByteRead operation into ByteReader -/
-def lift (op : ByteRead → ReadResult α) : ByteReader α := do
+def lift {α : Type} (op : ByteRead → ReadResult α) : ByteReader α := do
   let st ← get
   match op st with
   | .ok (a, st') => set st'; return a
@@ -442,7 +446,7 @@ def readLen32 : ByteReader Nat := lift ByteRead.readLen32
 def readNat64 : ByteReader Nat := lift ByteRead.readNat64
 
 /-- Read a value using its Serializable instance -/
-def read [Serializable α] : ByteReader α := do
+def read {α : Type} [Serializable α] : ByteReader α := do
   let st ← get
   let rest := st.buffer.extract st.pos st.buffer.size
   match Serializable.fromBytes rest with
@@ -533,7 +537,7 @@ Uses ByteReader for safe, composable deserialization.
 -/
 
 /-- ByteReader for Option: 0x00 for none, 0x01 + value for some -/
-def optionReader [Serializable α] : ByteReader (Option α) := do
+def optionReader {α : Type} [Serializable α] : ByteReader (Option α) := do
   let tag ← ByteReader.readByte
   match tag with
   | 0 => return none
@@ -547,7 +551,7 @@ instance {α : Type*} [Serializable α] : Serializable (Option α) where
   fromBytes bs := optionReader.run bs
 
 /-- ByteReader for List: 4-byte count + elements -/
-def listReader [Serializable α] : ByteReader (List α) := do
+def listReader {α : Type} [Serializable α] : ByteReader (List α) := do
   let count ← ByteReader.readLen32
   let mut acc : List α := []
   for _ in [:count] do
@@ -810,13 +814,13 @@ Use these in tests to catch encode/decode mismatches.
 
 /-- Check that a value round-trips through serialization.
     Returns `true` if `fromBytes (toBytes x) = some (x, _)` -/
-def checkRoundTrip [Serializable α] [BEq α] (x : α) : Bool :=
+def checkRoundTrip {α : Type} [Serializable α] [BEq α] (x : α) : Bool :=
   match Serializable.fromBytes (Serializable.toBytes x) with
   | some (y, _) => x == y
   | none => false
 
 /-- Check round-trip with detailed error reporting -/
-def checkRoundTripWithError [Serializable α] [BEq α] [Repr α]
+def checkRoundTripWithError {α : Type} [Serializable α] [BEq α] [Repr α]
     (x : α) : Except String Unit :=
   let bytes := Serializable.toBytes x
   match Serializable.fromBytes bytes with
@@ -828,7 +832,7 @@ def checkRoundTripWithError [Serializable α] [BEq α] [Repr α]
   | none => .error s!"deserialization failed for {repr x} (bytes: {bytes.size})"
 
 /-- Check round-trip using ByteReader with error details -/
-def checkRoundTripReader [Serializable α] [BEq α] [Repr α]
+def checkRoundTripReader {α : Type} [Serializable α] [BEq α] [Repr α]
     (x : α) : Except String Unit :=
   let bytes := Serializable.toBytes x
   match ByteReader.runWithError ByteReader.read bytes with
@@ -840,12 +844,12 @@ def checkRoundTripReader [Serializable α] [BEq α] [Repr α]
   | .error e => .error s!"deserialization failed: {e}"
 
 /-- Property: serialization is injective (different values → different bytes) -/
-def checkInjective [Serializable α] [BEq α] (x y : α) : Bool :=
+def checkInjective {α : Type} [Serializable α] [BEq α] (x y : α) : Bool :=
   if x == y then true
   else Serializable.toBytes x != Serializable.toBytes y
 
 /-- Property: deserialization consumes all bytes for exact-length input -/
-def checkExactConsumption [Serializable α] (x : α) : Bool :=
+def checkExactConsumption {α : Type} [Serializable α] (x : α) : Bool :=
   let bytes := Serializable.toBytes x
   match Serializable.fromBytes bytes with
   | some (_, consumed) => consumed = bytes.size
