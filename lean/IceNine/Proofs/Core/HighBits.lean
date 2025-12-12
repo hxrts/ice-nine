@@ -188,7 +188,6 @@ theorem lowBits_bounded (r : Int) (alpha : Nat) (hα : alpha > 0) :
       exact_mod_cast hNat
     have hRewrite :
         (2 * (alpha / 2) + 1 : Int) = (alpha / 2 : Int) + 1 + (alpha / 2 : Int) := by
-      simp [Int.natCast_add, Int.natCast_mul]
       ring
     have hAlphaLe : (alpha : Int) ≤ (alpha / 2 : Int) + 1 + (alpha / 2 : Int) := by
       simpa [hRewrite] using hInt

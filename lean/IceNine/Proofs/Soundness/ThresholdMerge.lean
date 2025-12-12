@@ -12,11 +12,11 @@ The merge must:
 
 ## Design
 
-The `ShareWithCtx` structure now includes an `active_inv` field that encodes
+The `ShareWithCtx` structure includes an `active_inv` field that encodes
 the invariant `ctx.active ⊆ state.active`. This allows the merge functions
-to prove threshold validity without sorry.
+to prove threshold validity directly.
 
-The proofs are now inline in the definitions (Protocol/Sign/ThresholdMerge.lean).
+The proofs are inline in the definitions (Protocol/Sign/ThresholdMerge.lean).
 This file provides additional theorems about merge properties.
 -/
 
@@ -33,7 +33,7 @@ variable (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyI
 ## Merge Strategy Properties
 
 These theorems document the key properties of the merge operations.
-The proofs are now complete (no sorry) thanks to the `active_inv` invariant.
+All proofs are complete thanks to the `active_inv` invariant.
 -/
 
 /-- Conservative merge preserves threshold validity.
@@ -79,9 +79,8 @@ theorem full_merge_preserves_inv [Field S.Scalar] [DecidableEq S.Scalar]
 /-!
 ## Cardinality Lemma (Standalone)
 
-This is the key lemma that was previously sorry'd in `mergeShareWithCtx`.
-Now it's proved inline using the `active_inv` invariant, but we provide
-a standalone version for reference.
+This lemma is proved inline in `mergeShareWithCtx` using the `active_inv` invariant.
+We provide a standalone version for reference and reuse.
 -/
 
 /-- Cardinality lemma: max threshold ≤ merged cardinality.

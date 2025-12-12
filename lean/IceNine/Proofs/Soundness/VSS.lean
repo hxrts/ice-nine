@@ -88,16 +88,19 @@ and later claim it was a different polynomial.
 /-- Binding: polynomial commitment determines the polynomial (up to A's kernel).
     If A is injective (lattice setting), commitment uniquely determines polynomial.
 
-    NOTE: Proof uses sorry due to complex type class interaction with
-    List.map_injective. The theorem is mathematically straightforward:
-    if A is injective and [A(a₀),...] = [A(b₀),...], then aᵢ = bᵢ. -/
+    The proof uses injectivity of A: if A(aᵢ) = A(bᵢ) for all i, then aᵢ = bᵢ. -/
 theorem vss_binding
     (S : Scheme) [Semiring S.Secret]
     (p1 p2 : VSS.Polynomial S.Secret)
     (hA : Function.Injective S.A)
     (heq : VSS.commitPolynomial S p1 = VSS.commitPolynomial S p2) :
     p1.coeffs = p2.coeffs := by
-  sorry
+  -- Extract that the commitment lists are equal
+  have hcomm : p1.coeffs.map S.A = p2.coeffs.map S.A := by
+    simp only [VSS.commitPolynomial, VSS.Polynomial.threshold] at heq
+    exact congrArg (·.commitments) heq
+  -- Use injectivity of A to conclude coefficients are equal
+  exact List.map_injective_iff.mpr hA hcomm
 
 /-!
 ## Hiding (t-privacy)
@@ -127,27 +130,45 @@ A complaint is valid iff the share genuinely fails verification.
 This allows public verification of misbehavior.
 -/
 
+/-- Helper: verifyShareBool reflects verifyShare as a Prop. -/
+lemma verifyShareBool_iff_verifyShare
+    (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
+    (comm : VSS.PolyCommitment S) (share : VSS.VSSShare S) :
+    VSS.verifyShareBool S comm share = true ↔ VSS.verifyShare S comm share := by
+  simp only [VSS.verifyShareBool, VSS.verifyShare, beq_iff_eq]
+
 /-- Valid complaints identify genuinely bad shares.
 
-    NOTE: Uses sorry due to complex simp lemma interaction with Bool negation.
-    The theorem is definitionally true: verifyComplaint returns true iff
-    verifyShareBool returns false. -/
+    The proof connects verifyComplaint (which is !verifyShareBool) to verifyShare. -/
 theorem complaint_sound
     (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (complaint : VSSComplaint S)
     (hvalid : VSS.verifyComplaint S complaint = true) :
     ¬VSS.verifyShare S complaint.commitment complaint.badShare := by
-  sorry
+  -- verifyComplaint = !verifyShareBool, so hvalid means verifyShareBool = false
+  simp only [VSS.verifyComplaint, Bool.not_eq_true'] at hvalid
+  -- verifyShareBool = false means ¬verifyShare
+  intro hcontra
+  -- Use the iff to convert verifyShare to verifyShareBool = true
+  have hbool : VSS.verifyShareBool S complaint.commitment complaint.badShare = true :=
+    (verifyShareBool_iff_verifyShare S complaint.commitment complaint.badShare).mpr hcontra
+  -- But we know verifyShareBool = false
+  rw [hbool] at hvalid
+  exact Bool.false_ne_true hvalid
 
 /-- False complaints can be identified (shares that actually verify).
 
-    NOTE: Uses sorry for the same reasons as complaint_sound. -/
+    The proof shows that if verifyComplaint is false, then verifyShareBool is true,
+    hence verifyShare holds. -/
 theorem complaint_complete
     (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (complaint : VSSComplaint S)
     (hfalse : VSS.verifyComplaint S complaint = false) :
     VSS.verifyShare S complaint.commitment complaint.badShare := by
-  sorry
+  -- verifyComplaint = !verifyShareBool, so hfalse means verifyShareBool = true
+  simp only [VSS.verifyComplaint, Bool.not_eq_false'] at hfalse
+  -- verifyShareBool = true means verifyShare
+  exact (verifyShareBool_iff_verifyShare S complaint.commitment complaint.badShare).mp hfalse
 
 /-!
 ## Reconstruction Security

@@ -2,13 +2,12 @@
 # Signing Security Proofs
 
 Validation lemmas and mask invariants for the signing protocol:
-- Error conditions: characterize when validateSigning returns each error
 - Mask invariance: zero-sum masks don't change aggregated signature
 - Threshold soundness: shares from active set produce correct Sset
+- Nonce reuse attack formalization and prevention via session tracking
 
-NOTE: Many lemmas are currently stubbed with `sorry` due to API changes in the
-signing protocol (validateSigning now requires BindingFactors parameter).
-These will be updated once the binding factor infrastructure is stabilized.
+Note: Error characterization lemmas for validateSigning are not included here
+as they depend on the specific BindingFactors parameter structure.
 -/
 
 import IceNine.Protocol.Sign.Types
@@ -61,6 +60,18 @@ Zero-sum masks don't change the aggregated signature.
 Key for rerandomization security.
 -/
 
+/-- Helper: sum of mapped additions distributes.
+    Σ(z_i + m_i) = Σz_i + Σm_i -/
+lemma sum_map_add_eq {α M : Type*} [AddCommMonoid M]
+    (xs : List α) (f g : α → M) :
+    (xs.map (fun x => f x + g x)).sum = (xs.map f).sum + (xs.map g).sum := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.map_cons, List.sum_cons]
+    rw [ih]
+    abel
+
 /-- Masks add to z: masked shares aggregate to z + Σmasks. -/
 lemma aggregateSignature_add_masks
   (S    : Scheme)
@@ -73,9 +84,14 @@ lemma aggregateSignature_add_masks
   (aggregateSignature S c Sset commits shares').z
     = (aggregateSignature S c Sset commits shares).z
       + (shares.map (fun sh => mask sh.sender)).sum := by
-  unfold aggregateSignature
-  -- Proof requires showing sum distributes over the mapped transformation
-  sorry
+  simp only [aggregateSignature]
+  -- shares'.map (·.z_i) = shares.map (fun sh => sh.z_i + mask sh.sender)
+  have hmap : (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender })).map (·.z_i)
+            = shares.map (fun sh => sh.z_i + mask sh.sender) := by
+    simp only [List.map_map, Function.comp]
+  rw [hmap]
+  -- Apply sum_map_add_eq
+  rw [sum_map_add_eq shares (fun sh => sh.z_i) (fun sh => mask sh.sender)]
 
 /-- Zero-sum masks: if Σ mask(i) = 0, masked aggregate = original.
     This is the key property for rerandomization privacy. -/
@@ -86,11 +102,19 @@ lemma aggregateSignature_masks_zero
   (commits : List S.Commitment)
   (shares : List (SignShareMsg S))
   (mask : S.PartyId → S.Secret)
-  (_hzero : (shares.map (fun sh => mask sh.sender)).sum = 0) :
+  (hzero : (shares.map (fun sh => mask sh.sender)).sum = 0) :
   aggregateSignature S c Sset commits (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender }))
   = aggregateSignature S c Sset commits shares := by
-  -- Requires Signature extensionality and aggregateSignature_add_masks
-  sorry
+  -- Use Signature extensionality: show all fields are equal
+  simp only [aggregateSignature]
+  congr 1
+  -- Show z fields are equal
+  have hmap : (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender })).map (·.z_i)
+            = shares.map (fun sh => sh.z_i + mask sh.sender) := by
+    simp only [List.map_map, Function.comp]
+  rw [hmap]
+  rw [sum_map_add_eq shares (fun sh => sh.z_i) (fun sh => mask sh.sender)]
+  rw [hzero, add_zero]
 
 /-!
 ## CRDT pipeline to verification (all-ones strategy)

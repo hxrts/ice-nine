@@ -156,8 +156,11 @@ theorem share_invariant_refresh
     (hzero : masks.sum = 0)
     (hlen : shares.length = masks.length) :
     (List.zipWith (· + ·) shares masks).sum = shares.sum := by
-  rw [List.sum_zipWith_add]
-  sorry
+  -- Use sum_zipWith_add_eq: Σ(a_i + b_i) = Σa_i + Σb_i for equal-length lists
+  rw [List.sum_zipWith_add_eq shares masks hlen]
+  -- Now we have: shares.sum + masks.sum = shares.sum
+  -- Use hzero: masks.sum = 0
+  rw [hzero, add_zero]
 
 /-- Repair preserves public key relationship.
     After successful repair: A(repaired_sk_i) = pk_i.

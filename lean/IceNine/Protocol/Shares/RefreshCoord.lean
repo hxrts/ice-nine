@@ -495,8 +495,7 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
 
     **Pattern: Proof as parameter**
     The caller must provide `hsum`, a proof that the mask function sums to zero
-    over the party set. This eliminates the need for `sorry` by pushing the proof
-    obligation to the caller.
+    over the party set. This pushes the proof obligation to the caller.
 
     See `Proofs/Extensions/RefreshCoord.lean` for helper theorems to construct
     the proof from `hmasks` and `hzero`. -/
@@ -524,12 +523,13 @@ private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
     cases hcoord : st.coordinator with
     | error _ => simp only [hcoord] at hmaskFn hmasks
     | ok coord =>
-      simp only [hcoord, Except.bind_ok] at hmaskFn hmasks
+      simp only [hcoord, Except.bind, Except.ok.injEq] at hmaskFn hmasks
       injection hmaskFn with hfn
       injection hmasks with heq
       rw [← hfn, ← heq]
 
-/-- Helper: derive zero-sum proof from runtime checks. -/
+/-- Helper: derive zero-sum proof from runtime checks.
+    This uses the fact that Finset.sum over a nodup list equals the list sum. -/
 private theorem constructZeroSumMask_proof (S : Scheme)
     [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S)
@@ -540,13 +540,15 @@ private theorem constructZeroSumMask_proof (S : Scheme)
     (hnodup : st.parties.Nodup) :
     st.parties.toFinset.sum maskFn.mask = 0 := by
   have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
-  have hperm : st.parties.toFinset.toList.Perm st.parties :=
-    List.toFinset_toList hnodup
-  rw [Finset.sum_toList]
-  have hmap_perm : (st.parties.toFinset.toList.map maskFn.mask).Perm
-                   (st.parties.map maskFn.mask) :=
-    List.Perm.map _ hperm
-  rw [hmap_perm.sum_eq, heq, hzero]
+  -- Convert Finset.sum to List.sum using nodup property
+  calc st.parties.toFinset.sum maskFn.mask
+      = st.parties.toFinset.sum (fun a => st.parties.count a • maskFn.mask a) := by
+          apply Finset.sum_congr rfl
+          intro x hx
+          rw [List.toFinset_count_eq_one_of_nodup hnodup hx, one_smul]
+    _ = (st.parties.map maskFn.mask).sum := by rw [Finset.sum_list_map_count]
+    _ = masks.sum := by rw [heq]
+    _ = 0 := hzero
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/

@@ -68,16 +68,16 @@ lemma repair_smul
   (msgs : List (RepairMsg S)) :
   repairShare S (msgs.map (fun m => { m with delta := c • m.delta }))
     = c • repairShare S msgs := by
-  -- Reduce to the standard `List.smul_sum` lemma.
-  -- `repairShare` is a sum of deltas, and `helperContribution` uses scalar action on secrets.
-  simp only [repairShare, List.map_map]
-  -- Show the mapped lists are equal, which makes the sums equal
-  have hmap : (msgs.map (fun m => (fun x => x.delta) ({ m with delta := c • m.delta })))
-            = (msgs.map (fun m => c • m.delta)) := by
-    apply List.map_congr
-    intro _ _
-    rfl
-  rw [hmap, List.smul_sum]
+  -- Unfold repairShare to sums of deltas
+  simp only [repairShare]
+  -- Simplify the double map: (msgs.map f).map (·.delta) = msgs.map (fun m => (f m).delta)
+  conv_lhs => rw [List.map_map]
+  -- Now goal: (msgs.map (fun m => c • m.delta)).sum = c • (msgs.map (·.delta)).sum
+  -- Use List.smul_sum: c • l.sum = (l.map (c • ·)).sum
+  rw [List.smul_sum]
+  -- Goal: (msgs.map (fun m => c • m.delta)).sum = ((msgs.map (·.delta)).map (c • ·)).sum
+  congr 1
+  rw [List.map_map]
 
 /-!
 ## Correctness Properties

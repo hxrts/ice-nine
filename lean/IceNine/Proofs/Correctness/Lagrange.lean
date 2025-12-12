@@ -168,6 +168,50 @@ These theorems establish that Lagrange-weighted sums correctly reconstruct
 polynomial values at 0 - the core property for threshold cryptography.
 -/
 
+/-- Helper: zipWith sum over a Nodup list equals finset sum.
+    This connects list-based positional operations to finset element-wise operations. -/
+lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
+    (partyScalars : List F)
+    (values : List F)
+    (f : F → F)
+    (hnodup : partyScalars.Nodup)
+    (hlen : partyScalars.length = values.length) :
+    (List.zipWith (fun p v => f p * v) partyScalars values).sum =
+    partyScalars.toFinset.sum (fun x =>
+      f x * (values.getD (partyScalars.indexOf x) 0)) := by
+  induction partyScalars generalizing values with
+  | nil => simp
+  | cons p ps ih =>
+    match values with
+    | [] => simp at hlen
+    | v :: vs =>
+      simp only [List.zipWith_cons_cons, List.sum_cons]
+      have hnodup' : ps.Nodup := List.Nodup.of_cons hnodup
+      have hlen' : ps.length = vs.length := by simp only [List.length_cons] at hlen; omega
+      have hnotmem : p ∉ ps := List.not_mem_of_nodup_cons hnodup
+      rw [ih vs hnodup' hlen']
+      -- Split the finset sum: {p} ∪ ps.toFinset
+      have hdisjoint : Disjoint ({p} : Finset F) ps.toFinset := by
+        simp only [Finset.disjoint_singleton_left, List.mem_toFinset]
+        exact hnotmem
+      have hunion : (p :: ps).toFinset = {p} ∪ ps.toFinset := by
+        ext x
+        simp only [List.toFinset_cons, Finset.mem_insert, Finset.mem_union,
+                   Finset.mem_singleton, List.mem_toFinset]
+      rw [hunion, Finset.sum_union hdisjoint]
+      simp only [Finset.sum_singleton]
+      congr 1
+      · -- The p term: indexOf p in (p::ps) = 0, so getD 0 = v
+        simp only [List.indexOf_cons_self, List.getD_cons_zero]
+      · -- The ps terms: indexOf x in (p::ps) = 1 + indexOf x in ps
+        apply Finset.sum_congr rfl
+        intro x hx
+        have hxne : x ≠ p := by
+          intro heq
+          rw [heq] at hx
+          exact hnotmem (List.mem_toFinset.mp hx)
+        simp only [List.indexOf_cons_ne _ hxne, List.getD_cons_succ]
+
 /-- Lagrange interpolation: the weighted sum of values equals the polynomial
     evaluated at 0, where weights are Lagrange coefficients.
 
@@ -181,14 +225,14 @@ polynomial values at 0 - the core property for threshold cryptography.
     This is the core property used in threshold cryptography: to reconstruct
     the secret f(0), signers compute weighted combinations of their shares f(xᵢ).
 
-    **Note**: Uses sorry because the final step requires connecting list-based
-    zipWith sum to finset element-wise sum. See `lagrange_weighted_sum` for
-    the finset-based version that avoids this issue. -/
+    The proof connects list-based zipWith sum to finset element-wise sum by
+    showing that for Nodup lists, summing over list positions is equivalent
+    to summing over the corresponding finset elements. -/
 theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     (partyScalars : List F)
     (values : List F)
     (hnodup : partyScalars.Nodup)
-    (_hlen : partyScalars.length = values.length)
+    (hlen : partyScalars.length = values.length)
     (hne : partyScalars ≠ []) :
     let coeffs := partyScalars.map fun p => coeffAtZero p partyScalars
     let s := partyScalars.toFinset
@@ -198,20 +242,52 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
       | none => 0
     (List.zipWith (· * ·) coeffs values).sum = eval 0 (Lagrange.interpolate s id r) := by
   intro coeffs s r
-  have hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
-  have hnonempty : s.Nonempty := by
+  have _hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
+  have _hnonempty : s.Nonempty := by
     obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil partyScalars hne
     exact ⟨x, List.mem_toFinset.mpr hx⟩
+  -- Evaluate the interpolation polynomial at 0
   have heval : eval 0 (Lagrange.interpolate s id r) =
                s.sum (fun x => r x * eval 0 (Lagrange.basis s id x)) := by
     simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C, id_eq]
   rw [heval]
+  -- Connect coefficients to basis evaluation
   have hcoeff_eq : ∀ x ∈ s, coeffAtZero x partyScalars = eval 0 (Lagrange.basis s id x) := by
     intro x _
     rw [coeffAtZero_list_nodup x partyScalars hnodup]
     exact coeffAtZeroFinset_eq_eval_basis s x
-  -- Remaining: connect List.zipWith positional sum to Finset element-wise sum
-  sorry
+  -- Rewrite LHS using zipWith_map_left
+  have hzipWith_eq : (List.zipWith (· * ·) coeffs values).sum =
+      (List.zipWith (fun p v => coeffAtZero p partyScalars * v) partyScalars values).sum := by
+    congr 1
+    rw [List.zipWith_map_left]
+  rw [hzipWith_eq]
+  -- Apply the helper lemma
+  rw [zipWith_mul_sum_eq_finset_sum partyScalars values (fun p => coeffAtZero p partyScalars) hnodup hlen]
+  -- Show the finset sums are equal
+  apply Finset.sum_congr rfl
+  intro x hx
+  -- For x ∈ s, show: coeffAtZero x * getD (indexOf x) = r x * basis eval
+  have hxmem : x ∈ partyScalars := List.mem_toFinset.mp hx
+  -- r x = values.getD (indexOf x) 0 for x ∈ partyScalars
+  have hr : r x = values.getD (partyScalars.indexOf x) 0 := by
+    simp only [r]
+    have hfind : partyScalars.findIdx? (· == x) = some (partyScalars.indexOf x) := by
+      rw [List.findIdx?_eq_some_iff]
+      have hidx := List.indexOf_lt_length.mpr hxmem
+      constructor
+      · exact hidx
+      constructor
+      · simp only [beq_iff_eq, List.getElem_indexOf]
+      · intro k hk
+        simp only [beq_iff_eq, not_true_eq_false, imp_false, Decidable.not_not]
+        intro hpk
+        have : partyScalars[k] = partyScalars[partyScalars.indexOf x] := by
+          rw [hpk, List.getElem_indexOf]
+        exact List.Nodup.getElem_eq_iff hnodup hk hidx |>.mp this
+    rw [hfind]
+  rw [hr, hcoeff_eq x hx]
+  ring
 
 /-- Simplified interpolation for the common case where we just need the weighted sum.
     This avoids dealing with polynomial evaluation directly and works with finsets. -/

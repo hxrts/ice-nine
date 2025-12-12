@@ -65,7 +65,39 @@ lemma forM_zip_ok_forall2
   (h : (List.zip commits reveals).forM (fun (c, r) => checkPair S c r) = Except.ok ()) :
   List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk) commits reveals := by
   -- Induction proof analyzing the forM over zipped pairs
-  sorry
+  classical
+  induction commits generalizing reveals with
+  | nil =>
+    cases reveals with
+    | nil =>
+      exact List.Forall₂.nil
+    | cons r rs =>
+      cases hlen
+  | cons c cs ih =>
+    cases reveals with
+    | nil =>
+      cases hlen
+    | cons r rs =>
+      have hlen' : cs.length = rs.length := by
+        simpa using Nat.succ.inj hlen
+      have h0 :
+          (checkPair S c r >>= fun _ =>
+              (List.zip cs rs).forM (fun (c, r) => checkPair S c r)) =
+            Except.ok () := by
+        simpa [List.zip_cons_cons, List.forM_cons] using h
+      cases hpair : checkPair S c r with
+      | ok u =>
+        cases u
+        have hpair' : checkPair S c r = Except.ok () := by
+          simpa [hpair]
+        have hhead : c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk :=
+          checkPair_ok_pred (S := S) c r hpair'
+        have htail :
+            (List.zip cs rs).forM (fun (c, r) => checkPair S c r) = Except.ok () := by
+          simpa [hpair] using h0
+        exact List.Forall₂.cons hhead (ih rs hlen' htail)
+      | error e =>
+        cases (by simpa [hpair] using h0)
 
 /-- checkPairs success → Forall₂ validity on pairs.
     Each commit/reveal pair has matching IDs and correct opening. -/
@@ -76,7 +108,16 @@ lemma checkPairs_ok_forall2
   (h : checkPairs S commits reveals = Except.ok ()) :
   List.Forall₂ (fun c r => c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk) commits reveals := by
   -- Proof that checkPairs success implies validity on all pairs
-  sorry
+  classical
+  unfold checkPairs at h
+  by_cases hlen : commits.length ≠ reveals.length
+  · -- Length mismatch branch throws .lengthMismatch, so cannot be ok
+    cases (by simpa [hlen] using h)
+  · have hlen' : commits.length = reveals.length := Nat.eq_of_not_ne hlen
+    have hforM :
+        (List.zip commits reveals).forM (fun (c, r) => checkPair S c r) = Except.ok () := by
+      simpa [hlen] using h
+    exact forM_zip_ok_forall2 (S := S) commits reveals hlen' hforM
 
 /-- Checked aggregation is total: always Ok or Error. -/
 lemma dkgAggregateChecked_total
@@ -99,7 +140,24 @@ lemma dkgAggregateChecked_sound
   (h : dkgAggregateChecked S commits reveals = Except.ok pk) :
   pk = (reveals.map (·.pk_i)).sum := by
   -- Proof depends on dkgAggregateChecked structure
-  sorry
+  classical
+  unfold dkgAggregateChecked at h
+  by_cases hlen : commits.length = reveals.length
+  · simp [hlen] at h
+    set pids : List S.PartyId := reveals.map (·.sender)
+    by_cases hdup : pids.Nodup
+    · simp [pids, hdup] at h
+      cases hcp : checkPairs S commits reveals with
+      | ok u =>
+        cases u
+        simp [hcp] at h
+        have : (reveals.map (·.pk_i)).sum = pk := by
+          simpa [Except.ok.injEq] using h
+        exact this.symm
+      | error e =>
+        cases (by simpa [hcp] using h)
+    · cases (by simpa [pids, hdup] using h)
+  · cases (by simpa [hlen] using h)
 
 /-- Ok result → dkgValid predicate holds.
     Uses checkPairs_ok_forall2 to establish the validity predicate. -/
@@ -111,7 +169,23 @@ lemma dkgAggregateChecked_ok_valid
   (h : dkgAggregateChecked S commits reveals = Except.ok pk) :
   dkgValid S commits reveals := by
   -- Proof depends on dkgAggregateChecked structure
-  sorry
+  classical
+  unfold dkgAggregateChecked at h
+  by_cases hlen : commits.length = reveals.length
+  · simp [hlen] at h
+    set pids : List S.PartyId := reveals.map (·.sender)
+    by_cases hdup : pids.Nodup
+    · simp [pids, hdup] at h
+      cases hcp : checkPairs S commits reveals with
+      | ok u =>
+        cases u
+        have hcp' : checkPairs S commits reveals = Except.ok () := by
+          simpa [hcp]
+        simpa [dkgValid] using checkPairs_ok_forall2 (S := S) commits reveals hcp'
+      | error e =>
+        cases (by simpa [hcp] using h)
+    · cases (by simpa [pids, hdup] using h)
+  · cases (by simpa [hlen] using h)
 
 /-!
 ## Complaint-Based Aggregation
@@ -134,7 +208,7 @@ lemma dkgAggregateWithComplaints_correct
   · -- Length matched and no complaints: pk is explicitly set to sum
     simp only [Except.ok.injEq] at h
     exact h.symm
-  all_goals simp at h
+  all_goals cases h
 
 /-!
 ## Dealer Properties
@@ -152,7 +226,7 @@ lemma dealerKeygen_pk
   unfold dealerKeygen at h
   by_cases hlen : pids.length = secrets.length ∧ secrets.length = opens.length
   · simp [hlen] at h; cases h with | refl => rfl
-  · simp [hlen] at h
+  · cases (by simpa [hlen] using h)
 
 /-- Well-formed dealer share: commitPk is actually a commitment to pk_i.
     This holds for all shares produced by dealerKeygen. -/
@@ -169,7 +243,48 @@ lemma dealerKeygen_wellFormed
   ∀ sh ∈ tr.shares, DealerShare.wellFormed S sh := by
   -- Shares are constructed with commitPk := S.commit pk_i op
   -- Proof relies on zipWith3 membership which is complex
-  sorry
+  classical
+  unfold dealerKeygen at h
+  by_cases hlen : pids.length = secrets.length ∧ secrets.length = opens.length
+  · simp [hlen] at h
+    cases h with
+    | refl =>
+      -- Reduce to a property about `zipWith3` construction.
+      intro sh hmem
+      let mkShare : S.PartyId → S.Secret → S.Opening → DealerShare S :=
+        fun pid sk op =>
+          let pk_i := S.A sk
+          let com  := S.commit pk_i op
+          { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com }
+      have hwf_zip :
+          ∀ (ps : List S.PartyId) (ss : List S.Secret) (os : List S.Opening),
+            ∀ sh, sh ∈ List.zipWith3 mkShare ps ss os → DealerShare.wellFormed S sh := by
+        intro ps
+        induction ps generalizing ss os with
+        | nil =>
+          intro ss os sh hmem
+          cases (by simpa [List.zipWith3] using hmem)
+        | cons pid ps ih =>
+          intro ss os sh hmem
+          cases ss with
+          | nil =>
+            cases (by simpa [List.zipWith3] using hmem)
+          | cons sk ss' =>
+            cases os with
+            | nil =>
+              cases (by simpa [List.zipWith3] using hmem)
+            | cons op os' =>
+              simp [List.zipWith3] at hmem
+              cases hmem with
+              | inl hEq =>
+                subst hEq
+                simp [DealerShare.wellFormed, mkShare]
+              | inr hIn =>
+                exact ih ss' os' sh hIn
+      have : sh ∈ List.zipWith3 mkShare pids secrets opens := by
+        simpa [mkShare] using hmem
+      exact hwf_zip pids secrets opens sh this
+  · cases (by simpa [hlen] using h)
 
 /-- Binding: same commitment → same public key (for well-formed shares).
     Uses scheme's commitBinding property. -/

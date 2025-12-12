@@ -309,6 +309,70 @@ def aggregateSignatureLagrange
   { z := z, c := c, Sset := Sset, commits := commits, context := ctx }
 
 /-!
+## Signature Verification
+
+Verify a signature against a public key and message.
+The core equation: A(z) = w + c·pk  (equivalently, A(z) - c·pk = w)
+
+For Schnorr-style signatures with linear map A:
+- z = y + c·sk  (signer computation)
+- A(z) = A(y + c·sk) = A(y) + c·A(sk) = w + c·pk  (verification)
+-/
+
+/-- Verify a signature against public key and message.
+
+    Verification equation: A(z) - c·pk = w
+
+    where:
+    - z is the aggregated response from all signers
+    - c is the challenge (Fiat-Shamir)
+    - pk is the group public key
+    - w is the aggregated nonce commitment
+
+    For this to work, we need to reconstruct w from the stored commitments,
+    but with dual nonces we need the binding factors. This simplified version
+    takes w directly (computed during signing).
+
+    Returns true iff the signature is valid. -/
+def verifyWithNonce
+  (S : Scheme)
+  (pk : S.Public)
+  (sig : Signature S)
+  (w : S.Public)
+  : Bool :=
+  decide (S.A sig.z = w + sig.c • pk)
+
+/-- Verify a signature given binding factors (for dual-nonce reconstruction).
+
+    This reconstructs the aggregate nonce w from the signature's commitments
+    and the provided binding factors, then checks the verification equation.
+
+    For production use, binding factors should be recomputed from (msg, pk, commits)
+    rather than trusted from external sources. -/
+def verify
+  (S : Scheme) [DecidableEq S.PartyId]
+  (pk : S.Public)
+  (m : S.Message)
+  (commits : List (SignCommitMsg S))
+  (bindingFactors : BindingFactors S)
+  (sig : Signature S)
+  : Bool :=
+  let w := computeAggregateNonce S commits bindingFactors
+  let c_expected := S.hash m pk sig.Sset sig.commits w
+  -- Check both challenge derivation and verification equation
+  decide (sig.c = c_expected) && decide (S.A sig.z = w + sig.c • pk)
+
+/-- Simplified verification for single (non-threshold) signatures.
+    Uses the commitment directly as w (no Lagrange weighting). -/
+def verifySingle
+  (S : Scheme)
+  (pk : S.Public)
+  (w : S.Public)
+  (sig : Signature S)
+  : Bool :=
+  decide (S.A sig.z = w + sig.c • pk)
+
+/-!
 ## Transcript Validation
 
 Predicate for valid signing transcripts.
