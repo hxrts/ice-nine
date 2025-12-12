@@ -276,78 +276,35 @@ structure LagrangeCoeff (S : Scheme) where
 ## Error Types
 -/
 
-/-- Signing failure modes. -/
+/-- Signing failure modes.
+
+    Note: Legacy error variants have been removed:
+    - `normCheckFailed` → Use `ShareValidationError.normExceeded`
+    - `maxRetriesExceeded` → No longer applicable (local rejection handles this)
+    - `sessionAborted` → No longer applicable (no distributed abort coordination)
+
+    See `Protocol/Sign/ValidatedAggregation.lean` for aggregation errors
+    and `Protocol/Sign/LocalRejection.lean` for local rejection errors. -/
 inductive SignError (PartyId : Type*) where
   | lengthMismatch : SignError PartyId
   | participantMismatch : PartyId → SignError PartyId
   | duplicateParticipants : PartyId → SignError PartyId
   | commitMismatch : PartyId → SignError PartyId
   | sessionMismatch : Nat → Nat → SignError PartyId
-  | normCheckFailed : PartyId → SignError PartyId
-  | maxRetriesExceeded : PartyId → SignError PartyId
-  | sessionAborted : Nat → SignError PartyId
   deriving DecidableEq
 
-/-- Abort reason for detailed error reporting -/
-inductive AbortReason (PartyId : Type*) where
-  | normBoundExceeded : PartyId → Nat → AbortReason PartyId
-  | maxRetriesReached : PartyId → AbortReason PartyId
-  | coordinationFailure : AbortReason PartyId
-  | timeout : AbortReason PartyId
-deriving DecidableEq, Repr
+/-!
+## Legacy Abort Types (REMOVED)
 
-/-- Session abort notification. -/
-structure SignAbortMsg (S : Scheme) where
-  sender  : S.PartyId
-  session : Nat
-  reason  : AbortReason S.PartyId
+The following types have been removed as part of the local rejection redesign:
+- `AbortReason` - No longer needed; local rejection eliminates global abort coordination
+- `SignAbortMsg` - No longer needed; signing never triggers distributed restart
+- `SignAbortState` - No longer needed; no abort voting required
 
-/-- Abort state for distributed coordination. -/
-structure SignAbortState (S : Scheme) where
-  abortedSession : Option Nat
-  abortVotes : Finset S.PartyId
-  reasons : List (S.PartyId × AbortReason S.PartyId)
-
-/-- CRDT merge for abort state. -/
-instance (S : Scheme) [DecidableEq S.PartyId] : Join (SignAbortState S) :=
-  ⟨fun a b => {
-    abortedSession := a.abortedSession <|> b.abortedSession
-    abortVotes := a.abortVotes ∪ b.abortVotes
-    reasons := a.reasons ++ b.reasons
-  }⟩
-
-/-- Empty abort state. -/
-def SignAbortState.empty (S : Scheme) : SignAbortState S :=
-  { abortedSession := none, abortVotes := ∅, reasons := [] }
-
-/-- Create abort state from a single message. -/
-def SignAbortState.fromMsg (S : Scheme) (msg : SignAbortMsg S) : SignAbortState S :=
-  { abortedSession := some msg.session
-    abortVotes := {msg.sender}
-    reasons := [(msg.sender, msg.reason)] }
-
-/-- Minimum abort threshold to prevent griefing. -/
-def minAbortThreshold (totalParties : Nat) : Nat :=
-  (totalParties + 1) / 2 + 1
-
-/-- Check if session should be considered aborted. -/
-def SignAbortState.isAborted {S : Scheme} (state : SignAbortState S) (threshold : Nat) (totalParties : Nat) : Bool :=
-  let effectiveThreshold := max threshold (minAbortThreshold totalParties)
-  state.abortVotes.card ≥ effectiveThreshold
-
-/-- Safe abort check using minimum threshold. -/
-def SignAbortState.isSafelyAborted {S : Scheme} (state : SignAbortState S) (totalParties : Nat) : Bool :=
-  state.abortVotes.card ≥ minAbortThreshold totalParties
-
-/-- Create abort message when norm check fails. -/
-def mkNormAbortMsg (S : Scheme) (pid : S.PartyId) (session : Nat) (attempt : Nat)
-    : SignAbortMsg S :=
-  { sender := pid, session := session, reason := .normBoundExceeded pid attempt }
-
-/-- Create abort message when max retries exceeded. -/
-def mkMaxRetryAbortMsg (S : Scheme) (pid : S.PartyId) (session : Nat)
-    : SignAbortMsg S :=
-  { sender := pid, session := session, reason := .maxRetriesReached pid }
+For error reporting during aggregation, see `ShareValidationError` in
+`Protocol/Sign/ValidatedAggregation.lean` and `LocalRejectionError` in
+`Protocol/Sign/LocalRejection.lean`.
+-/
 
 /-!
 ## SigningPackage (FROST Pattern)
@@ -435,14 +392,16 @@ instance (S : Scheme) : EvidenceCarrier (Signature S) where
     { sig with context := { sig.context with evidenceDelta := some evid } }
   extractEvidence := fun sig => sig.context.evidenceDelta
 
-/-- Signing attempt outcome -/
-inductive SignAttemptResult (S : Scheme)
-  | success (msg : SignShareMsg S)
-  | retry
-  | abort
+/-!
+## Legacy Retry Types (REMOVED)
 
-/-- Maximum retry attempts before abort. -/
-def maxSigningAttempts : Nat := 16
+`SignAttemptResult` and `maxSigningAttempts` have been removed.
+With local rejection sampling, signing either succeeds or fails locally—
+there is no distributed retry coordination.
+
+See `LocalSignResult` in `Protocol/Sign/LocalRejection.lean` for the
+replacement that tracks local rejection attempts.
+-/
 
 /-- Final signature wrapper for CRDT done state. -/
 structure SignatureDone (S : Scheme) where

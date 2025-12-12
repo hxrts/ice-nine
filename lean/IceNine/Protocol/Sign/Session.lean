@@ -12,13 +12,15 @@ constraint in the type system—the nonce is consumed when transitioning from
 ## Session State Machine
 
 ```
-  FreshNonce ──┬──► Committed ──► Revealed ──► Signed ──► Done
-               │
-               └──► Aborted (on retry failure)
+  FreshNonce ──► Committed ──► Revealed ──► SignedWithStats ──► Done
 ```
 
 Each transition consumes the input state and produces the output state.
 There is no way to "go back" or reuse a consumed state.
+
+**Local Rejection**: With local rejection sampling (via `signWithLocalRejection`),
+norm bounds are satisfied during signing—no retry loop is needed. Use
+`Protocol/Sign/LocalRejection.lean` for the local rejection implementation.
 -/
 
 import IceNine.Protocol.Core.Core
@@ -178,15 +180,6 @@ structure Done (S : Scheme) where
   /-- The share message to send to aggregator -/
   shareMsg : SignShareMsg S
 
-/-- Aborted state: signing failed (e.g., norm check failed after max retries). -/
-structure Aborted (S : Scheme) where
-  /-- Session that was aborted -/
-  session : Nat
-  /-- Reason for abort -/
-  reason : String
-  /-- Attempt count when aborted -/
-  attempts : Nat
-
 /-!
 ## Session Transitions
 
@@ -274,36 +267,6 @@ def reveal (S : Scheme)
       opening := committed.opening }
   (revealed, msg, tracker, nonceReg)
 
-/-- Transition: Revealed → Signed (success) or Revealed → Aborted (norm failure)
-    Computes partial signature z_i = y_eff_i + c·sk_i where
-    y_eff = hiding + ρ·binding (effective nonce from dual nonce structure).
-    Returns Left if norm check passes, Right if it fails.
-
-    **FROST Protocol**: The effective nonce incorporates the binding factor,
-    which ties this signer's contribution to the specific signing context. -/
-def sign (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (revealed : Revealed S)
-    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
-    : Sum (Signed S × SessionTracker S × NonceRegistry S) (Revealed S × String) :=
-  -- Derive effective nonce: y_eff = hiding + ρ·binding
-  let y_eff := revealed.hidingNonce + revealed.bindingFactor • revealed.bindingNonce
-  -- Compute partial signature: z_i = y_eff + c·sk_i
-  let z_i := y_eff + revealed.challenge • revealed.keyShare.secret
-  -- Check norm bound
-  if S.normOK z_i then
-    let signed : Signed S :=
-      { keyShare := revealed.keyShare
-        partialSig := z_i
-        message := revealed.message
-        session := revealed.session
-        challenge := revealed.challenge }
-    Sum.inl (signed, tracker, nonceReg)
-  else
-    -- Return the revealed state for retry with explanation
-    Sum.inr (revealed, "norm check failed")
-
 /-- Transition: Signed → Done
     Packages the partial signature for the aggregator. -/
 def finalize (S : Scheme) (signed : Signed S) : Done S :=
@@ -312,158 +275,6 @@ def finalize (S : Scheme) (signed : Signed S) : Done S :=
       session := signed.session
       z_i := signed.partialSig }
   { shareMsg := msg }
-
-/-!
-## Retry Handling
-
-When norm check fails, we need a fresh nonce. This requires going back to
-ReadyToCommit with a NEW FreshNonce. The old session state is consumed,
-preventing any reuse of the old nonce.
--/
-
-/-- Retry state: tracks attempts for a signing session.
-
-    **Session ID Design**: The session ID remains constant across retries within the same
-    signing session. This is intentional for threshold signing coordination:
-
-    1. **Coordination**: All parties must agree on which session they're retrying.
-       Using the same session ID allows parties to correlate retry rounds.
-
-    2. **Nonce Safety**: Nonce reuse is prevented by the `FreshNonce` type, not by
-       session ID. Each retry requires a newly sampled `FreshNonce`, and the type
-       system ensures each `FreshNonce` is consumed exactly once.
-
-    3. **Distinguishing Retries**: The `attempt` field distinguishes retry rounds
-       within a session. A full session identifier is effectively `(session, attempt)`.
-
-    4. **Tracking**: The `SessionTracker` marks the base session ID as used after
-       the first commit. Retries don't re-mark because they use fresh nonces within
-       the same logical session.
-
-    **Alternative Design**: If independent session IDs per retry are needed (e.g., for
-    independent parallel attempts), use `retryWithNewSession` instead. -/
-structure RetryContext (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment] where
-  /-- Current attempt number (1-indexed) -/
-  attempt : Nat
-  /-- Maximum allowed attempts -/
-  maxAttempts : Nat
-  /-- Key share (persistent across retries) -/
-  keyShare : KeyShare S
-  /-- Message (persistent across retries) -/
-  message : S.Message
-  /-- Base session ID (constant across retries for coordination) -/
-  session : Nat
-  /-- Session tracker (persistent across retries) -/
-  tracker : SessionTracker S
-  /-- Nonce registry (persistent across retries) -/
-  nonceReg : NonceRegistry S
-
-/-- Create retry context from revealed state after norm failure.
-    The revealed state is consumed—it cannot be used again.
-    Requires tracker and nonceReg to be passed through from the commit phase. -/
-def mkRetryContext (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (revealed : Revealed S) (maxAttempts : Nat)
-    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
-    : RetryContext S :=
-  { attempt := 1
-    maxAttempts := maxAttempts
-    keyShare := revealed.keyShare
-    message := revealed.message
-    session := revealed.session
-    tracker := tracker
-    nonceReg := nonceReg }
-
-/-- Advance retry context for next attempt.
-    Returns None if max attempts exceeded. -/
-def advanceRetry {S : Scheme}
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (ctx : RetryContext S) : Option (RetryContext S) :=
-  if ctx.attempt < ctx.maxAttempts then
-    some { ctx with attempt := ctx.attempt + 1 }
-  else
-    none
-
-/-- Create new ReadyToCommit for retry with FRESH nonce.
-    The fresh nonce must be newly sampled—cannot reuse old nonce.
-
-    **Note**: Uses same session ID for threshold coordination. All parties in the
-    signing group should retry together with the same base session ID. -/
-def retryWithFreshNonce (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (ctx : RetryContext S) (freshNonce : FreshNonce S)
-    : ReadyToCommit S :=
-  { keyShare := ctx.keyShare
-    nonce := freshNonce
-    message := ctx.message
-    session := ctx.session
-    tracker := ctx.tracker
-    nonceReg := ctx.nonceReg }
-
-/-- Create new ReadyToCommit for retry with FRESH nonce AND new session ID.
-    Use this when retries should be independent sessions (e.g., parallel attempts).
-
-    **Warning**: New session requires coordination with other parties to ensure
-    they also use the new session ID. -/
-def retryWithNewSession (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (ctx : RetryContext S) (freshNonce : FreshNonce S) (newSession : Nat)
-    : ReadyToCommit S :=
-  { keyShare := ctx.keyShare
-    nonce := freshNonce
-    message := ctx.message
-    session := newSession
-    tracker := ctx.tracker
-    nonceReg := ctx.nonceReg }
-
-/-- Create aborted state when max retries exceeded. -/
-def abort (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (ctx : RetryContext S) : Aborted S :=
-  { session := ctx.session
-    reason := s!"max retries ({ctx.maxAttempts}) exceeded"
-    attempts := ctx.attempt }
-
-/-!
-## Full Signing Flow
-
-Convenience function that runs the full protocol for a single party.
-Each step consumes the previous state.
--/
-
-/-- Result of a signing attempt. -/
-inductive SignResult (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-  | success (done : Done S)
-  | needsRetry (ctx : RetryContext S)
-  | aborted (aborted : Aborted S)
-
-/-- Run signing from Revealed state through to completion or retry.
-    Requires tracker and nonceReg for creating retry context. -/
-def trySign (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (revealed : Revealed S)
-    (tracker : SessionTracker S) (nonceReg : NonceRegistry S)
-    (maxAttempts : Nat := 16)
-    : SignResult S :=
-  match sign S revealed tracker nonceReg with
-  | Sum.inl (signed, _, _) =>
-      .success (finalize S signed)
-  | Sum.inr (revealed', _) =>
-      let ctx := mkRetryContext S revealed' maxAttempts tracker nonceReg
-      if ctx.attempt < ctx.maxAttempts then
-        .needsRetry ctx
-      else
-        .aborted (abort S ctx)
 
 /-!
 ## Initialization
@@ -503,22 +314,16 @@ The session type system provides these guarantees:
    nonce value moves into `Committed`. There's no path back.
 
 2. **Linear flow**: States can only progress forward:
-   ReadyToCommit → Committed → Revealed → Signed → Done
+   ReadyToCommit → Committed → Revealed → SignedWithStats → Done
    Each transition consumes its input.
 
-3. **No nonce reuse on retry**: When signing fails norm check, we must
-   create a NEW `ReadyToCommit` with a NEW `FreshNonce`. The old
-   `Revealed` state is consumed by `mkRetryContext`.
+3. **Local rejection**: With `signWithLocalRejection`, norm bounds are
+   satisfied during signing via local rejection sampling. No global
+   retry loop is needed.
 
 4. **Compile-time enforcement**: These aren't runtime checks—the type
    system prevents writing code that would reuse a nonce.
 -/
-
--- Example: this CANNOT compile because `ready` is consumed by first `commit`
--- def badNonceReuse (S : Scheme) (ready : ReadyToCommit S) :=
---   let (committed1, _) := commit S ready  -- consumes ready
---   let (committed2, _) := commit S ready  -- ERROR: ready already consumed
---   (committed1, committed2)
 
 /-!
 ## Precomputed Nonces
@@ -619,70 +424,10 @@ def NoncePool.prune {S : Scheme} (pool : NoncePool S) (currentTime : Nat) : Nonc
   { pool with available := pool.available.filter (fun pn => pn.isValid currentTime) }
 
 /-!
-## Fast Path Signing
+## Fast Path
 
 Single-round signing for when nonces are precomputed and commitments pre-shared.
-This is the mode Aura uses for its fast path: witnesses pre-share nonce commitments,
-then immediately produce shares on Execute without additional rounds.
-
-**Security Assumptions**:
-1. Nonce commitments were honestly generated and not reused
-2. The coordinator will not selectively abort after seeing shares
-3. Precomputed nonces have not expired
-
-Use standard two-round signing when these assumptions don't hold.
 -/
-
-/-- Fast signing with precomputed nonce.
-    Skips commit-reveal phase because commitment was pre-shared.
-
-    **SECURITY NOTE**: This mode trusts that:
-    1. Nonce commitments were honestly generated
-    2. Nonces are not being reused
-    3. Coordinator will aggregate honestly
-
-    Use standard two-round signing when these assumptions don't hold.
-
-    Returns None if norm check fails (caller should retry with fresh nonce). -/
-def signFast (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    [DecidableEq S.Secret]
-    (keyShare : KeyShare S)
-    (precomputed : PrecomputedNonce S)
-    (challenge : S.Challenge)
-    (bindingFactor : S.Scalar)
-    (session : Nat)
-    (context : ExternalContext := {})
-    : Option (SignShareMsg S) :=
-  let effectiveNonce := precomputed.nonce.hidingNonce + bindingFactor • precomputed.nonce.bindingNonce
-  let z_i := effectiveNonce + challenge • keyShare.secret
-  if decide (S.normOK z_i) then
-    some { sender := keyShare.pid
-           session := session
-           z_i := z_i
-           context := context }
-  else
-    none
-
-/-- Initialize a fast-path signing session from precomputed nonce.
-    Use when commitments have been pre-shared and you want to skip commit phase. -/
-def initFastSession (S : Scheme)
-    [BEq S.PartyId] [Hashable S.PartyId]
-    [BEq S.Commitment] [Hashable S.Commitment]
-    (keyShare : KeyShare S)
-    (message : S.Message)
-    (session : Nat)
-    (precomputed : PrecomputedNonce S)
-    (tracker : SessionTracker S := SessionTracker.empty S keyShare.pid)
-    (nonceReg : NonceRegistry S := NonceRegistry.empty S)
-    : ReadyToCommit S :=
-  { keyShare := keyShare
-    nonce := precomputed.nonce
-    message := message
-    session := session
-    tracker := tracker
-    nonceReg := nonceReg }
 
 /-- Pre-shared commitment for fast path.
     Parties broadcast these before signing requests arrive. -/

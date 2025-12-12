@@ -248,18 +248,22 @@ theorem highBits_perturbation
 /-!
 ## Integration with Scheme
 
-For a concrete Dilithium instantiation, the Scheme's normOK and hash
-functions would use HighBits as follows:
+For a concrete Dilithium instantiation, use the `NormBounded` typeclass
+for norm checking and HighBits for verification:
 
 ```lean
-def dilithiumScheme (params : DilithiumSigningParams) : Scheme :=
-  { ...
-    normOK := fun z =>
-      polyInfNorm z < params.gamma1 - params.beta ∧
-      highBitsConsistent z params
-    hash := fun m pk ... w =>
-      hashDomain ++ serialize (highBitsPoly w params.gamma2) ++ serialize m
-    ... }
+-- Norm checking via NormBounded typeclass
+instance : NormBounded (Fin n → ZMod q) where
+  norm := polyInfNorm
+
+-- In signing, check norm bound via NormBounded.norm
+def dilithiumNormCheck (z : Secret) (params : DilithiumParams) : Bool :=
+  NormBounded.norm z < params.gamma1 - params.beta ∧
+  highBitsConsistent z params
+
+-- Hash uses HighBits for Fiat-Shamir
+def dilithiumHash (m pk ... w : ...) : Challenge :=
+  hashDomain ++ serialize (highBitsPoly w params.gamma2) ++ serialize m
 ```
 
 The `highBitsConsistent` check ensures that the first Dilithium quality

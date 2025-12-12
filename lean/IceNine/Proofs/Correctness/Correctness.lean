@@ -11,6 +11,7 @@ So: A(z) - c·pk = w ✓
 
 import Mathlib
 import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Core.NormBounded
 import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Sign.Core
@@ -113,8 +114,9 @@ For lattice signature correctness with real norm bounds, we need to ensure that:
 2. Nonces y_i are sampled from bounded range (||y_i||∞ < γ₁)
 3. The response z_i = y_i + c·sk_i passes the norm check
 
-Without these hypotheses, the correctness theorem would require normOK to be trivially true.
 With real Dilithium bounds, correctness holds conditional on proper sampling.
+The `NormBounded` typeclass provides the norm computation; bounds are checked
+via `ThresholdConfig` at signing time (local rejection sampling).
 -/
 
 /-- Hypothesis: all secret shares are short (bounded by η). -/
@@ -127,9 +129,13 @@ def NoncesInRange (S : Scheme) (nonces : List S.Secret)
     (bound : S.Secret → Prop) : Prop :=
   ∀ y ∈ nonces, bound y
 
-/-- Hypothesis: all responses pass the scheme's norm check. -/
-def ResponsesValid (S : Scheme) (responses : List (SignShareMsg S)) : Prop :=
-  ∀ z ∈ responses, S.normOK z.z_i
+/-- Hypothesis: all responses pass the norm check (using NormBounded typeclass).
+
+    Note: The old `S.normOK` predicate has been replaced with the `NormBounded`
+    typeclass. Use `NormBounded.norm` to compute norms and compare to bounds. -/
+def ResponsesValid (S : Scheme) [NormBounded.NormBounded S.Secret]
+    (responses : List (SignShareMsg S)) (bound : Nat) : Prop :=
+  ∀ z ∈ responses, NormBounded.NormBounded.norm z.z_i ≤ bound
 
 /-!
 ## Instantiation: lattice scheme
@@ -220,37 +226,29 @@ def dilithium2_acceptance_bound (hvalid : Dilithium2Params.isValid) : DilithiumA
     expected_attempts_upper := 2
     attempts_bounded := by decide }
 
-/-- Honest sampling trivially satisfies `normOK` for the current latticeScheme
-    (norm check is permissive in this placeholder instance).
+/-- Honest sampling satisfies the norm bound for lattice scheme secrets.
 
-    **Production Note**: For real deployment, latticeScheme.normOK should use
-    `dilithiumNormOK` with appropriate parameters, and this lemma becomes:
+    Uses the `NormBounded` typeclass to check that all coefficients are bounded.
+    The `intVecNormBounded` instance computes the ℓ∞ norm (max absolute value).
 
-    ```lean
-    lemma lattice_normOK_honest (p : DilithiumParams) (y sk : List Int) (c : Int)
-        (hy : vecInfNorm y < p.gamma1)
-        (hsk : vecInfNorm sk ≤ p.eta)
-        (hc : Int.natAbs c ≤ p.tau)
-        (hlen : y.length = sk.length)
-        (haccept : vecInfNorm (List.zipWith (· + ·) y (sk.map (c * ·))) < p.zBound) :
-        latticeScheme.normOK (List.zipWith (· + ·) y (sk.map (c * ·)))
-    ```
-
-    The current placeholder allows all responses, which is fine for testing
-    correctness but must be replaced for security. -/
-lemma lattice_normOK_honest
+    **Production Note**: For real deployment with Dilithium parameters, use
+    `ThresholdConfig.localBound` as the bound to ensure local rejection sampling
+    succeeds with high probability. -/
+lemma lattice_normBounded_honest
     (z : latticeScheme.Secret)
     (hcoeff : ∀ i, Int.natAbs (z i) ≤ IceNine.Instances.LatticeBound) :
-  latticeScheme.normOK z := by
-  -- normOK is intVecInfLeq; apply bound on all coefficients
-  change IceNine.Instances.intVecInfLeq (IceNine.Instances.LatticeBound) z
-  apply IceNine.Instances.intVecInfLeq_of_coeff_bound
-  simpa using hcoeff
+    NormBounded.NormBounded.norm z ≤ IceNine.Instances.LatticeBound := by
+  -- norm is intVecInfNorm; apply bound on all coefficients
+  unfold NormBounded.NormBounded.norm IceNine.Instances.intVecNormBounded
+    IceNine.Instances.intVecInfNorm
+  apply Finset.sup_le_iff.mpr
+  intro i _
+  exact hcoeff i
 
 /-- Conditional correctness: if all responses pass norm check, verification succeeds.
-    This is the form needed for real lattice schemes where normOK is non-trivial.
+    This is the form needed for real lattice schemes where norm bounds matter.
 
-    The condition `ResponsesValid` ensures all z_i pass the scheme's norm check,
+    The condition ensures all z_i pass the norm check via `NormBounded` typeclass,
     which is necessary for the signature to be valid (otherwise rejection sampling
     would have aborted).
 
@@ -268,7 +266,8 @@ theorem verify_happy_lattice_conditional
     (hpk : latticeScheme.A sk_shares.sum = pk)
     (hw : latticeScheme.A y_shares.sum = w)
     -- Additional: all responses pass norm check (ensures rejection sampling succeeded)
-    (_hnorm : ∀ z ∈ z_shares, latticeScheme.normOK z) :
+    (bound : Nat)
+    (_hnorm : ∀ z ∈ z_shares, NormBounded.NormBounded.norm z ≤ bound) :
     latticeScheme.A z_shares.sum = w + c • pk :=
   verify_happy_lattice sk_shares y_shares c pk w hlen z_shares hz hpk hw
 

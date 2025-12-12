@@ -29,8 +29,7 @@ Error types in Ice Nine follow these principles:
 | Dealer | `DealerError` | Fatal | - | Setup failed |
 | Sign | `SignError` | Fatal | ✓ | Signing failed |
 | Sign | `BindingError` | Fatal | ✓ | Binding validation failed |
-| Sign | `AbortReason` | Info | ✓ | Abort details |
-| Sign | `LocalRejectionError` | Recoverable | - | Local rejection exhausted |
+| Sign | `LocalRejectionError` | Recoverable | ✓ | Local rejection exhausted |
 | Sign | `ShareValidationError` | Recoverable | ✓ | Invalid partial signature |
 | RefreshCoord | `CoordinatorError` | Fatal | - | Coordinator selection failed |
 | RefreshDKG | `RefreshDKGError` | Fatal | ✓ | Refresh failed |
@@ -259,25 +258,10 @@ def showSignError {PartyId : Type*} [ToString PartyId] : SignError PartyId → S
   | .commitMismatch p => s!"Sign Error: commitment mismatch for party {p}"
   | .sessionMismatch expected got =>
       s!"Sign Error: session mismatch (expected {expected}, got {got})"
-  | .normCheckFailed p => s!"Sign Error: norm check failed for party {p}"
-  | .maxRetriesExceeded p => s!"Sign Error: max retries exceeded for party {p}"
-  | .sessionAborted sess => s!"Sign Error: session {sess} was aborted"
 
 /-- ToString instance for SignError -/
 instance {PartyId : Type*} [ToString PartyId] : ToString (SignError PartyId) :=
   ⟨showSignError⟩
-
-/-- Display AbortReason -/
-def showAbortReason {PartyId : Type*} [ToString PartyId] : AbortReason PartyId → String
-  | .normBoundExceeded p attempt =>
-      s!"Abort: norm bound exceeded for party {p} (attempt {attempt})"
-  | .maxRetriesReached p => s!"Abort: max retries reached for party {p}"
-  | .coordinationFailure => "Abort: coordination failure"
-  | .timeout => "Abort: timeout"
-
-/-- ToString instance for AbortReason -/
-instance {PartyId : Type*} [ToString PartyId] : ToString (AbortReason PartyId) :=
-  ⟨showAbortReason⟩
 
 /-- Display BindingError -/
 def showBindingError {PartyId : Type*} [ToString PartyId] : BindingError PartyId → String
@@ -304,7 +288,7 @@ instance {PartyId : Type*} [ToString PartyId] : ToString (RefreshDKGError PartyI
 /-!
 ## Additional BlameableError Instances
 
-Add blame attribution for SignError, BindingError, AbortReason, and RefreshDKGError.
+Add blame attribution for SignError, BindingError, and RefreshDKGError.
 -/
 
 /-- SignError is blameable for participant-specific errors -/
@@ -315,9 +299,6 @@ instance {PartyId : Type*} : BlameableError (SignError PartyId) PartyId where
     | .duplicateParticipants p => some p
     | .commitMismatch p => some p
     | .sessionMismatch _ _ => none
-    | .normCheckFailed p => some p
-    | .maxRetriesExceeded p => some p
-    | .sessionAborted _ => none
 
 /-- BindingError is blameable for party-specific errors -/
 instance {PartyId : Type*} : BlameableError (BindingError PartyId) PartyId where
@@ -325,14 +306,6 @@ instance {PartyId : Type*} : BlameableError (BindingError PartyId) PartyId where
     | .missingBindingFactor p => some p
     | .bindingMismatch p => some p
     | .contextMismatch => none
-
-/-- AbortReason is blameable for party-specific aborts -/
-instance {PartyId : Type*} : BlameableError (AbortReason PartyId) PartyId where
-  blamedParty
-    | .normBoundExceeded p _ => some p
-    | .maxRetriesReached p => some p
-    | .coordinationFailure => none
-    | .timeout => none
 
 /-- RefreshDKGError is blameable for party-specific errors -/
 instance {PartyId : Type*} : BlameableError (RefreshDKGError PartyId) PartyId where

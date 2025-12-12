@@ -226,27 +226,15 @@ theorem dilithium3_valid : dilithium3.isValid = true := by native_decide
 theorem dilithium5_valid : dilithium5.isValid = true := by native_decide
 
 /-!
-## Scheme Instantiations with Proper Bounds
+## Scheme Instantiations
 
-TODO: These require simpleScheme and zmodScheme to be defined in Instances.lean.
-Currently using latticeScheme from Instances as the base scheme.
+Norm checking is now handled via the `NormBounded` typeclass rather than
+scheme-level `normOK` predicates. See `Protocol/Core/NormBounded.lean` for
+the typeclass definition and `Instances.lean` for concrete instances.
+
+For threshold signing with local rejection, use `ThresholdConfig` to configure
+local and global bounds. The `NormBounded` instance provides the norm computation.
 -/
-
--- TODO: Define simpleScheme and zmodScheme in Instances.lean, then uncomment these:
--- def simpleSchemeBounded (B : Int) : IceNine.Protocol.Core.Scheme :=
---   { simpleScheme with normOK := intLeqBound B }
---
--- def zmodSchemeBounded (q : ℕ) [Fact q.Prime] (a : ZMod q) (B : Nat) :
---     IceNine.Protocol.Core.Scheme :=
---   { zmodScheme q a with normOK := zmodLeqBound B }
---
--- /-- Scheme with Dilithium-style vector norm bounds.
---     Uses List Int as a simple model for polynomial coefficients. -/
--- def dilithiumStyleScheme (p : DilithiumParams) : IceNine.Protocol.Core.Scheme :=
---   { simpleScheme with
---     Secret := List Int
---     Public := List Int
---     normOK := dilithiumNormOK p }
 
 /-!
 ## Norm Bound Lemmas

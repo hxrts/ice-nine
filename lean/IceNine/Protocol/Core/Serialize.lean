@@ -716,12 +716,15 @@ end Signature
 Wraps any message with a type tag and length for network transport.
 -/
 
-/-- Message type tags for protocol messages -/
+/-- Message type tags for protocol messages.
+
+    Note: `abort` tag has been removed. With local rejection sampling,
+    there is no distributed abort coordination—signing either succeeds
+    locally or fails without network communication. -/
 inductive MessageTag : Type
   | dkgCommit | dkgReveal
   | signCommit | signReveal | signShare
   | signature
-  | abort
   deriving DecidableEq, Repr
 
 /-- Convert tag to byte -/
@@ -732,7 +735,6 @@ def MessageTag.toByte : MessageTag → UInt8
   | .signReveal => 0x11
   | .signShare => 0x12
   | .signature => 0x20
-  | .abort => 0xFF
 
 /-- Parse tag from byte -/
 def MessageTag.fromByte : UInt8 → Option MessageTag
@@ -742,7 +744,6 @@ def MessageTag.fromByte : UInt8 → Option MessageTag
   | 0x11 => some .signReveal
   | 0x12 => some .signShare
   | 0x20 => some .signature
-  | 0xFF => some .abort
   | _ => none
 
 /-- Wrapped message with tag and length for network transport -/

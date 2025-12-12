@@ -14,6 +14,7 @@ https://blog.cryptographyengineering.com/2023/11/30/to-schnorr-and-beyond-part-2
 
 import Mathlib
 import IceNine.Protocol.Core.Core
+import IceNine.Protocol.Core.NormBounded
 import IceNine.Proofs.Core.Assumptions
 
 set_option autoImplicit false
@@ -126,14 +127,25 @@ def SchnorrRelation (S : Scheme) (z : S.Secret) (w pk : S.Public) (c : S.Challen
     [HSMul S.Challenge S.Public S.Public] : Prop :=
   S.A z = w + c • pk
 
-/-- Valid Schnorr signature: satisfies relation and passes norm check. -/
+/-- Valid Schnorr signature: satisfies relation and passes norm check.
+
+    Note: Norm checking is now handled via the `NormBounded` typeclass
+    rather than the old `S.normOK` predicate. The bound must be provided
+    by the caller via `checkNorm`. -/
 structure ValidSchnorrSig (S : Scheme) [HSMul S.Challenge S.Public S.Public] where
   z : S.Secret
   c : S.Challenge
   w : S.Public
   pk : S.Public  -- The public key
   relation : SchnorrRelation S z w pk c
-  normOK : S.normOK z
+
+/-- Valid Schnorr signature with norm bound witness.
+
+    For lattice signatures, we need to verify that ||z||∞ ≤ B for some bound B.
+    This structure includes the norm bound witness from the NormBounded typeclass. -/
+structure ValidSchnorrSigBounded (S : Scheme) [HSMul S.Challenge S.Public S.Public]
+    [NormBounded.NormBounded S.Secret] (bound : Nat) extends ValidSchnorrSig S where
+  normBounded : NormBounded.NormBounded.norm z ≤ bound
 
 /-!
 ## Unforgeability Reduction to SIS

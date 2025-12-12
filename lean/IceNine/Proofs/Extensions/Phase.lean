@@ -80,14 +80,15 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
       -- From `contains`, get a witness value via `get?`, then show the key appears in `senders`.
       have hisSome : m.map[k]?.isSome = true := by
         -- `contains` is equivalent to `isSome (get?)` for lawful hashable keys.
-        simpa [Std.HashMap.contains_eq_isSome_getElem? (m := m.map) (a := k)] using hk
+        rw [← Std.HashMap.contains_eq_isSome_getElem? (m := m.map) (a := k)]
+        exact hk
       rcases (Option.isSome_iff_exists.1 hisSome) with ⟨v, hv⟩
       have hmem : (k, v) ∈ m.map.toList := by
         simpa using (Std.HashMap.mem_toList_iff_getElem?_eq_some (m := m.map) (k := k) (v := v)).2 hv
       have hkSenders : k ∈ m.senders := by
         -- `k = Prod.fst (k, v)`.
         have : Prod.fst (k, v) ∈ m.map.toList.map Prod.fst :=
-          List.mem_map_of_mem Prod.fst hmem
+          List.mem_map_of_mem (f := Prod.fst) hmem
         simpa [MsgMap.senders] using this
       exact List.mem_toFinset.2 hkSenders
 
@@ -143,41 +144,55 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
               (init : Std.HashMap S.PartyId M) :
               (l.foldl stepKV init).contains k = init.contains k := by
             induction l generalizing init with
-            | nil => simp
+            | nil => rfl
             | cons x xs ih =>
-                have hx : (x.1 == k) = false := hNo x (by simp)
+                have hx : (x.1 == k) = false := hNo x (List.mem_cons_self x xs)
                 have hxs : ∀ a ∈ xs, (a.1 == k) = false := by
                   intro a ha
-                  exact hNo a (by simp [ha])
+                  exact hNo a (List.mem_cons_of_mem x ha)
                 -- One step: inserting a key != k doesn't affect `contains k`.
                 have step_preserves :
                     (stepKV init x).contains k = init.contains k := by
+                  simp only [stepKV, step]
                   by_cases hIn : init.contains x.1 = true
-                  · simp [stepKV, step, hIn]
-                  · simp [stepKV, step, hIn, Std.HashMap.contains_insert, hx]
+                  · simp only [hIn, ↓reduceIte]
+                  · simp only [Bool.not_eq_true] at hIn
+                    simp only [hIn, Bool.false_eq_true, ↓reduceIte]
+                    rw [Std.HashMap.contains_insert]
+                    simp only [hx, Bool.false_or]
                 -- Finish by induction.
-                simp [List.foldl, step_preserves, ih, hxs]
+                simp only [List.foldl_cons]
+                rw [step_preserves, ih hxs]
           have hPrefix :
               (as.foldl stepKV a.map).contains k = a.map.contains k :=
             prefix_preserves as has a.map
           -- After processing `p`, `contains k` becomes true, and stays true.
           have step_sets_true (init : Std.HashMap S.PartyId M) :
               (stepKV init p).contains k = true := by
+            simp only [stepKV, step]
             by_cases hIn : init.contains p.1 = true
             · -- `init` already contains `p.1`; since `p.1 == k`, it contains `k` as well.
               have hk' : init.contains k = true := by
                 have hcongr : init.contains p.1 = init.contains k :=
                   Std.HashMap.contains_congr (m := init) (hab := hp)
-                simpa [hIn] using hcongr
-              simp [stepKV, step, hIn, hk']
+                rw [hcongr] at hIn
+                exact hIn
+              simp only [hIn, ↓reduceIte, hk']
             · -- Insert `p.1`; `p.1 == k` forces `contains k`.
-              simp [stepKV, step, hIn, Std.HashMap.contains_insert, hp]
+              simp only [Bool.not_eq_true] at hIn
+              simp only [hIn, Bool.false_eq_true, ↓reduceIte]
+              rw [Std.HashMap.contains_insert]
+              simp only [hp, Bool.true_or]
           have step_preserves_true (init : Std.HashMap S.PartyId M) (hk : init.contains k = true)
               (x : S.PartyId × M) :
               (stepKV init x).contains k = true := by
+            simp only [stepKV, step]
             by_cases hIn : init.contains x.1 = true
-            · simp [stepKV, step, hIn, hk]
-            · simp [stepKV, step, hIn, Std.HashMap.contains_insert, hk]
+            · simp only [hIn, ↓reduceIte, hk]
+            · simp only [Bool.not_eq_true] at hIn
+              simp only [hIn, Bool.false_eq_true, ↓reduceIte]
+              rw [Std.HashMap.contains_insert]
+              simp only [hk, Bool.or_true]
           -- Now combine the pieces.
           have : (b.map.toList.foldl stepKV a.map).contains k = true := by
             -- Rewrite `toList` using the decomposition.
@@ -215,18 +230,23 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
           (init : Std.HashMap S.PartyId M) :
           (l.foldl stepKV init).contains k = init.contains k := by
         induction l generalizing init with
-        | nil => simp
+        | nil => rfl
         | cons x xs ih =>
-            have hx : (x.1 == k) = false := hNo x (by simp)
+            have hx : (x.1 == k) = false := hNo x (List.mem_cons_self x xs)
             have hxs : ∀ a ∈ xs, (a.1 == k) = false := by
               intro a ha
-              exact hNo a (by simp [ha])
+              exact hNo a (List.mem_cons_of_mem x ha)
             have step_preserves :
                 (stepKV init x).contains k = init.contains k := by
+              simp only [stepKV, step]
               by_cases hIn : init.contains x.1 = true
-              · simp [stepKV, step, hIn]
-              · simp [stepKV, step, hIn, Std.HashMap.contains_insert, hx]
-            simp [List.foldl, step_preserves, ih, hxs]
+              · simp only [hIn, ↓reduceIte]
+              · simp only [Bool.not_eq_true] at hIn
+                simp only [hIn, Bool.false_eq_true, ↓reduceIte]
+                rw [Std.HashMap.contains_insert]
+                simp only [hx, Bool.false_or]
+            simp only [List.foldl_cons]
+            rw [ih hxs (stepKV init x), step_preserves]
       have hFinal : (b.map.toList.foldl stepKV a.map).contains k = a.map.contains k :=
         preserves b.map.toList hall a.map
       -- RHS reduces to `a.contains k`.
