@@ -32,12 +32,34 @@ The type system + runtime checks enforce these invariants.
 import IceNine.Protocol.Core.Core
 import IceNine.Protocol.Core.Error
 import IceNine.Protocol.Sign.Types
+import IceNine.Protocol.Sign.Session
 import Mathlib
 
 namespace IceNine.Protocol.NonceLifecycle
 
 open IceNine.Protocol
 open IceNine.Protocol.Error
+open IceNine.Protocol.SignSession
+
+/-!
+## Integration with Session Types
+
+This module provides runtime nonce tracking that **complements** the compile-time
+guarantees from `Sign/Session.lean`. The session types ensure:
+
+1. `FreshNonce` can only be created via `FreshNonce.sample`
+2. `FreshNonce` is consumed exactly once by `commit`
+3. State transitions are linear: Ready → Committed → Revealed → Signed → Done
+
+This module adds **runtime detection** for:
+- Session ID reuse across different signing attempts
+- Commitment reuse (same nonce used in multiple sessions)
+- Pool management for precomputed nonces
+
+**Design**: `NonceState` can replace the separate `SessionTracker` and `NonceRegistry`
+that are threaded through session transitions, providing a unified interface with
+better error reporting via `BlameableError`.
+-/
 
 /-!
 ## Nonce Lifecycle Errors
@@ -426,21 +448,144 @@ def NonceResult.getError? {S : Scheme}
   | .ok _ => none
 
 /-!
+## Session-Type Integration
+
+These functions bridge `NonceLifecycle` with the linear session types from
+`Sign/Session.lean`, enabling use of `NonceState` in place of separate
+`SessionTracker` and `NonceRegistry` threading.
+-/
+
+/-- Create a ReadyToCommit state using NonceState for tracking.
+
+    This bridges the session type system with NonceLifecycle:
+    - Takes a `FreshNonce` (linear, will be consumed by `commit`)
+    - Uses `NonceState` instead of separate tracker/registry
+
+    **Usage**: Replace `initSession` when using NonceLifecycle for tracking. -/
+def initSessionWithState (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (keyShare : KeyShare S)
+    (message : S.Message)
+    (session : Nat)
+    (nonce : FreshNonce S)
+    (st : NonceState S)
+    : ReadyToCommit S :=
+  { keyShare := keyShare
+    nonce := nonce
+    message := message
+    session := session
+    tracker := st.toSessionTracker
+    nonceReg := st.toNonceRegistry }
+
+/-- Commit transition that updates NonceState.
+
+    Wraps `SignSession.commit` but:
+    - Takes `NonceState` instead of separate tracker/registry
+    - Returns updated `NonceState` with the commit recorded
+    - Uses `NonceError` for better error reporting
+
+    **Linear guarantee**: The `FreshNonce` inside `ready` is consumed by this call.
+    The session type system ensures it cannot be reused. -/
+def commitWithState (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (ready : ReadyToCommit S)
+    (st : NonceState S)
+    : Except (NonceError S.PartyId) (Committed S × SignCommitMsg S × NonceState S) := do
+  -- First check using our typed errors
+  let ((), st) ← NonceOp.checkFresh ready.session st
+  -- Perform the commit (consumes FreshNonce)
+  match SignSession.commit S ready with
+  | .error e =>
+      match e with
+      | .sessionMismatch s1 s2 =>
+          if s1 = s2 then
+            .error (.sessionAlreadyUsed s1 (some st.partyId))
+          else
+            .error (.commitmentReuse s1 s2 st.partyId)
+      | _ => .error (.invalidSession "commit failed")
+  | .ok result =>
+      -- Record in our state
+      let ((), st) ← NonceOp.markUsed ready.session st
+      let ((), st) ← NonceOp.recordCommitment ready.session result.msg.commitW st
+      -- Check for reuse with our error type
+      let ((), st) ← NonceOp.assertNoReuse result.msg.commitW st
+      .ok (result.committed, result.msg, st)
+
+/-- Take a precomputed nonce from pool and create ReadyToCommit.
+
+    **Linear guarantee**: Returns a `FreshNonce` wrapped in `ReadyToCommit`.
+    The caller must call `commitWithState` to consume it - the session type
+    system prevents any other use.
+
+    **Runtime check**: Validates nonce hasn't expired before returning. -/
+def takeAndPrepare (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (keyShare : KeyShare S)
+    (message : S.Message)
+    (session : Nat)
+    (currentTime : Nat)
+    (st : NonceState S)
+    : Except (NonceError S.PartyId) (ReadyToCommit S × NonceState S) := do
+  -- Take from pool (validates expiry)
+  let (pn, st) ← NonceOp.takeFromPool currentTime st
+  -- The PrecomputedNonce contains a FreshNonce
+  let ready := initSessionWithState S keyShare message session pn.nonce st
+  .ok (ready, st)
+
+/-- Full signing session setup with NonceState.
+
+    Combines pool management with session initialization:
+    1. Takes valid nonce from pool
+    2. Creates ReadyToCommit state
+    3. Returns state ready for `commitWithState`
+
+    **Type flow**:
+    ```
+    NonceState ──takeAndPrepare──► ReadyToCommit (contains FreshNonce)
+                                        │
+                                        ▼ commitWithState
+                                   Committed (FreshNonce consumed)
+    ```
+-/
+def prepareSigningSession (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId]
+    [BEq S.Commitment] [Hashable S.Commitment]
+    (keyShare : KeyShare S)
+    (message : S.Message)
+    (session : Nat)
+    (currentTime : Nat)
+    (st : NonceState S)
+    : Except (NonceError S.PartyId) (ReadyToCommit S × NonceState S) :=
+  takeAndPrepare S keyShare message session currentTime st
+
+/-!
 ## Usage Example
 
 ```lean
--- Pure operation style
+-- With session type integration
+let st0 := NonceState.empty S pid
+
+-- Add precomputed nonces to pool
+let st1 ← NonceM.exec (NonceM.addToPool pn1) st0
+let st2 ← NonceM.exec (NonceM.addToPool pn2) st1
+
+-- Prepare signing session (takes FreshNonce from pool)
+let (ready, st3) ← prepareSigningSession S keyShare msg session currentTime st2
+
+-- Commit (consumes the FreshNonce - enforced by session types)
+let (committed, commitMsg, st4) ← commitWithState S ready st3
+
+-- The FreshNonce is now consumed - cannot be reused
+-- Session types make this a compile-time guarantee
+-- NonceState provides runtime detection as defense-in-depth
+
+-- Pure operation style (without session types)
 let ((), st1) ← NonceOp.checkFresh 42 st0
 let ((), st2) ← NonceOp.markUsed 42 st1
 let ((), st3) ← NonceOp.recordCommitment 42 commit st2
-
--- Monadic style
-let result ← NonceM.run (do
-  NonceM.checkFresh 42
-  NonceM.markUsed 42
-  NonceM.recordCommitment 42 commit
-  NonceM.assertNoReuse commit
-) st0
 
 -- Error handling with blame
 match result with
