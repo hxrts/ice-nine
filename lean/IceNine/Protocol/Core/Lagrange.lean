@@ -106,22 +106,33 @@ def coeffAtZeroFinset {F : Type*} [Field F] [DecidableEq F] (s : Finset F) (part
 
     Mathlib's basis uses `basisDivisor`:
       basis s v i = ∏ j ∈ s.erase i, basisDivisor (v i) (v j)
-      basisDivisor a b = (X - C b) / (C a - C b)
+      basisDivisor a b = C ((a - b)⁻¹) * (X - C b)
 
     Evaluating basis at 0 with v = id:
       eval 0 (basis s id x) = ∏ j ∈ s.erase x, eval 0 (basisDivisor x j)
-                            = ∏ j ∈ s.erase x, (0 - j) / (x - j)
+                            = ∏ j ∈ s.erase x, (x - j)⁻¹ * (0 - j)
                             = ∏ j ∈ s.erase x, j / (j - x)
 
-    This matches our definition exactly.
-
-    **Note**: Uses sorry because the proof requires unfolding Mathlib's `basisDivisor`
-    definition and polynomial evaluation lemmas that are somewhat complex to compose.
-    The mathematical equivalence is straightforward. -/
+    This matches our definition exactly. -/
 theorem coeffAtZeroFinset_eq_eval_basis {F : Type*} [Field F] [DecidableEq F]
     (s : Finset F) (x : F) :
     coeffAtZeroFinset s x = eval 0 (Lagrange.basis s id x) := by
-  sorry
+  -- Unfold definitions
+  simp only [coeffAtZeroFinset, Lagrange.basis, id_eq]
+  -- Push eval inside the product
+  rw [eval_prod]
+  -- Show the products are equal by showing each factor is equal
+  congr 1
+  ext j
+  -- eval 0 (basisDivisor x j) = (x - j)⁻¹ * (0 - j) = j / (j - x)
+  simp only [Lagrange.basisDivisor, eval_mul, eval_C, eval_sub, eval_X]
+  -- Now: (x - j)⁻¹ * (0 - j) = j / (j - x)
+  -- LHS: (x - j)⁻¹ * (0 - j) = -j * (x - j)⁻¹
+  -- RHS: j / (j - x) = j * (j - x)⁻¹ = j * (-(x - j))⁻¹ = -j * (x - j)⁻¹
+  -- Key: (j - x)⁻¹ = (-(x - j))⁻¹ = -(x - j)⁻¹
+  rw [div_eq_mul_inv]
+  rw [show (j - x)⁻¹ = -((x - j)⁻¹) by rw [← neg_sub x j, neg_inv]]
+  ring
 
 /-- When the list is `Nodup`, the list and finset formulations coincide. -/
 theorem coeffAtZero_list_nodup {F : Type*} [Field F] [DecidableEq F]

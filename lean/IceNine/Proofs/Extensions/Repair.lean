@@ -61,16 +61,16 @@ lemma repair_append
 
 /-- Linearity: scaling all deltas scales the result.
     Uses List.smul_sum from Mathlib.
-
-    NOTE: Uses sorry due to Mathlib4 API changes in List.smul_sum. -/
+ -/
 lemma repair_smul
   (S : Scheme)
   (c : S.Scalar)
   (msgs : List (RepairMsg S)) :
   repairShare S (msgs.map (fun m => { m with delta := c • m.delta }))
     = c • repairShare S msgs := by
-  simp only [repairShare, List.map_map, Function.comp]
-  sorry
+  -- Reduce to the standard `List.smul_sum` lemma.
+  -- `repairShare` is a sum of deltas, and `helperContribution` uses scalar action on secrets.
+  simp [repairShare, List.smul_sum, List.map_map, Function.comp]
 
 /-!
 ## Correctness Properties
@@ -112,10 +112,7 @@ This captures that individual helper contributions don't leak the target.
 
 /-- Zero-sum mask invariance: adding masks that sum to 0 doesn't change result.
     Core privacy property - helpers can add local randomness.
-
-    NOTE: Uses sorry due to complex interaction between zipWith, map, and sum lemmas
-    in Mathlib4. The property is algebraically straightforward: adding masks that
-    sum to zero doesn't change the overall sum. -/
+ -/
 lemma repair_masked_zero
   (S : Scheme)
   (msgs : List (RepairMsg S))
@@ -124,7 +121,43 @@ lemma repair_masked_zero
   (hlen : mask.length = msgs.length) :
   repairShare S (List.zipWith (fun m z => { m with delta := m.delta + z }) msgs mask)
     = repairShare S msgs := by
-  sorry
+  classical
+  -- Unfold `repairShare` and reduce to a statement about list sums.
+  simp only [repairShare]
+  -- Turn `map delta` of the `zipWith`-updated messages into `zipWith` on the deltas.
+  have hmap :
+      (List.zipWith (fun m z => { m with delta := m.delta + z }) msgs mask).map (·.delta)
+        = List.zipWith (fun m z => m.delta + z) msgs mask := by
+    induction msgs generalizing mask with
+    | nil =>
+        cases mask <;> simp
+    | cons m msgs ih =>
+        cases mask with
+        | nil => simp
+        | cons z mask =>
+            simp [List.zipWith_cons_cons, ih]
+  rw [hmap]
+  -- Rewrite the RHS zipWith as zipWith-add over `msgs.map delta`.
+  have hzip :
+      List.zipWith (fun m z => m.delta + z) msgs mask
+        = List.zipWith (· + ·) (msgs.map (·.delta)) mask := by
+    induction msgs generalizing mask with
+    | nil =>
+        cases mask <;> simp
+    | cons m msgs ih =>
+        cases mask with
+        | nil => simp
+        | cons z mask =>
+            simp [List.zipWith_cons_cons, ih]
+  rw [hzip]
+  -- Now use the list lemma: Σ(aᵢ + bᵢ) = Σaᵢ + Σbᵢ for equal-length lists.
+  have hlen' : (msgs.map (·.delta)).length = mask.length := by
+    calc (msgs.map (·.delta)).length = msgs.length := by simp
+      _ = mask.length := by simpa using hlen.symm
+  have hsum :=
+    List.sum_zipWith_add_eq (msgs.map (·.delta)) mask hlen'
+  -- Apply the zero-sum mask assumption.
+  simpa [hsum, hmask]
 
 /-- Privacy theorem: zero-sum masks preserve repair result.
     Helpers can't learn target share from their own contribution. -/
@@ -211,16 +244,14 @@ lemma repairBundle_join_assoc
 
 /-- Commutativity for repair result: order doesn't affect sum.
     a⊔b and b⊔a produce same repaired share.
-
-    NOTE: Uses sorry because ring/abel tactics require specific type class instances
-    that aren't synthesized for the abstract S.Secret type. -/
+ -/
 lemma repairBundle_join_comm_sum
   (S : Scheme)
   (a b : RepairBundle S) :
   repairShare S (a ⊔ b).msgs = repairShare S (b ⊔ a).msgs := by
   simp [Join.join]
   rw [repair_append, repair_append]
-  sorry
+  simpa [add_comm, add_left_comm, add_assoc]
 
 /-- Idempotence structure: a ⊔ a = list doubling.
     Note: not true idempotence (msgs duplicated), but result unchanged. -/
@@ -271,9 +302,8 @@ structure LagrangeReconstruction (S : Scheme) [Field S.Scalar] where
 
 /-- Main Lagrange theorem: valid coefficients → correct repair.
     Follows directly from the Lagrange property.
-
-    NOTE: Proof uses sorry due to type class synthesis issues with Field S.Scalar
-    and simp lemmas. The theorem statement captures the key algebraic property. -/
+    Note: we explicitly select `S.scalarSemiring`/`S.secretModule` to avoid instance
+    ambiguity when a separate `[Field S.Scalar]` is also in scope. -/
 theorem lagrange_repair_correct
   (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
   (recon : LagrangeReconstruction S)
@@ -282,7 +312,14 @@ theorem lagrange_repair_correct
   let msgs := recon.helperPids.map (fun j =>
     helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))
   repairShare S msgs = (fun pid => (helperShares pid).secret) recon.targetPid := by
-  sorry
+  classical
+  -- Coherence: use the scheme's scalar structure so the scheme's Module instance applies.
+  letI : Semiring S.Scalar := S.scalarSemiring
+  letI : Module S.Scalar S.Secret := S.secretModule
+  let shares : S.PartyId → S.Secret := fun pid => (helperShares pid).secret
+  -- Apply the abstract Lagrange reconstruction property to the concrete shares.
+  -- The goal's `msgs`-binding is definitional and will be unfolded by `simpa`.
+  simpa [repairShare, helperContribution, shares] using recon.lagrange_property shares
 
 /-!
 ## Security Assumptions

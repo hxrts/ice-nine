@@ -87,9 +87,22 @@ theorem lagrangeCoeffAtZero_eq_basis_eval
     (hv : Set.InjOn v s) :
     (s.erase i).prod (fun j => v j / (v j - v i))
       = (Lagrange.basis s v i).eval 0 := by
-  -- NOTE: This proof uses sorry due to Mathlib4 API changes in Lagrange.basis.
-  -- The theorem statement is correct; the proof needs updating for current Mathlib4.
-  sorry
+  -- Unfold Lagrange.basis to product of basisDivisors
+  simp only [Lagrange.basis]
+  -- Push eval inside the product
+  rw [eval_prod]
+  -- Show products are equal by showing each factor equals
+  congr 1
+  ext j
+  -- eval 0 (basisDivisor (v i) (v j)) = (v i - v j)⁻¹ * (0 - v j) = v j / (v j - v i)
+  simp only [Lagrange.basisDivisor, eval_mul, eval_C, eval_sub, eval_X]
+  -- Now: (v i - v j)⁻¹ * (0 - v j) = v j / (v j - v i)
+  -- LHS: (v i - v j)⁻¹ * (0 - v j) = -v j * (v i - v j)⁻¹
+  -- RHS: v j / (v j - v i) = v j * (v j - v i)⁻¹
+  -- Key: (v i - v j)⁻¹ = (-(v j - v i))⁻¹ = -(v j - v i)⁻¹
+  rw [div_eq_mul_inv]
+  rw [show (v j - v i)⁻¹ = -((v i - v j)⁻¹) by rw [← neg_sub (v i) (v j), neg_inv]]
+  ring
 
 /-- Lagrange coefficients sum to 1 when evaluating at a point in the interpolation set.
 
@@ -102,9 +115,13 @@ theorem lagrangeCoeffs_sum_one
     (s : Finset F) (v : F → F)
     (hs : s.Nonempty) (hv : Set.InjOn v s) :
     s.sum (fun i => (Lagrange.basis s v i).eval 0) = 1 := by
-  -- NOTE: This proof uses sorry due to Mathlib4 API changes in Lagrange.sum_basis.
-  -- The theorem statement is correct; the proof needs updating for current Mathlib4.
-  sorry
+  -- Use Mathlib's sum_basis: Σ_{i∈s} basis s v i = 1 (as polynomials)
+  have hsum : (∑ i ∈ s, Lagrange.basis s v i) = (1 : F[X]) := Lagrange.sum_basis hv hs
+  -- Evaluate both sides at 0
+  calc s.sum (fun i => (Lagrange.basis s v i).eval 0)
+      = eval 0 (∑ i ∈ s, Lagrange.basis s v i) := (eval_finset_sum s _ 0).symm
+    _ = eval 0 (1 : F[X]) := by rw [hsum]
+    _ = 1 := eval_one
 
 /-- Main interpolation theorem: Lagrange-weighted sum recovers function value.
 
@@ -113,18 +130,17 @@ theorem lagrangeCoeffs_sum_one
 
     This is the core property ensuring threshold signing reconstructs correctly.
 
-    NOTE: This proof uses sorry due to Mathlib4 API changes in Lagrange.eq_interpolate_iff.
-    The theorem statement is correct; the proof needs updating for current Mathlib4. -/
+    **Note**: Uses sorry due to Mathlib type inference issues with eq_interpolate_of_eval_eq.
+    The theorem is mathematically correct; the first two Lagrange theorems are fully proved. -/
 theorem lagrange_interpolation_at_zero
     {F : Type*} [Field F] [DecidableEq F]
     (s : Finset F) (v : F → F) (r : F → F)
-    (hs : s.Nonempty) (hv : Set.InjOn v s)
-    (p : F[X]) (hp : p.degree < s.card)
-    (hr : ∀ i ∈ s, p.eval (v i) = r i) :
+    (_hs : s.Nonempty) (_hv : Set.InjOn v s)
+    (p : F[X]) (_hp : p.degree < s.card)
+    (_hr : ∀ i ∈ s, p.eval (v i) = r i) :
     s.sum (fun i => (Lagrange.basis s v i).eval 0 * r i) = p.eval 0 := by
-  -- The theorem follows from Mathlib's Lagrange interpolation uniqueness.
-  -- The polynomial p agrees with interpolate s v r at all nodes, and both
-  -- have degree < s.card, so they must be equal.
+  -- The weighted sum equals eval 0 of the interpolant, and by uniqueness p = interpolate.
+  -- Type inference with Mathlib's eq_interpolate_of_eval_eq requires special handling.
   sorry
 
 end IceNine.Proofs
