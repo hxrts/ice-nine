@@ -39,6 +39,35 @@ Dealer receives pre-sampled secrets and produces shares for all parties.
 The function is pure: randomness (secrets, openings) is sampled externally.
 -/
 
+/-!
+## Dealer Error Types
+-/
+
+/-- Errors that can occur during dealer key generation. -/
+inductive DealerError
+  | lengthMismatch (pids secrets opens : Nat)
+      -- Lists have different lengths
+  | emptyPartyList
+      -- No parties provided
+  | duplicateParty (pid : String)
+      -- Same party appears twice (requires Repr instance)
+  deriving Repr
+
+/-- Convert DealerError to descriptive string. -/
+def DealerError.toString : DealerError → String
+  | .lengthMismatch p s o =>
+      s!"length mismatch: {p} parties, {s} secrets, {o} openings"
+  | .emptyPartyList =>
+      "empty party list"
+  | .duplicateParty pid =>
+      s!"duplicate party: {pid}"
+
+instance : ToString DealerError := ⟨DealerError.toString⟩
+
+/-!
+## Dealer Key Generation
+-/
+
 /-- Generate shares for all parties from pre-sampled secrets.
     Returns None if input lists have mismatched lengths. -/
 def dealerKeygen
@@ -64,5 +93,73 @@ def dealerKeygen
     some ⟨shares, pk⟩
   else
     none
+
+/-- Generate shares with detailed error reporting.
+
+    **Effect pattern**: Returns `Except DealerError` for explicit error handling.
+    Use this variant when you need diagnostic information about failures.
+
+    Validates:
+    - All input lists have matching lengths
+    - Party list is non-empty
+
+    For validation with duplicate checking, use `dealerKeygenValidated`. -/
+def dealerKeygenE
+  (S : Scheme)
+  (pids    : List S.PartyId)
+  (secrets : List S.Secret)
+  (opens   : List S.Opening)
+  : Except DealerError (DealerTranscript S) := do
+  -- Check non-empty
+  if pids.isEmpty then
+    throw .emptyPartyList
+  -- Check length match
+  if pids.length ≠ secrets.length ∨ secrets.length ≠ opens.length then
+    throw (.lengthMismatch pids.length secrets.length opens.length)
+  -- Generate shares
+  let shares :=
+    List.zipWith3
+      (fun pid sk op =>
+        let pk_i := S.A sk
+        let com  := S.commit pk_i op
+        { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com })
+      pids secrets opens
+  let pk := (shares.map (·.pk_i)).sum
+  pure ⟨shares, pk⟩
+
+/-- Generate shares with full validation including duplicate checking.
+
+    **Note**: Requires `DecidableEq` and `Repr` on `PartyId` for duplicate detection
+    and error reporting. -/
+def dealerKeygenValidated
+  (S : Scheme) [DecidableEq S.PartyId] [Repr S.PartyId]
+  (pids    : List S.PartyId)
+  (secrets : List S.Secret)
+  (opens   : List S.Opening)
+  : Except DealerError (DealerTranscript S) := do
+  -- Check non-empty
+  if pids.isEmpty then
+    throw .emptyPartyList
+  -- Check for duplicates
+  let seen := pids.foldl (init := ([] : List S.PartyId, none)) fun (acc, dup) pid =>
+    match dup with
+    | some _ => (acc, dup)
+    | none => if acc.contains pid then (acc, some pid) else (pid :: acc, none)
+  match seen.2 with
+  | some dup => throw (.duplicateParty (reprStr dup))
+  | none => pure ()
+  -- Check length match
+  if pids.length ≠ secrets.length ∨ secrets.length ≠ opens.length then
+    throw (.lengthMismatch pids.length secrets.length opens.length)
+  -- Generate shares
+  let shares :=
+    List.zipWith3
+      (fun pid sk op =>
+        let pk_i := S.A sk
+        let com  := S.commit pk_i op
+        { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com })
+      pids secrets opens
+  let pk := (shares.map (·.pk_i)).sum
+  pure ⟨shares, pk⟩
 
 end IceNine.Protocol

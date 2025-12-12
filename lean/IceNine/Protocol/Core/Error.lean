@@ -29,6 +29,7 @@ Error types in Ice Nine follow these principles:
 -/
 
 import IceNine.Protocol.DKG.Core
+import IceNine.Protocol.DKG.Dealer
 import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.DKG.VSS
 import IceNine.Protocol.Shares.RefreshCoord
@@ -215,5 +216,18 @@ def showVSSError {PartyId : Type*} [ToString PartyId] : VSS.VSSError PartyId →
   | .thresholdMismatch expected got =>
       s!"VSS Error: threshold mismatch (expected {expected}, got {got})"
   | .duplicateDealer p => s!"VSS Error: duplicate dealer {p}"
+
+/-!
+## DealerError and CoordinatorError Display
+
+These errors are defined in their respective modules.
+-/
+
+/-- Display DealerError -/
+def showDealerError : DealerError → String := DealerError.toString
+
+/-- Display CoordinatorError -/
+def showCoordinatorError : RefreshCoord.CoordinatorError → String :=
+  RefreshCoord.CoordinatorError.toString
 
 end IceNine.Protocol.Error

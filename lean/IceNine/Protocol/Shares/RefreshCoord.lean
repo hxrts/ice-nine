@@ -146,7 +146,36 @@ inductive CoordinatorStrategy (PartyId : Type*)
   | roundRobin (round : Nat)        -- rotate based on round number
   | random (seed : Nat)             -- pseudo-random selection
 
-/-- Select coordinator from party list. -/
+/-!
+## Coordinator Selection Error Types
+-/
+
+/-- Errors that can occur during coordinator selection. -/
+inductive CoordinatorError
+  | emptyPartyList
+      -- No parties to select from
+  | indexOutOfBounds (idx len : Nat)
+      -- Computed index exceeds party list length
+  | fixedPartyNotInList
+      -- Fixed coordinator not in party list (for validated selection)
+  deriving Repr, DecidableEq
+
+/-- Convert CoordinatorError to descriptive string. -/
+def CoordinatorError.toString : CoordinatorError → String
+  | .emptyPartyList =>
+      "cannot select coordinator from empty party list"
+  | .indexOutOfBounds idx len =>
+      s!"coordinator index {idx} out of bounds (party list length: {len})"
+  | .fixedPartyNotInList =>
+      "fixed coordinator not found in party list"
+
+instance : ToString CoordinatorError := ⟨CoordinatorError.toString⟩
+
+/-!
+## Coordinator Selection
+-/
+
+/-- Select coordinator from party list (legacy, uses default on failure). -/
 def selectCoordinator {PartyId : Type*} [Inhabited PartyId]
     (parties : List PartyId) (strategy : CoordinatorStrategy PartyId) : PartyId :=
   match strategy with
@@ -157,6 +186,59 @@ def selectCoordinator {PartyId : Type*} [Inhabited PartyId]
   | .random seed =>
       let idx := seed % parties.length
       parties[idx]?.getD default
+
+/-- Select coordinator with explicit error handling.
+
+    **Effect pattern**: Returns `Except CoordinatorError` for explicit error handling.
+    Use this variant when you need to detect and handle selection failures.
+
+    Validates:
+    - Party list is non-empty
+    - Computed index is within bounds -/
+def selectCoordinatorE {PartyId : Type*}
+    (parties : List PartyId) (strategy : CoordinatorStrategy PartyId)
+    : Except CoordinatorError PartyId := do
+  -- Check non-empty
+  if parties.isEmpty then
+    throw .emptyPartyList
+  match strategy with
+  | .fixed pid => pure pid
+  | .roundRobin round =>
+      let idx := round % parties.length
+      match parties[idx]? with
+      | some pid => pure pid
+      | none => throw (.indexOutOfBounds idx parties.length)
+  | .random seed =>
+      let idx := seed % parties.length
+      match parties[idx]? with
+      | some pid => pure pid
+      | none => throw (.indexOutOfBounds idx parties.length)
+
+/-- Select coordinator with validation that fixed coordinator is in party list.
+
+    **Note**: Requires `DecidableEq` for membership check. -/
+def selectCoordinatorValidated {PartyId : Type*} [DecidableEq PartyId]
+    (parties : List PartyId) (strategy : CoordinatorStrategy PartyId)
+    : Except CoordinatorError PartyId := do
+  -- Check non-empty
+  if parties.isEmpty then
+    throw .emptyPartyList
+  match strategy with
+  | .fixed pid =>
+      if parties.contains pid then
+        pure pid
+      else
+        throw .fixedPartyNotInList
+  | .roundRobin round =>
+      let idx := round % parties.length
+      match parties[idx]? with
+      | some pid => pure pid
+      | none => throw (.indexOutOfBounds idx parties.length)
+  | .random seed =>
+      let idx := seed % parties.length
+      match parties[idx]? with
+      | some pid => pure pid
+      | none => throw (.indexOutOfBounds idx parties.length)
 
 /-!
 ## Refresh Round State
@@ -203,10 +285,15 @@ def initRefreshRound (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 ## Protocol Functions
 -/
 
-/-- Get the coordinator for this round. -/
+/-- Get the coordinator for this round (legacy, uses default on failure). -/
 def RefreshRoundState.coordinator {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId] [Inhabited S.PartyId]
     (st : RefreshRoundState S) : S.PartyId :=
   selectCoordinator st.parties st.coordStrategy
+
+/-- Get the coordinator for this round with explicit error handling. -/
+def RefreshRoundState.coordinatorE {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
+    (st : RefreshRoundState S) : Except CoordinatorError S.PartyId :=
+  selectCoordinatorE st.parties st.coordStrategy
 
 /-- Check if all parties have committed. -/
 def RefreshRoundState.allCommitted {S : Scheme} [BEq S.PartyId] [Hashable S.PartyId]
@@ -471,7 +558,7 @@ private theorem constructZeroSumMask_proof (S : Scheme)
 def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S)
     : Option (ZeroSumMaskFn S (List.toFinset st.parties)) :=
-  if hphase : st.phase = .apply then
+  if _hphase : st.phase = .apply then
     match hmatch : computeFinalMasks S st with
     | .error _ => none
     | .ok masks =>
