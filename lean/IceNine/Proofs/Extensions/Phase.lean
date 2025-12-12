@@ -98,7 +98,7 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
     -- Unfold `merge` and rewrite `HashMap.fold` as a `foldl` over `toList`.
     classical
     let step : Std.HashMap S.PartyId M → S.PartyId → M → Std.HashMap S.PartyId M :=
-      fun acc pid msg => if acc.contains pid then acc else acc.insert pid msg
+      fun acc pid msg => if pid ∈ acc then acc else acc.insert pid msg
     have hfold :
         b.map.fold step a.map =
           b.map.toList.foldl (fun acc kv => step acc kv.1 kv.2) a.map := by
@@ -146,19 +146,17 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
             induction l generalizing init with
             | nil => rfl
             | cons x xs ih =>
-                have hx : (x.1 == k) = false := hNo x (List.mem_cons_self x xs)
+                have hx : (x.1 == k) = false := hNo x (List.mem_cons.mpr (Or.inl rfl))
                 have hxs : ∀ a ∈ xs, (a.1 == k) = false := by
                   intro a ha
-                  exact hNo a (List.mem_cons_of_mem x ha)
+                  exact hNo a (List.mem_cons.mpr (Or.inr ha))
                 -- One step: inserting a key != k doesn't affect `contains k`.
                 have step_preserves :
                     (stepKV init x).contains k = init.contains k := by
                   simp only [stepKV, step]
-                  by_cases hIn : init.contains x.1 = true
-                  · simp only [hIn, ↓reduceIte]
-                  · simp only [Bool.not_eq_true] at hIn
-                    simp only [hIn, Bool.false_eq_true, ↓reduceIte]
-                    rw [Std.HashMap.contains_insert]
+                  split_ifs with hIn
+                  · rfl
+                  · rw [Std.HashMap.contains_insert]
                     simp only [hx, Bool.false_or]
                 -- Finish by induction.
                 simp only [List.foldl_cons]
@@ -170,35 +168,42 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
           have step_sets_true (init : Std.HashMap S.PartyId M) :
               (stepKV init p).contains k = true := by
             simp only [stepKV, step]
-            by_cases hIn : init.contains p.1 = true
+            split_ifs with hIn
             · -- `init` already contains `p.1`; since `p.1 == k`, it contains `k` as well.
-              have hk' : init.contains k = true := by
-                have hcongr : init.contains p.1 = init.contains k :=
-                  Std.HashMap.contains_congr (m := init) (hab := hp)
-                rw [hcongr] at hIn
-                exact hIn
-              simp only [hIn, ↓reduceIte, hk']
+              have hcongr : init.contains p.1 = init.contains k :=
+                Std.HashMap.contains_congr (m := init) (hab := hp)
+              rw [← hcongr]; exact hIn
             · -- Insert `p.1`; `p.1 == k` forces `contains k`.
-              simp only [Bool.not_eq_true] at hIn
-              simp only [hIn, Bool.false_eq_true, ↓reduceIte]
               rw [Std.HashMap.contains_insert]
               simp only [hp, Bool.true_or]
           have step_preserves_true (init : Std.HashMap S.PartyId M) (hk : init.contains k = true)
               (x : S.PartyId × M) :
               (stepKV init x).contains k = true := by
             simp only [stepKV, step]
-            by_cases hIn : init.contains x.1 = true
-            · simp only [hIn, ↓reduceIte, hk]
-            · simp only [Bool.not_eq_true] at hIn
-              simp only [hIn, Bool.false_eq_true, ↓reduceIte]
-              rw [Std.HashMap.contains_insert]
+            split_ifs with hIn
+            · exact hk
+            · rw [Std.HashMap.contains_insert]
               simp only [hk, Bool.or_true]
+          -- Helper: once contains k is true, folding preserves it
+          have fold_preserves_true (init : Std.HashMap S.PartyId M) (hk : init.contains k = true)
+              (l : List (S.PartyId × M)) :
+              (l.foldl stepKV init).contains k = true := by
+            induction l generalizing init with
+            | nil => exact hk
+            | cons x xs ih =>
+                simp only [List.foldl_cons]
+                exact ih (stepKV init x) (step_preserves_true init hk x)
           -- Now combine the pieces.
           have : (b.map.toList.foldl stepKV a.map).contains k = true := by
             -- Rewrite `toList` using the decomposition.
             rw [hEq]
             -- Fold over prefix, then `p`, then suffix.
-            simp [List.foldl_append, hPrefix, step_sets_true, step_preserves_true]
+            simp only [List.foldl_append, List.foldl_cons]
+            -- After prefix: contains k = a.map.contains k (via hPrefix)
+            -- After p: contains k = true (via step_sets_true)
+            -- After suffix: still true (via fold_preserves_true)
+            have h1 : (stepKV (as.foldl stepKV a.map) p).contains k = true := step_sets_true _
+            exact fold_preserves_true _ h1 bs
           -- Conclude the desired equality.
           have : (b.map.toList.foldl stepKV a.map).contains k =
               (a.map.contains k || b.map.contains k) := by
@@ -209,9 +214,9 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
           simpa [MsgMap.merge, Join.join, step, hfold] using this
     · -- `b` does not contain `k`, so merge preserves `a.contains k`.
       have hbFalse : b.map.contains k = false := by
-        cases h : b.map.contains k <;> simp [h] at hb
+        cases h : b.map.contains k
         · rfl
-        · cases hb (by simpa [h])
+        · exact absurd h hb
       have hfind :
           b.map.toList.find? (fun kv => kv.1 == k) = none := by
         exact (Std.HashMap.find?_toList_eq_none_iff_contains_eq_false (m := b.map) (k := k)).2 hbFalse
@@ -220,10 +225,10 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
         have hnone : ∀ x ∈ b.map.toList, ¬ ((x.1 == k) = true) := by
           simpa [List.find?_eq_none] using hfind
         intro x hx
-        cases h' : (x.1 == k) <;> simp [h'] at *
-        · rfl
-        · exfalso
-          exact hnone x hx h'
+        by_cases h' : (x.1 == k) = true
+        · exact absurd h' (hnone x hx)
+        · simp only [Bool.not_eq_true] at h'
+          exact h'
       let stepKV : Std.HashMap S.PartyId M → (S.PartyId × M) → Std.HashMap S.PartyId M :=
         fun acc kv => step acc kv.1 kv.2
       have preserves (l : List (S.PartyId × M)) (hNo : ∀ a ∈ l, (a.1 == k) = false)
@@ -232,18 +237,16 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
         induction l generalizing init with
         | nil => rfl
         | cons x xs ih =>
-            have hx : (x.1 == k) = false := hNo x (List.mem_cons_self x xs)
+            have hx : (x.1 == k) = false := hNo x (List.mem_cons.mpr (Or.inl rfl))
             have hxs : ∀ a ∈ xs, (a.1 == k) = false := by
               intro a ha
-              exact hNo a (List.mem_cons_of_mem x ha)
+              exact hNo a (List.mem_cons.mpr (Or.inr ha))
             have step_preserves :
                 (stepKV init x).contains k = init.contains k := by
               simp only [stepKV, step]
-              by_cases hIn : init.contains x.1 = true
-              · simp only [hIn, ↓reduceIte]
-              · simp only [Bool.not_eq_true] at hIn
-                simp only [hIn, Bool.false_eq_true, ↓reduceIte]
-                rw [Std.HashMap.contains_insert]
+              split_ifs with hIn
+              · rfl
+              · rw [Std.HashMap.contains_insert]
                 simp only [hx, Bool.false_or]
             simp only [List.foldl_cons]
             rw [ih hxs (stepKV init x), step_preserves]

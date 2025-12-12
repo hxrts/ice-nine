@@ -8,7 +8,6 @@ Cargo.lock
 /.lake
 /build
 /lake-packages
-lean-toolchain
 
 # Nix
 result
@@ -37,6 +36,10 @@ work/
 
 # Documentation build output
 docs/book/
+
+# mdbook-mermaid generated files (downloaded during build)
+mermaid.min.js
+mermaid-init.js
 
 # LLM
 .claude

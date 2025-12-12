@@ -158,10 +158,23 @@ summary:
 
 # Build documentation book (regenerates SUMMARY.md first)
 book: summary
+    mdbook-mermaid install . > /dev/null 2>&1 || true
     mdbook build
+    rm -f mermaid.min.js mermaid-init.js
 
 # Serve documentation locally with live reload
 serve-book: summary
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Kill any existing mdbook servers
+    if pgrep -x mdbook > /dev/null; then
+        echo "Stopping existing mdbook server..."
+        pkill mdbook
+        sleep 1
+    fi
+
+    mdbook-mermaid install . > /dev/null 2>&1 || true
     mdbook serve --open
 
 # Clean built documentation
@@ -191,10 +204,55 @@ deploy-cache:
     @echo "✓ Mathlib cache downloaded on server"
 
 # Build Lean on remote server (downloads cache first)
+# Uses lockfile to prevent concurrent builds
 deploy-lean:
-    @echo "Building Lean on $DEPLOY_SERVER..."
-    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command bash -c 'lake exe cache get && lake build'"
-    @echo "✓ Lean built on server"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LOCKFILE="/tmp/ice-nine-build.lock"
+
+    echo "Building Lean on $DEPLOY_SERVER..."
+
+    # Check if a build is already running
+    if ssh $DEPLOY_SERVER "test -f $LOCKFILE && ps -p \$(cat $LOCKFILE 2>/dev/null) > /dev/null 2>&1"; then
+        echo "✗ Build already in progress (PID: $(ssh $DEPLOY_SERVER "cat $LOCKFILE 2>/dev/null"))"
+        echo "  Use 'just deploy-kill' to force-stop the running build"
+        exit 1
+    fi
+
+    # Acquire lock and build
+    ssh $DEPLOY_SERVER "
+        echo \$\$ > $LOCKFILE
+        trap 'rm -f $LOCKFILE' EXIT
+        cd $DEPLOY_PATH && nix develop --command bash -c 'lake exe cache get && lake build'
+    "
+    echo "✓ Lean built on server"
+
+# Force-kill any running build on server
+deploy-kill:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LOCKFILE="/tmp/ice-nine-build.lock"
+
+    echo "Killing builds on $DEPLOY_SERVER..."
+    ssh $DEPLOY_SERVER "
+        # Kill process from lockfile if it exists
+        if [ -f $LOCKFILE ]; then
+            pid=\$(cat $LOCKFILE 2>/dev/null)
+            if [ -n \"\$pid\" ] && ps -p \$pid > /dev/null 2>&1; then
+                echo \"Killing build process \$pid...\"
+                kill -9 \$pid 2>/dev/null || true
+            fi
+            rm -f $LOCKFILE
+        fi
+
+        # Kill any stray lake/lean processes
+        pkill -9 lake 2>/dev/null || true
+        pkill -9 lean 2>/dev/null || true
+        sleep 1
+        echo 'Remaining processes:'
+        pgrep -fl 'lake|lean' || echo '  (none)'
+    "
+    echo "✓ Builds killed"
 
 # Build Rust on remote server
 deploy-build:

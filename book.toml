@@ -9,11 +9,14 @@ build-dir = "docs/book"
 
 [output.html]
 preferred-theme = "rust"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.search]
 enable = true
 limit-results = 30
 teaser-word-count = 30
 use-heading-for-link-text = true
+
+[preprocessor.mermaid]
 
 [preprocessor.katex]

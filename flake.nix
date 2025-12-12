@@ -14,7 +14,9 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Pin nixpkgs for mdbook-mermaid 0.16.2 (0.17.0 has compatibility issues)
+    nixpkgs-mdbook.url = "github:NixOS/nixpkgs/b3d51a0365f6695e7dd5cdf3e180604530ed33b4";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -31,6 +33,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-mdbook,
       flake-utils,
       rust-overlay,
       aeneas,
@@ -41,6 +44,10 @@
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
+        };
+        # Pinned pkgs for mdbook-mermaid 0.16.2
+        pkgs-mdbook = import nixpkgs-mdbook {
+          inherit system;
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -54,6 +61,16 @@
 
       in
       {
+        # Lightweight shell for documentation only (no aeneas)
+        devShells.docs = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            just
+            mdbook
+            mdbook-katex
+            pkgs-mdbook.mdbook-mermaid
+          ];
+        };
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             # Rust toolchain
@@ -86,6 +103,7 @@
             # Documentation
             mdbook
             mdbook-katex
+            pkgs-mdbook.mdbook-mermaid  # pinned to 0.16.2 for compatibility
 
             # Deployment
             rclone

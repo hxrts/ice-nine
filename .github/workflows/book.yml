@@ -44,7 +44,7 @@ jobs:
           key: ${{ runner.os }}-nix-book-${{ hashFiles('flake.lock') }}
           restore-keys: ${{ runner.os }}-nix-book-
       - name: Build documentation
-        run: nix develop --command just book
+        run: nix develop .#docs --quiet --command just book
       - name: Setup Pages
         uses: actions/configure-pages@v4
       - name: Upload artifact

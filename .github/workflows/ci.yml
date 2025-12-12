@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-documentation-links:
+    name: Check Documentation Links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          config-file: ".github/config/markdown-link-check.json"
+          base-branch: "main"
+
+  build-book:
+    name: Build Documentation Book
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - name: Cache Nix store
+        uses: actions/cache@v4
+        with:
+          path: /nix/store
+          key: ${{ runner.os }}-nix-ci-${{ hashFiles('flake.lock') }}
+          restore-keys: ${{ runner.os }}-nix-ci-
+      - name: Build documentation
+        run: nix develop .#docs --quiet --command just book
+      - name: Verify book built successfully
+        run: |
+          if [ ! -f docs/book/index.html ]; then
+            echo "Error: docs/book/index.html not found"
+            exit 1
+          fi
+          echo "Documentation built successfully"
