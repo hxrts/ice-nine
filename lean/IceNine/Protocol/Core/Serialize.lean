@@ -285,62 +285,164 @@ def SerializableWithHeader.fromBytesWithHeader {α : Type*} [inst : Serializable
   | some (h, rest) => if h.schemeId = inst.schemeId then (inst.fromBytes rest).map (·.1) else none
 
 /-!
-## ByteReader Monad
+## ByteRead Effect
 
-Safe, bounds-checked byte reading with automatic position tracking.
-Eliminates manual byte counting and prevents out-of-bounds access.
+Algebraic effect signature for byte reading, with separate interpretation.
+This separates the *description* of what to read from *how* to read it.
+
+### Design
+
+The `ByteRead` structure represents the current read state. Operations are
+pure functions that take state and return `Except String (result × newState)`.
+This gives us:
+- Clear effect signature (the operations)
+- Single interpretation (for efficiency)
+- Easy testing (construct ByteRead directly)
+- Composable via explicit state threading or `StateT` sugar
 -/
 
-/-- State for ByteReader: the buffer and current position -/
-structure ByteReaderState where
+/-- Read effect state: buffer and current position -/
+structure ByteRead where
   buffer : ByteArray
   pos : Nat
-  deriving Repr
+  deriving Repr, BEq
 
-/-- ByteReader monad for safe deserialization.
-    Tracks position and fails gracefully on bounds errors. -/
-abbrev ByteReader := StateT ByteReaderState (Except String)
+/-- Result of a read operation: value and updated state -/
+abbrev ReadResult (α : Type) := Except String (α × ByteRead)
 
-/-- Run a ByteReader on a ByteArray -/
-def ByteReader.run (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
-  match r.run { buffer := bs, pos := 0 } with
+namespace ByteRead
+
+/-- Create initial read state from a ByteArray -/
+def init (bs : ByteArray) : ByteRead := { buffer := bs, pos := 0 }
+
+/-- Bytes remaining to read -/
+def remaining (st : ByteRead) : Nat := st.buffer.size - st.pos
+
+/-- Check if read is complete (all bytes consumed) -/
+def isComplete (st : ByteRead) : Bool := st.pos = st.buffer.size
+
+/-!
+### Core Operations
+
+Each operation takes state explicitly and returns updated state.
+These are the "effect handlers" for our read effect.
+-/
+
+/-- Read exactly n bytes -/
+def readBytes (n : Nat) (st : ByteRead) : ReadResult ByteArray :=
+  if st.pos + n > st.buffer.size then
+    .error s!"readBytes: need {n} bytes at position {st.pos}, buffer has {st.buffer.size}"
+  else
+    let result := st.buffer.extract st.pos (st.pos + n)
+    .ok (result, { st with pos := st.pos + n })
+
+/-- Read a single byte -/
+def readByte (st : ByteRead) : ReadResult UInt8 :=
+  if st.pos ≥ st.buffer.size then
+    .error s!"readByte: end of buffer at position {st.pos}"
+  else
+    .ok (st.buffer.get! st.pos, { st with pos := st.pos + 1 })
+
+/-- Peek at n bytes without advancing position -/
+def peek (n : Nat) (st : ByteRead) : Except String ByteArray :=
+  if st.pos + n > st.buffer.size then
+    .error s!"peek: need {n} bytes at position {st.pos}"
+  else
+    .ok (st.buffer.extract st.pos (st.pos + n))
+
+/-- Skip n bytes -/
+def skip (n : Nat) (st : ByteRead) : ReadResult Unit :=
+  if st.pos + n > st.buffer.size then
+    .error s!"skip: need {n} bytes at position {st.pos}"
+  else
+    .ok ((), { st with pos := st.pos + n })
+
+/-- Read 4-byte little-endian length prefix -/
+def readLen32 (st : ByteRead) : ReadResult Nat := do
+  let (bs, st') ← readBytes 4 st
+  let b0 := bs.get! 0 |>.toNat
+  let b1 := bs.get! 1 |>.toNat
+  let b2 := bs.get! 2 |>.toNat
+  let b3 := bs.get! 3 |>.toNat
+  return (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24, st')
+
+/-- Read 8-byte little-endian Nat -/
+def readNat64 (st : ByteRead) : ReadResult Nat := do
+  let (bs, st') ← readBytes 8 st
+  let b0 := bs.get! 0 |>.toNat
+  let b1 := bs.get! 1 |>.toNat
+  let b2 := bs.get! 2 |>.toNat
+  let b3 := bs.get! 3 |>.toNat
+  let b4 := bs.get! 4 |>.toNat
+  let b5 := bs.get! 5 |>.toNat
+  let b6 := bs.get! 6 |>.toNat
+  let b7 := bs.get! 7 |>.toNat
+  return (b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24 +
+          b4 <<< 32 + b5 <<< 40 + b6 <<< 48 + b7 <<< 56, st')
+
+end ByteRead
+
+/-!
+### Composition via StateT
+
+For convenience, we provide `ByteReader` as `StateT ByteRead (Except String)`.
+This allows monadic composition with `do` notation while using the same
+underlying effect operations.
+-/
+
+/-- ByteReader: StateT wrapper for monadic composition -/
+abbrev ByteReader := StateT ByteRead (Except String)
+
+namespace ByteReader
+
+/-- Run a reader on a ByteArray, returning value and bytes consumed -/
+def run (r : ByteReader α) (bs : ByteArray) : Option (α × Nat) :=
+  match r.run (ByteRead.init bs) with
   | .ok (a, st) => some (a, st.pos)
   | .error _ => none
 
-/-- Run a ByteReader and return error message on failure -/
-def ByteReader.runWithError (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
-  match r.run { buffer := bs, pos := 0 } with
+/-- Run with error reporting -/
+def runWithError (r : ByteReader α) (bs : ByteArray) : Except String (α × Nat) :=
+  match r.run (ByteRead.init bs) with
   | .ok (a, st) => .ok (a, st.pos)
   | .error e => .error e
 
-/-- Read exactly n bytes, advancing position -/
-def ByteReader.readBytes (n : Nat) : ByteReader ByteArray := do
+/-- Lift ByteRead operation into ByteReader -/
+def lift (op : ByteRead → ReadResult α) : ByteReader α := do
   let st ← get
-  if st.pos + n > st.buffer.size then
-    throw s!"readBytes: need {n} bytes at position {st.pos}, but buffer size is {st.buffer.size}"
-  let result := st.buffer.extract st.pos (st.pos + n)
-  set { st with pos := st.pos + n }
-  return result
+  match op st with
+  | .ok (a, st') => set st'; return a
+  | .error e => throw e
+
+/-- Read exactly n bytes -/
+def readBytes (n : Nat) : ByteReader ByteArray := lift (ByteRead.readBytes n)
 
 /-- Read a single byte -/
-def ByteReader.readByte : ByteReader UInt8 := do
-  let bs ← readBytes 1
-  return bs.get! 0  -- Safe: we just read exactly 1 byte
+def readByte : ByteReader UInt8 := lift ByteRead.readByte
 
-/-- Peek at current position without advancing -/
-def ByteReader.peek (n : Nat) : ByteReader ByteArray := do
+/-- Peek at n bytes without advancing -/
+def peek (n : Nat) : ByteReader ByteArray := do
   let st ← get
-  if st.pos + n > st.buffer.size then
-    throw s!"peek: need {n} bytes at position {st.pos}"
-  return st.buffer.extract st.pos (st.pos + n)
+  match ByteRead.peek n st with
+  | .ok bs => return bs
+  | .error e => throw e
 
-/-- Get remaining bytes count -/
-def ByteReader.remaining : ByteReader Nat := do
+/-- Get remaining byte count -/
+def remaining : ByteReader Nat := do
   let st ← get
-  return st.buffer.size - st.pos
+  return st.remaining
+
+/-- Skip n bytes -/
+def skip (n : Nat) : ByteReader Unit := lift (ByteRead.skip n)
+
+/-- Read 4-byte length prefix -/
+def readLen32 : ByteReader Nat := lift ByteRead.readLen32
+
+/-- Read 8-byte Nat -/
+def readNat64 : ByteReader Nat := lift ByteRead.readNat64
 
 /-- Read a value using its Serializable instance -/
-def ByteReader.read [Serializable α] : ByteReader α := do
+def read [Serializable α] : ByteReader α := do
   let st ← get
   let rest := st.buffer.extract st.pos st.buffer.size
   match Serializable.fromBytes rest with
@@ -348,6 +450,8 @@ def ByteReader.read [Serializable α] : ByteReader α := do
       set { st with pos := st.pos + consumed }
       return a
   | none => throw s!"read: failed to deserialize at position {st.pos}"
+
+end ByteReader
 
 /-!
 ## Primitive Serializers
@@ -407,15 +511,6 @@ instance : Serializable Nat where
 instance : Serializable Int where
   toBytes := intToBytes
   fromBytes bs := intFromBytesReader.run bs
-
-/-- Read 4-byte length prefix as Nat -/
-def ByteReader.readLen32 : ByteReader Nat := do
-  let bs ← ByteReader.readBytes 4
-  let b0 := bs.get! 0 |>.toNat
-  let b1 := bs.get! 1 |>.toNat
-  let b2 := bs.get! 2 |>.toNat
-  let b3 := bs.get! 3 |>.toNat
-  return b0 + b1 <<< 8 + b2 <<< 16 + b3 <<< 24
 
 /-- Write 4-byte length prefix -/
 def writeLen32 (n : Nat) : ByteArray :=
