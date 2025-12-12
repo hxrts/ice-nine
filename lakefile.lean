@@ -24,7 +24,3 @@ lean_lib «IceNine.Crypto» where
 lean_lib «IceNine.Protocol» where
   srcDir := "lean"
   roots := #[`IceNine.Protocol]
-
-lean_lib «IceNine.Security» where
-  srcDir := "lean"
-  roots := #[`IceNine.Security]

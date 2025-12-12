@@ -114,35 +114,104 @@ def lowBitsInt (r : Int) (alpha : Nat) : Int :=
 /-- Reconstruction: r₁·α + r₀ = r
 
     Uses `Int.ediv_add_emod` from Mathlib: r = (r / α) * α + r % α
-
-    NOTE: Uses sorry due to complex interaction between let bindings and split_ifs.
-    The property is mathematically obvious from the definition. -/
+    This follows from the fact that `r₀'` is congruent to `r % α` modulo `α`. -/
 theorem decompose_correct (r : Int) (alpha : Nat) (hα : alpha > 0) :
     let (r₁, r₀) := decompose r alpha
     r₁ * alpha + r₀ = r := by
-  simp only [decompose]
-  split_ifs with h hadj
-  · omega
-  · -- Adjusted case: r₀' = r % α - α
-    sorry
-  · -- Non-adjusted case
-    sorry
+  classical
+  have hα0 : alpha ≠ 0 := Nat.ne_of_gt hα
+  set r0 : Int := r % (alpha : Int)
+  have hr_sub : r - r0 = (alpha : Int) * (r / (alpha : Int)) := by
+    simpa [r0] using (Int.mul_ediv_self r (alpha : Int)).symm
+  by_cases hadj : r0 > alpha / 2
+  · -- Adjusted case: r₀' = r0 - α
+    have hdiv : (alpha : Int) ∣ r - (r0 - (alpha : Int)) := by
+      refine ⟨r / (alpha : Int) + 1, ?_⟩
+      calc
+        r - (r0 - (alpha : Int)) = (r - r0) + (alpha : Int) := by ring
+        _ = (alpha : Int) * (r / (alpha : Int)) + (alpha : Int) := by simpa [hr_sub]
+        _ = (alpha : Int) * (r / (alpha : Int) + 1) := by ring
+    have hmul :
+        (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) =
+          r - (r0 - (alpha : Int)) :=
+      Int.ediv_mul_cancel hdiv
+    have :
+        (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) + (r0 - (alpha : Int)) = r := by
+      calc
+        (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) + (r0 - (alpha : Int))
+            = (r - (r0 - (alpha : Int))) + (r0 - (alpha : Int)) := by simpa [hmul]
+        _ = r := by ring
+    simpa [decompose, hα0, r0, hadj] using this
+  · -- Non-adjusted case: r₀' = r0
+    have hdiv : (alpha : Int) ∣ r - r0 := by
+      exact ⟨r / (alpha : Int), hr_sub⟩
+    have hmul : (r - r0) / (alpha : Int) * (alpha : Int) = r - r0 :=
+      Int.ediv_mul_cancel hdiv
+    have : (r - r0) / (alpha : Int) * (alpha : Int) + r0 = r := by
+      calc
+        (r - r0) / (alpha : Int) * (alpha : Int) + r0 = (r - r0) + r0 := by simpa [hmul]
+        _ = r := by simpa using (sub_add_cancel r r0)
+    simpa [decompose, hα0, r0, hadj] using this
 
 /-- Low bits are bounded by α/2
 
     Uses `Int.emod_lt_of_pos` from Mathlib for modular bounds.
-
-    NOTE: Uses sorry due to complex interaction between let bindings and split_ifs.
-    The property holds because the decomposition centers the remainder. -/
+    The remainder is centered into the interval `[-α/2, α/2]`. -/
 theorem lowBits_bounded (r : Int) (alpha : Nat) (hα : alpha > 0) :
     |lowBitsInt r alpha| ≤ alpha / 2 := by
-  simp only [lowBitsInt, decompose]
-  split_ifs with h hadj
-  · simp; omega
-  · -- Adjusted case
-    sorry
-  · -- Non-adjusted case
-    sorry
+  classical
+  have hα0 : alpha ≠ 0 := Nat.ne_of_gt hα
+  have hαi0 : (alpha : Int) ≠ 0 := (Int.ofNat_ne_zero.2 hα0)
+  have hαPos : (0 : Int) < (alpha : Int) := by
+    simpa using (Int.natCast_pos (n := alpha)).2 hα
+  set r0 : Int := r % (alpha : Int)
+  have hr0_nonneg : 0 ≤ r0 := by
+    simpa [r0] using Int.emod_nonneg r hαi0
+  have hr0_lt : r0 < (alpha : Int) := by
+    simpa [r0] using Int.emod_lt_of_pos r hαPos
+  by_cases hadj : r0 > alpha / 2
+  · -- Adjusted case: low bits are `r0 - α`
+    have hr0_ge : (alpha / 2 : Int) + 1 ≤ r0 :=
+      Int.add_one_le_of_lt hadj
+    -- Bound `α` by `2*(α/2) + 1`.
+    have hNat : alpha ≤ 2 * (alpha / 2) + 1 := by
+      have hmod : alpha % 2 ≤ 1 := by
+        have hlt : alpha % 2 < 2 := Nat.mod_lt _ (by decide)
+        omega
+      have hEq : 2 * (alpha / 2) + alpha % 2 = alpha := Nat.div_add_mod alpha 2
+      have : alpha = 2 * (alpha / 2) + alpha % 2 := by
+        simpa using hEq.symm
+      calc
+        alpha = 2 * (alpha / 2) + alpha % 2 := this
+        _ ≤ 2 * (alpha / 2) + 1 := Nat.add_le_add_left hmod _
+    have hInt : (alpha : Int) ≤ (2 * (alpha / 2) + 1 : Int) := by
+      exact_mod_cast hNat
+    have hRewrite :
+        (2 * (alpha / 2) + 1 : Int) = (alpha / 2 : Int) + 1 + (alpha / 2 : Int) := by
+      simp [Int.natCast_add, Int.natCast_mul]
+      ring
+    have hAlphaLe : (alpha : Int) ≤ (alpha / 2 : Int) + 1 + (alpha / 2 : Int) := by
+      simpa [hRewrite] using hInt
+    have hHalfBound : (alpha : Int) - ((alpha / 2 : Int) + 1) ≤ (alpha / 2 : Int) :=
+      Int.sub_left_le_of_le_add (by simpa [add_assoc] using hAlphaLe)
+    have hAlphaMinus_r0_le : (alpha : Int) - r0 ≤ (alpha / 2 : Int) := by
+      have h1 : (alpha : Int) - r0 ≤ (alpha : Int) - ((alpha / 2 : Int) + 1) :=
+        sub_le_sub_left hr0_ge (alpha : Int)
+      exact le_trans h1 hHalfBound
+    have hneg : r0 - (alpha : Int) < 0 := sub_neg_of_lt hr0_lt
+    have habs : |r0 - (alpha : Int)| = (alpha : Int) - r0 := by
+      calc
+        |r0 - (alpha : Int)| = -(r0 - (alpha : Int)) := abs_of_neg hneg
+        _ = (alpha : Int) - r0 := by ring
+    have hBound : |r0 - (alpha : Int)| ≤ (alpha / 2 : Int) := by
+      simpa [habs] using hAlphaMinus_r0_le
+    simpa [lowBitsInt, decompose, hα0, r0, hadj] using hBound
+  · -- Non-adjusted case: low bits are `r0`
+    have hr0_le : r0 ≤ (alpha / 2 : Int) := le_of_not_gt hadj
+    have habs : |r0| = r0 := abs_of_nonneg hr0_nonneg
+    have hBound : |r0| ≤ (alpha / 2 : Int) := by
+      simpa [habs] using hr0_le
+    simpa [lowBitsInt, decompose, hα0, r0, hadj] using hBound
 
 /-!
 ## HighBits for Dilithium Polynomials

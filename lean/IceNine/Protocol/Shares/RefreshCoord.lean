@@ -387,13 +387,6 @@ def verifyZeroSum (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq
   | .ok masks => decide (masks.sum = 0)
   | .error _ => false
 
-/-- verifyZeroSum reflects zeroSumProp. -/
-theorem verifyZeroSum_spec (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
-    (st : RefreshRoundState S) :
-    verifyZeroSum S st = true ↔ zeroSumProp S st := by
-  unfold verifyZeroSum zeroSumProp
-  split <;> simp_all [decide_eq_true_iff]
-
 /-!
 ## Final Mask Construction
 -/
@@ -410,31 +403,6 @@ def makeMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.
         | none => 0 }
   | none => { mask := fun _ => 0 }
 
-/-- The mask function applied to parties equals the computed mask list (on success).
-
-    **Mathematical justification**:
-    Both `makeMaskFn` and `computeFinalMasks` use identical logic:
-    - For each party pid, return `adj.adjustment` if pid is coordinator, else `r.mask`
-    - Default to 0 if no reveal exists
-
-    The only difference is that `computeFinalMasks` maps over `st.parties` explicitly
-    while `makeMaskFn` returns a function. When we map the function over parties,
-    we get the same list.
-
-    **Note**: Uses sorry because the proof requires:
-    1. Case analysis on `st.adjustment` (Option match)
-    2. Showing that in the `none` case, `hmasks` is a contradiction (throw ≠ ok)
-    3. In the `some adj` case, showing the two list comprehensions are equal
-
-    The definitions are definitionally identical, but Lean's elaboration of match
-    expressions and the Except monad makes direct proof complex. A fully elaborated
-    proof would use `cases st.adjustment` and `simp` with Except.ok.injEq. -/
-theorem makeMaskFn_eq_finalMasks (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
-    (st : RefreshRoundState S) (masks : List S.Secret)
-    (hmasks : computeFinalMasks S st = .ok masks) :
-    st.parties.map (fun pid => (makeMaskFn S st).mask pid) = masks := by
-  sorry
-
 /-- Construct the final mask function from refresh round, returning errors explicitly. -/
 def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId] [DecidableEq S.Secret]
     (st : RefreshRoundState S) : Except String (MaskFn S) := do
@@ -448,46 +416,55 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
       else
         throw "zero-sum check failed"
 
-theorem List.sum_perm {α : Type*} [AddCommMonoid α] (l1 l2 : List α) :
-  l1.Perm l2 → l1.sum = l2.sum := by
-  intro hperm; exact hperm.sum_eq
+/-- Construct zero-sum mask with proof.
 
-theorem List.toFinset_toList_perm' {α : Type*} [DecidableEq α] (l : List α) :
-  l.Nodup → l.toFinset.toList.Perm l := by
-  intro hnodup
-  exact List.toFinset_toList hnodup
+    **Pattern: Proof as parameter**
+    The caller must provide `hsum`, a proof that the mask function sums to zero
+    over the party set. This eliminates the need for `sorry` by pushing the proof
+    obligation to the caller.
 
-/-- Construct zero-sum mask with proof, given precomputed masks.
-
-    **Mathematical justification**:
-    We need to prove: `(st.parties.toFinset).sum (makeMaskFn S st).mask = 0`
-
-    Given:
-    - `hmasks`: `computeFinalMasks S st = .ok masks`
-    - `hzero`: `masks.sum = 0`
-    - `hnodup`: `st.parties.Nodup`
-
-    The proof requires:
-    1. `makeMaskFn_eq_finalMasks`: mapping mask function over parties equals `masks`
-    2. `List.sum_toFinset hnodup`: list sum equals finset sum when Nodup
-    3. Transitivity: finset sum = list sum = masks.sum = 0
-
-    **Note**: Uses sorry because it depends on `makeMaskFn_eq_finalMasks` (also sorry)
-    and the connection between List.sum and Finset.sum over a Nodup list requires
-    showing that the finset.toList permutation preserves sum, which involves
-    List.toFinset_toList_perm and List.sum_perm lemmas in combination. -/
+    See `Proofs/Extensions/RefreshCoord.lean` for helper theorems to construct
+    the proof from `hmasks` and `hzero`. -/
 def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
+    (st : RefreshRoundState S)
+    (hsum : st.parties.toFinset.sum (makeMaskFn S st).mask = 0)
+    : ZeroSumMaskFn S (List.toFinset st.parties) :=
+  { fn := makeMaskFn S st
+    sum_zero := hsum
+    }
+
+/-- Helper: prove mask function equals computed masks. -/
+private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
+    (st : RefreshRoundState S) (masks : List S.Secret)
+    (hmasks : computeFinalMasks S st = .ok masks) :
+    st.parties.map (fun pid => (makeMaskFn S st).mask pid) = masks := by
+  unfold computeFinalMasks at hmasks
+  unfold makeMaskFn
+  cases hadj : st.adjustment with
+  | none => simp only [hadj] at hmasks
+  | some adj =>
+    simp only [hadj] at hmasks ⊢
+    injection hmasks with heq
+    exact heq.symm
+
+/-- Helper: derive zero-sum proof from runtime checks. -/
+private theorem constructZeroSumMask_proof (S : Scheme)
+    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] [Inhabited S.PartyId]
     (st : RefreshRoundState S)
     (masks : List S.Secret)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
-    (_hnodup : st.parties.Nodup)
-    : ZeroSumMaskFn S (List.toFinset st.parties) :=
-  { fn := makeMaskFn S st
-    sum_zero := by
-      -- Would chain: finset sum → list sum → masks.sum = 0
-      sorry
-    }
+    (hnodup : st.parties.Nodup) :
+    st.parties.toFinset.sum (makeMaskFn S st).mask = 0 := by
+  have heq := makeMaskFn_eq_finalMasks_aux S st masks hmasks
+  have hperm : st.parties.toFinset.toList.Perm st.parties :=
+    List.toFinset_toList hnodup
+  rw [Finset.sum_toList]
+  have hmap_perm : (st.parties.toFinset.toList.map (makeMaskFn S st).mask).Perm
+                   (st.parties.map (makeMaskFn S st).mask) :=
+    List.Perm.map _ hperm
+  rw [hmap_perm.sum_eq, heq, hzero]
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/
@@ -500,7 +477,8 @@ def tryConstructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [D
     | .ok masks =>
         if hzero : masks.sum = 0 then
           if hnodup : st.parties.Nodup then
-            some (constructZeroSumMask S st masks hmatch hzero hnodup)
+            let hsum := constructZeroSumMask_proof S st masks hmatch hzero hnodup
+            some (constructZeroSumMask S st hsum)
           else none
         else none
   else none

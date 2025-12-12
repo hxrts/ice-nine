@@ -144,6 +144,6 @@ instance {S : Scheme} {M : Type*} [BEq S.PartyId] [Hashable S.PartyId]
 /-- MsgMap ordering: subset by sender keys. -/
 instance {S : Scheme} {M : Type*} [BEq S.PartyId] [Hashable S.PartyId]
     : LE (MsgMap S M) :=
-  ⟨fun a b => a.map.toList.all (fun (k, _) => b.map.contains k)⟩
+  ⟨fun a b => ∀ k, a.map.contains k = true → b.map.contains k = true⟩
 
 end IceNine.Protocol

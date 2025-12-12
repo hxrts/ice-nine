@@ -280,7 +280,71 @@ deploy-roots:
     ssh $DEPLOY_SERVER "nix path-info -Sh /nix/var/nix/gcroots/per-user/root/ice-nine-devshell 2>/dev/null || echo 'Not pinned yet'"
 
 # Initialize server: sync + pin dependencies (run once, or after flake changes)
-deploy-init: deploy-sync deploy-pin
+deploy-init: deploy-sync deploy-pin deploy-cache-pin
     @echo ""
     @echo "✓ Server initialized with pinned dependencies"
     @echo "  Run 'just deploy-lean' to build Lean proofs"
+
+# Pin Mathlib cache to persistent location (survives rm -rf .lake)
+# Moves .lake/packages to /mnt/data/lake-packages and symlinks it back
+deploy-cache-pin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Pinning Lake packages cache on $DEPLOY_SERVER..."
+    ssh $DEPLOY_SERVER "
+        cd $DEPLOY_PATH
+
+        # If .lake/packages exists and is not a symlink, move it to persistent location
+        if [ -d .lake/packages ] && [ ! -L .lake/packages ]; then
+            echo 'Moving .lake/packages to /mnt/data/lake-packages...'
+            rm -rf /mnt/data/lake-packages
+            mv .lake/packages /mnt/data/lake-packages
+            ln -sf /mnt/data/lake-packages .lake/packages
+            echo '✓ Packages moved and symlinked'
+        elif [ -L .lake/packages ]; then
+            echo '✓ .lake/packages is already a symlink'
+        else
+            # No packages yet, create the structure
+            echo 'Creating persistent packages directory...'
+            mkdir -p /mnt/data/lake-packages
+            mkdir -p .lake
+            ln -sf /mnt/data/lake-packages .lake/packages
+            echo '✓ Symlink created'
+        fi
+
+        echo ''
+        echo 'Cache status:'
+        ls -la .lake/ 2>/dev/null || echo '  No .lake directory yet'
+        du -sh /mnt/data/lake-packages 2>/dev/null || echo '  No packages cached yet'
+    "
+    echo ""
+    echo "✓ Lake packages pinned to /mnt/data/lake-packages"
+
+# Clean stale IceNine build artifacts (preserves Mathlib cache)
+deploy-clean:
+    @echo "Cleaning IceNine build artifacts on $DEPLOY_SERVER..."
+    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && rm -rf .lake/build/lib/lean/IceNine* .lake/build/ir/IceNine* .lake/build/lib/*.olean .lake/build/lib/*.ilean 2>/dev/null || true"
+    @echo "✓ IceNine artifacts cleaned (Mathlib cache preserved)"
+
+# Full clean: remove all .lake except packages symlink
+deploy-clean-full:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Full clean on $DEPLOY_SERVER (preserving packages cache)..."
+    ssh $DEPLOY_SERVER "
+        cd $DEPLOY_PATH
+
+        # Save symlink target if it exists
+        if [ -L .lake/packages ]; then
+            target=\$(readlink .lake/packages)
+            rm -rf .lake/build .lake/config
+            # Recreate structure with symlink
+            mkdir -p .lake
+            ln -sf \"\$target\" .lake/packages
+            echo '✓ Build artifacts removed, packages symlink preserved'
+        else
+            # No symlink, just clean build directory
+            rm -rf .lake/build .lake/config
+            echo '✓ Build artifacts removed'
+        fi
+    "

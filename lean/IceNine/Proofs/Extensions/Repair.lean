@@ -70,7 +70,14 @@ lemma repair_smul
     = c • repairShare S msgs := by
   -- Reduce to the standard `List.smul_sum` lemma.
   -- `repairShare` is a sum of deltas, and `helperContribution` uses scalar action on secrets.
-  simp [repairShare, List.smul_sum, List.map_map, Function.comp]
+  simp only [repairShare, List.map_map]
+  -- Show the mapped lists are equal, which makes the sums equal
+  have hmap : (msgs.map (fun m => (fun x => x.delta) ({ m with delta := c • m.delta })))
+            = (msgs.map (fun m => c • m.delta)) := by
+    apply List.map_congr
+    intro _ _
+    rfl
+  rw [hmap, List.smul_sum]
 
 /-!
 ## Correctness Properties
@@ -141,14 +148,18 @@ lemma repair_masked_zero
   have hzip :
       List.zipWith (fun m z => m.delta + z) msgs mask
         = List.zipWith (· + ·) (msgs.map (·.delta)) mask := by
+    -- Clear outer hypotheses so they don't pollute the induction hypothesis
+    clear hmask hlen hmap
     induction msgs generalizing mask with
     | nil =>
         cases mask <;> simp
     | cons m msgs ih =>
         cases mask with
         | nil => simp
-        | cons z mask =>
-            simp [List.zipWith_cons_cons, ih]
+        | cons z mask' =>
+            simp only [List.zipWith_cons_cons, List.map_cons]
+            congr 1
+            exact ih mask'
   rw [hzip]
   -- Now use the list lemma: Σ(aᵢ + bᵢ) = Σaᵢ + Σbᵢ for equal-length lists.
   have hlen' : (msgs.map (·.delta)).length = mask.length := by

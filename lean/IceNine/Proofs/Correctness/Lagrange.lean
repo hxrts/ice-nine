@@ -1,146 +1,232 @@
 /-
-# Lagrange-Weighted Correctness
+# Lagrange Interpolation Proofs
 
-Correctness proofs for t-of-n threshold signing using Lagrange interpolation.
-Instead of simple sum z = Σ z_i, we weight by Lagrange coefficients:
-  z = Σ λ_i · z_i
+Correctness proofs for Lagrange interpolation coefficients used in
+threshold cryptography.
 
-Key property: if shares lie on a degree-(t-1) polynomial, Lagrange
-coefficients reconstruct the polynomial value at 0 (the secret).
+## Key Theorems
+
+1. `coeffAtZeroFinset_eq_eval_basis`: Our coefficient = Mathlib's basis at 0
+2. `coeffAtZero_list_nodup`: List and finset formulations coincide
+3. `coeffAtZeroFinset_sum_one`: Coefficients sum to 1 (partition of unity)
+4. `coeffs_sum_to_one`: List-based sum-to-one
+5. `coeff_zero_not_in`: Coefficient for element not in set
+6. `coeff_nonzero_in_set`: Coefficients are nonzero for valid sets
+7. `lagrange_interpolation`: List-based interpolation theorem
+8. `lagrange_weighted_sum`: Finset-based weighted sum theorem
 
 ## Mathlib Integration
 
-We connect our `lagrangeCoeffAtZero` to Mathlib's `Lagrange.basis` polynomial.
-Our coefficient λ_i = Π_{j≠i} x_j/(x_j - x_i) is exactly `(Lagrange.basis s v i).eval 0`.
-
-Mathlib provides:
-- `Lagrange.basis`: Basis polynomial evaluating to 1 at node i, 0 at others
-- `Lagrange.sum_basis`: Σ_i basis_i = 1 (partition of unity)
-- `Lagrange.eval_interpolate_at_node`: Interpolant evaluates correctly at nodes
+We connect our `coeffAtZero` to Mathlib's `Lagrange.basis` polynomial.
+Our coefficient λ_i = Π_{j≠i} x_j/(x_j - x_i) is exactly `(Lagrange.basis s id i).eval 0`.
 
 **Reference**: Mathlib.LinearAlgebra.Lagrange
 -/
 
 import Mathlib
-import IceNine.Proofs.Core.ListLemmas
-import IceNine.Protocol.Sign.Sign
-import IceNine.Instances
+import IceNine.Protocol.Core.Lagrange
 
-namespace IceNine.Proofs
+namespace IceNine.Proofs.Lagrange
 
-open IceNine.Protocol
-open IceNine.Instances
-open Polynomial
+open IceNine.Protocol.Lagrange
+open Polynomial Lagrange Finset
 
 /-!
-## Lagrange Linearity
+## Connection to Mathlib
 
-Core algebraic lemma: weighted partial signatures aggregate correctly.
-Σ λ_i·(y_i + c·sk_i) = Σλ_i·y_i + c·Σλ_i·sk_i
-
-The lemma `List.sum_zipWith3_scaled_add_mul` is now in `IceNine.Protocol.Core.ListLemmas`.
+These theorems establish the equivalence between our Lagrange coefficient
+implementation and Mathlib's verified Lagrange interpolation theory.
 -/
 
-/-!
-## Threshold Correctness
+/-- Our coefficient matches the evaluation of Mathlib's Lagrange basis at 0.
+    This is the key connection to Mathlib's Lagrange interpolation theory.
 
-Verify that Lagrange-weighted aggregation produces valid signatures.
-pk and w are also Lagrange-weighted sums of the individual shares.
--/
+    **Mathematical justification**:
+    Our definition: `coeffAtZeroFinset s x = ∏ xj ∈ s.erase x, (xj / (xj - x))`
 
-/-- Happy-path correctness for t-of-n threshold signing.
-    Uses Lagrange coefficients to weight partial signatures.
+    Mathlib's basis uses `basisDivisor`:
+      basis s v i = ∏ j ∈ s.erase i, basisDivisor (v i) (v j)
+      basisDivisor a b = C ((a - b)⁻¹) * (X - C b)
 
-    NOTE: This proof uses sorry because the `simpleScheme` and `verify` APIs have changed.
-    The theorem statement documents the intended property; proof needs updating. -/
-lemma verify_happy_simple_lagrange
-    (ys sks coeffs : List Int)  -- nonces, secrets, Lagrange coefficients
-    (m : ByteArray)
-    (Sset : List Nat)
-    (session fromId : Nat) :
-  True := by
-  trivial
+    Evaluating basis at 0 with v = id:
+      eval 0 (basis s id x) = ∏ j ∈ s.erase x, eval 0 (basisDivisor x j)
+                            = ∏ j ∈ s.erase x, (x - j)⁻¹ * (0 - j)
+                            = ∏ j ∈ s.erase x, j / (j - x)
 
-/-!
-## Connection to Mathlib Lagrange
-
-We show that our `lagrangeCoeffAtZero` computes the same value as
-`(Lagrange.basis s v i).eval 0` from Mathlib.
-
-This connects our implementation to Mathlib's verified Lagrange theory,
-giving us access to theorems like:
-- `Lagrange.sum_basis`: Σ_i λ_i = 1 (when evaluating polynomial at 0)
-- `Lagrange.eval_interpolate_at_node`: interpolation correctness
--/
-
-/-- Our Lagrange coefficient equals Mathlib's basis polynomial evaluated at 0.
-
-    lagrangeCoeffAtZero computes: Π_{j≠i} x_j / (x_j - x_i)
-
-    Mathlib's Lagrange.basis s v i is the polynomial Π_{j≠i} (X - x_j) / (x_i - x_j)
-    which evaluates at 0 to: Π_{j≠i} (0 - x_j) / (x_i - x_j) = Π_{j≠i} x_j / (x_j - x_i)
-
-    This is exactly our formula. -/
-theorem lagrangeCoeffAtZero_eq_basis_eval
-    {F : Type*} [Field F] [DecidableEq F]
-    (s : Finset F) (v : F → F) (i : F) (hi : i ∈ s)
-    (hv : Set.InjOn v s) :
-    (s.erase i).prod (fun j => v j / (v j - v i))
-      = (Lagrange.basis s v i).eval 0 := by
-  -- Unfold Lagrange.basis to product of basisDivisors
-  simp only [Lagrange.basis]
-  -- Push eval inside the product
+    This matches our definition exactly. -/
+theorem coeffAtZeroFinset_eq_eval_basis {F : Type*} [Field F] [DecidableEq F]
+    (s : Finset F) (x : F) :
+    coeffAtZeroFinset s x = eval 0 (Lagrange.basis s id x) := by
+  simp only [coeffAtZeroFinset, Lagrange.basis, id_eq]
   rw [eval_prod]
-  -- Show products are equal by showing each factor equals
   congr 1
   ext j
-  -- eval 0 (basisDivisor (v i) (v j)) = (v i - v j)⁻¹ * (0 - v j) = v j / (v j - v i)
   simp only [Lagrange.basisDivisor, eval_mul, eval_C, eval_sub, eval_X]
-  -- Now: (v i - v j)⁻¹ * (0 - v j) = v j / (v j - v i)
-  -- LHS: (v i - v j)⁻¹ * (0 - v j) = -v j * (v i - v j)⁻¹
-  -- RHS: v j / (v j - v i) = v j * (v j - v i)⁻¹
-  -- Key: (v i - v j)⁻¹ = (-(v j - v i))⁻¹ = -(v j - v i)⁻¹
   rw [div_eq_mul_inv]
-  rw [show (v j - v i)⁻¹ = -((v i - v j)⁻¹) by rw [← neg_sub (v i) (v j), neg_inv]]
+  rw [show (j - x)⁻¹ = -((x - j)⁻¹) by rw [← neg_sub x j, neg_inv]]
   ring
 
-/-- Lagrange coefficients sum to 1 when evaluating at a point in the interpolation set.
+/-- When the list is `Nodup`, the list and finset formulations coincide. -/
+theorem coeffAtZero_list_nodup {F : Type*} [Field F] [DecidableEq F]
+    (partyScalar : F) (allScalars : List F)
+    (hnodup : allScalars.Nodup) :
+    coeffAtZero partyScalar allScalars = coeffAtZeroFinset allScalars.toFinset partyScalar := by
+  simp only [coeffAtZero, coeffAtZeroFinset, hnodup, if_true]
 
-    This follows from Mathlib's Lagrange.sum_basis which shows:
-    Σ_{i∈s} (Lagrange.basis s v i) = 1 (as polynomials)
-
-    Evaluating at 0: Σ_{i∈s} λ_i = 1 -/
-theorem lagrangeCoeffs_sum_one
-    {F : Type*} [Field F] [DecidableEq F]
-    (s : Finset F) (v : F → F)
-    (hs : s.Nonempty) (hv : Set.InjOn v s) :
-    s.sum (fun i => (Lagrange.basis s v i).eval 0) = 1 := by
-  -- Use Mathlib's sum_basis: Σ_{i∈s} basis s v i = 1 (as polynomials)
-  have hsum : (∑ i ∈ s, Lagrange.basis s v i) = (1 : F[X]) := Lagrange.sum_basis hv hs
-  -- Evaluate both sides at 0
-  calc s.sum (fun i => (Lagrange.basis s v i).eval 0)
-      = eval 0 (∑ i ∈ s, Lagrange.basis s v i) := (eval_finset_sum s _ 0).symm
-    _ = eval 0 (1 : F[X]) := by rw [hsum]
+/-- The sum of all Lagrange coefficients equals 1 (partition of unity).
+    Proved via Mathlib's sum_basis theorem. -/
+lemma coeffAtZeroFinset_sum_one {F : Type*} [Field F] [DecidableEq F]
+    (s : Finset F) (h : s.Nonempty) :
+    s.sum (fun x => coeffAtZeroFinset s x) = (1 : F) := by
+  have heq : ∀ x ∈ s, coeffAtZeroFinset s x = eval 0 (Lagrange.basis s id x) := fun x _ =>
+    coeffAtZeroFinset_eq_eval_basis s x
+  calc s.sum (fun x => coeffAtZeroFinset s x)
+      = s.sum (fun x => eval 0 (Lagrange.basis s id x)) := sum_congr rfl heq
+    _ = eval 0 (s.sum (fun x => Lagrange.basis s id x)) := (eval_finset_sum s _ 0).symm
+    _ = eval 0 1 := by
+        have hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
+        have hsum : (∑ j ∈ s, Lagrange.basis s id j) = (1 : F[X]) := by
+          simpa using Lagrange.sum_basis (s := s) (v := id) hinj h
+        simpa [hsum]
     _ = 1 := eval_one
 
-/-- Main interpolation theorem: Lagrange-weighted sum recovers function value.
+/-!
+## List-Based Theorems
 
-    If shares are values of a polynomial p at nodes v(i), then
-    Σ λ_i · p(v(i)) = p(0)
+These theorems work with list representations, which are more convenient
+for protocol implementations.
+-/
 
-    This is the core property ensuring threshold signing reconstructs correctly.
+/-- The sum of all Lagrange coefficients equals 1.
+    This is the list-based version of coeffAtZeroFinset_sum_one. -/
+theorem coeffs_sum_to_one {F : Type*} [Field F] [DecidableEq F]
+    (partyScalars : List F)
+    (hnodup : partyScalars.Nodup)
+    (hne : partyScalars ≠ []) :
+    ((allCoeffsAtZero partyScalars).map Prod.snd).sum = 1 := by
+  have hnonempty : partyScalars.toFinset.Nonempty := by
+    obtain ⟨x, hx⟩ : ∃ x, x ∈ partyScalars := List.exists_mem_of_ne_nil partyScalars hne
+    exact ⟨x, List.mem_toFinset.mpr hx⟩
+  have hco : (allCoeffsAtZero partyScalars).map Prod.snd =
+              partyScalars.map (fun p => coeffAtZeroFinset partyScalars.toFinset p) := by
+    simp only [allCoeffsAtZero, List.map_map, Function.comp]
+    congr 1; ext p
+    exact coeffAtZero_list_nodup p partyScalars hnodup
+  have hsum_list_finset : (partyScalars.map (fun p => coeffAtZeroFinset partyScalars.toFinset p)).sum =
+                           partyScalars.toFinset.sum (fun p => coeffAtZeroFinset partyScalars.toFinset p) := by
+    rw [← List.sum_toFinset _ hnodup]
+  calc ((allCoeffsAtZero partyScalars).map Prod.snd).sum
+      = (partyScalars.map (fun p => coeffAtZeroFinset partyScalars.toFinset p)).sum := by rw [hco]
+    _ = partyScalars.toFinset.sum (fun p => coeffAtZeroFinset partyScalars.toFinset p) := hsum_list_finset
+    _ = 1 := coeffAtZeroFinset_sum_one partyScalars.toFinset hnonempty
 
-    **Note**: Uses sorry due to Mathlib type inference issues with eq_interpolate_of_eval_eq.
-    The theorem is mathematically correct; the first two Lagrange theorems are fully proved. -/
-theorem lagrange_interpolation_at_zero
-    {F : Type*} [Field F] [DecidableEq F]
-    (s : Finset F) (v : F → F) (r : F → F)
-    (_hs : s.Nonempty) (_hv : Set.InjOn v s)
-    (p : F[X]) (_hp : p.degree < s.card)
-    (_hr : ∀ i ∈ s, p.eval (v i) = r i) :
-    s.sum (fun i => (Lagrange.basis s v i).eval 0 * r i) = p.eval 0 := by
-  -- The weighted sum equals eval 0 of the interpolant, and by uniqueness p = interpolate.
-  -- Type inference with Mathlib's eq_interpolate_of_eval_eq requires special handling.
+/-- When a scalar is not in the set, the coefficient is computed
+    as a simple product over all scalars. -/
+theorem coeff_zero_not_in {F : Type*} [Field F] [DecidableEq F]
+    (partyScalar : F)
+    (allScalars : List F)
+    (hnotin : partyScalar ∉ allScalars)
+    (hnodup : allScalars.Nodup) :
+    coeffAtZero partyScalar allScalars =
+      allScalars.foldl (fun acc xj => acc * (xj / (xj - partyScalar))) 1 := by
+  have hmem : partyScalar ∉ allScalars.toFinset := List.mem_toFinset.not.mpr hnotin
+  simp only [coeffAtZero, hnodup, if_true, Finset.erase_eq_of_notMem hmem]
+  classical
+  let f : F → F := fun xj => xj / (xj - partyScalar)
+  have hprod : (∏ xj ∈ allScalars.toFinset, f xj) = (allScalars.map f).prod := by
+    simpa using (List.prod_toFinset (l := allScalars) (f := f) hnodup)
+  rw [hprod]
+  rw [List.prod_eq_foldl]
+  rw [List.foldl_map]
+
+/-- A Lagrange coefficient is nonzero when:
+    1. The party is in the set
+    2. The set has no duplicates
+    3. All other scalars in the set are nonzero
+
+    This uses stronger preconditions than the original: we require all other
+    scalars to be nonzero. This is reasonable for cryptographic protocols
+    where party IDs are typically positive integers. -/
+theorem coeff_nonzero_in_set {F : Type*} [Field F] [DecidableEq F]
+    (partyScalar : F)
+    (allScalars : List F)
+    (_hin : partyScalar ∈ allScalars)
+    (hnodup : allScalars.Nodup)
+    (hnozero : ∀ x ∈ allScalars, x ≠ partyScalar → x ≠ 0) :
+    coeffAtZero partyScalar allScalars ≠ 0 := by
+  rw [coeffAtZero_list_nodup _ _ hnodup, coeffAtZeroFinset]
+  refine Finset.prod_ne_zero_iff.mpr ?_
+  intro x hx
+  exact div_ne_zero
+    (hnozero x (List.mem_toFinset.mp (Finset.mem_erase.mp hx).2) (Finset.mem_erase.mp hx).1)
+    (sub_ne_zero.mpr (Finset.mem_erase.mp hx).1)
+
+/-!
+## Interpolation Theorems
+
+These theorems establish that Lagrange-weighted sums correctly reconstruct
+polynomial values at 0 - the core property for threshold cryptography.
+-/
+
+/-- Lagrange interpolation: the weighted sum of values equals the polynomial
+    evaluated at 0, where weights are Lagrange coefficients.
+
+    Given scalars [x₁, ..., xₙ] and values [v₁, ..., vₙ], there is a unique
+    polynomial p of degree < n such that p(xᵢ) = vᵢ. This theorem states that:
+
+      Σᵢ λᵢ · vᵢ = p(0)
+
+    where λᵢ are the Lagrange coefficients at 0.
+
+    This is the core property used in threshold cryptography: to reconstruct
+    the secret f(0), signers compute weighted combinations of their shares f(xᵢ).
+
+    **Note**: Uses sorry because the final step requires connecting list-based
+    zipWith sum to finset element-wise sum. See `lagrange_weighted_sum` for
+    the finset-based version that avoids this issue. -/
+theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
+    (partyScalars : List F)
+    (values : List F)
+    (hnodup : partyScalars.Nodup)
+    (_hlen : partyScalars.length = values.length)
+    (hne : partyScalars ≠ []) :
+    let coeffs := partyScalars.map fun p => coeffAtZero p partyScalars
+    let s := partyScalars.toFinset
+    let r : F → F := fun x =>
+      match partyScalars.findIdx? (· == x) with
+      | some i => values.getD i 0
+      | none => 0
+    (List.zipWith (· * ·) coeffs values).sum = eval 0 (Lagrange.interpolate s id r) := by
+  intro coeffs s r
+  have hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
+  have hnonempty : s.Nonempty := by
+    obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil partyScalars hne
+    exact ⟨x, List.mem_toFinset.mpr hx⟩
+  have heval : eval 0 (Lagrange.interpolate s id r) =
+               s.sum (fun x => r x * eval 0 (Lagrange.basis s id x)) := by
+    simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C, id_eq]
+  rw [heval]
+  have hcoeff_eq : ∀ x ∈ s, coeffAtZero x partyScalars = eval 0 (Lagrange.basis s id x) := by
+    intro x _
+    rw [coeffAtZero_list_nodup x partyScalars hnodup]
+    exact coeffAtZeroFinset_eq_eval_basis s x
+  -- Remaining: connect List.zipWith positional sum to Finset element-wise sum
   sorry
 
-end IceNine.Proofs
+/-- Simplified interpolation for the common case where we just need the weighted sum.
+    This avoids dealing with polynomial evaluation directly and works with finsets. -/
+theorem lagrange_weighted_sum {F : Type*} [Field F] [DecidableEq F]
+    (partyScalars : List F)
+    (values : F → F)
+    (_hnodup : partyScalars.Nodup)
+    (_hne : partyScalars ≠ []) :
+    partyScalars.toFinset.sum (fun x => coeffAtZeroFinset partyScalars.toFinset x * values x) =
+    eval 0 (Lagrange.interpolate partyScalars.toFinset id values) := by
+  have hinj : Set.InjOn id (partyScalars.toFinset : Set F) := Function.injective_id.injOn
+  simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C, id_eq]
+  congr 1
+  ext x
+  rw [coeffAtZeroFinset_eq_eval_basis]
+  ring
+
+end IceNine.Proofs.Lagrange

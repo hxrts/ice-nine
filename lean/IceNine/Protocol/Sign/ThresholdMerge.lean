@@ -33,12 +33,20 @@ This coupling ensures we can always aggregate validly after merge.
 variable (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
 
 /-- Share phase state paired with threshold context.
-    Invariant: ctx.card_ge proves ctx.t ≤ |ctx.active|.
+
+    **Invariants:**
+    1. `ctx.card_ge`: ctx.t ≤ |ctx.active| (from ThresholdCtx)
+    2. `active_inv`: ctx.active ⊆ state.active (encoded here)
+
+    The second invariant ensures that the threshold context's active set
+    is always a subset of the state's active set. This is needed to prove
+    that merge preserves the threshold validity.
 
     NOTE: Repr is not auto-derived because ThresholdCtx contains proofs. -/
 structure ShareWithCtx where
   state : ShareState S    -- accumulated commits/reveals/shares
   ctx   : ThresholdCtx S  -- threshold + active set + proof
+  active_inv : ctx.active ⊆ state.active  -- invariant: ctx tracks subset of state
 
 /-!
 ## Merge Strategies
@@ -80,7 +88,9 @@ def mergeShareWithCtxOnes (a b : ShareWithCtx S) : ShareWithCtx S :=
     card_ge := hcard,
     strategy_ok := by trivial
   }
-  { state := state, ctx := ctx }
+  -- Invariant: ctx.active = mergedActive ⊆ state.active = mergedActive
+  have hinv : ctx.active ⊆ state.active := Finset.Subset.refl _
+  { state := state, ctx := ctx, active_inv := hinv }
 
 variable [Field S.Scalar] [DecidableEq S.Scalar]
 
@@ -101,11 +111,22 @@ noncomputable def mergeShareWithCtx
   -- Take max threshold to preserve both guarantees
   let t := Nat.max a.ctx.t b.ctx.t
   -- Prove: max(t_a, t_b) ≤ |a.active ∪ b.active|
-  -- NOTE: This relies on invariant that ctx.active = state.active
+  -- Uses the active_inv invariants from a and b
   have hcard : t ≤ mergedActive.card := by
-    -- Requires showing both a.ctx.t and b.ctx.t ≤ mergedActive.card
-    -- This holds when ctx.active ⊆ state.active (invariant)
-    sorry
+    -- a.ctx.t ≤ |a.ctx.active| ≤ |a.state.active| ≤ |merged|
+    have ha_card : a.ctx.t ≤ a.ctx.active.card := a.ctx.card_ge
+    have ha_sub : a.ctx.active ⊆ mergedActive :=
+      Finset.Subset.trans a.active_inv Finset.subset_union_left
+    have ha : a.ctx.t ≤ mergedActive.card :=
+      Nat.le_trans ha_card (Finset.card_le_card ha_sub)
+    -- b.ctx.t ≤ |b.ctx.active| ≤ |b.state.active| ≤ |merged|
+    have hb_card : b.ctx.t ≤ b.ctx.active.card := b.ctx.card_ge
+    have hb_sub : b.ctx.active ⊆ mergedActive :=
+      Finset.Subset.trans b.active_inv Finset.subset_union_right
+    have hb : b.ctx.t ≤ mergedActive.card :=
+      Nat.le_trans hb_card (Finset.card_le_card hb_sub)
+    -- max(a.t, b.t) ≤ merged.card
+    exact Nat.max_le.mpr ⟨ha, hb⟩
   -- Recompute Lagrange coefficients for merged active set
   let coeffs : List (LagrangeCoeff S) := mergedActive.toList.map (fun pid =>
     { pid := pid, lambda := lagrangeCoeffAtZero S pidToScalar mergedActive.toList pid })
@@ -121,7 +142,9 @@ noncomputable def mergeShareWithCtx
     card_ge := hcard,
     strategy_ok := ⟨hlen, hpid⟩
   }
-  { state := state, ctx := ctx }
+  -- Invariant: ctx.active = mergedActive ⊆ state.active = mergedActive
+  have hinv : ctx.active ⊆ state.active := Finset.Subset.refl _
+  { state := state, ctx := ctx, active_inv := hinv }
 
 /-- Auto-merge: recompute coeffs if Field available, else fall back.
     Pass `some inferInstance` for field-backed schemes, `none` for lattice. -/
