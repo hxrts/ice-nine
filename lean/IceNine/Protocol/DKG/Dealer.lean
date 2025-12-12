@@ -78,16 +78,14 @@ def dealerKeygen
   : Option (DealerTranscript S) :=
   -- Validate all lists have same length
   if hlen : pids.length = secrets.length ∧ secrets.length = opens.length then
-    -- Create share for each party
+    -- Create share for each party using nested zip
     let shares :=
-      List.zipWith3
-        (fun pid sk op =>
-          -- Compute public share from secret
-          let pk_i := S.A sk
-          -- Commit to public share for verification
-          let com  := S.commit pk_i op
-          { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com })
-        pids secrets opens
+      (pids.zip (secrets.zip opens)).map fun (pid, sk, op) =>
+        -- Compute public share from secret
+        let pk_i := S.A sk
+        -- Commit to public share for verification
+        let com  := S.commit pk_i op
+        { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com }
     -- Global public key is sum of all public shares
     let pk := (shares.map (·.pk_i)).sum
     some ⟨shares, pk⟩
@@ -97,7 +95,7 @@ def dealerKeygen
 /-- Generate shares with detailed error reporting.
 
     **Effect pattern**: Returns `Except DealerError` for explicit error handling.
-    Use this variant when you need diagnostic information about failures.
+    Use this variant when you need diagnostic information.
 
     Validates:
     - All input lists have matching lengths
@@ -116,14 +114,12 @@ def dealerKeygenE
   -- Check length match
   if pids.length ≠ secrets.length ∨ secrets.length ≠ opens.length then
     throw (.lengthMismatch pids.length secrets.length opens.length)
-  -- Generate shares
+  -- Generate shares using nested zip
   let shares :=
-    List.zipWith3
-      (fun pid sk op =>
-        let pk_i := S.A sk
-        let com  := S.commit pk_i op
-        { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com })
-      pids secrets opens
+    (pids.zip (secrets.zip opens)).map fun (pid, sk, op) =>
+      let pk_i := S.A sk
+      let com  := S.commit pk_i op
+      { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com }
   let pk := (shares.map (·.pk_i)).sum
   pure ⟨shares, pk⟩
 
@@ -141,24 +137,23 @@ def dealerKeygenValidated
   if pids.isEmpty then
     throw .emptyPartyList
   -- Check for duplicates
-  let seen := pids.foldl (init := ([] : List S.PartyId, none)) fun (acc, dup) pid =>
+  let seen := pids.foldl (init := (([] : List S.PartyId), (none : Option S.PartyId))) fun state pid =>
+    let (acc, dup) := state
     match dup with
     | some _ => (acc, dup)
     | none => if acc.contains pid then (acc, some pid) else (pid :: acc, none)
   match seen.2 with
-  | some dup => throw (.duplicateParty (reprStr dup))
+  | some dupPid => throw (.duplicateParty (reprStr dupPid))
   | none => pure ()
   -- Check length match
   if pids.length ≠ secrets.length ∨ secrets.length ≠ opens.length then
     throw (.lengthMismatch pids.length secrets.length opens.length)
-  -- Generate shares
+  -- Generate shares using nested zip
   let shares :=
-    List.zipWith3
-      (fun pid sk op =>
-        let pk_i := S.A sk
-        let com  := S.commit pk_i op
-        { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com })
-      pids secrets opens
+    (pids.zip (secrets.zip opens)).map fun (pid, sk, op) =>
+      let pk_i := S.A sk
+      let com  := S.commit pk_i op
+      { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com }
   let pk := (shares.map (·.pk_i)).sum
   pure ⟨shares, pk⟩
 

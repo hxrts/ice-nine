@@ -11,8 +11,8 @@ Security properties of Verifiable Secret Sharing:
 Secret Sharing", FOCS 1987.
 -/
 
-import IceNine.Protocol.DKG.VSS
-import IceNine.Protocol.DKG.VSSCore
+import IceNine.Protocol.DKG.VSSDKG
+import IceNine.Protocol.DKG.Feldman
 import Mathlib
 import Mathlib.Algebra.Polynomial.Module.Basic
 
@@ -159,4 +159,3 @@ theorem reconstruction_unique
   ⟨numShares, hlen, hnodup⟩
 
 end IceNine.Proofs.Soundness.VSS
-

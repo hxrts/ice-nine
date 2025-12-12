@@ -31,6 +31,7 @@ Error types in Ice Nine follow these principles:
 | Sign | `BindingError` | Fatal | ✓ | Binding validation failed |
 | Sign | `LocalRejectionError` | Recoverable | ✓ | Local rejection exhausted |
 | Sign | `ShareValidationError` | Recoverable | ✓ | Invalid partial signature |
+| Abort | `AbortReason` | Fatal | ✓ | Session abort required |
 | RefreshCoord | `CoordinatorError` | Fatal | - | Coordinator selection failed |
 | RefreshDKG | `RefreshDKGError` | Fatal | ✓ | Refresh failed |
 | Validation | `ValidationError` | Fatal | ✓ | Generic commit/reveal errors |
@@ -39,18 +40,20 @@ Error types in Ice Nine follow these principles:
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.DKG.Dealer
 import IceNine.Protocol.DKG.Threshold
-import IceNine.Protocol.DKG.VSS
+import IceNine.Protocol.DKG.VSSDKG
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.Shares.RefreshCoord
 import IceNine.Protocol.Shares.RepairCoord
 import IceNine.Protocol.Shares.RefreshDKG
+import IceNine.Protocol.Core.Abort
 
 namespace IceNine.Protocol.Error
 
 open IceNine.Protocol
 open IceNine.Protocol.RefreshCoord
 open IceNine.Protocol.RefreshDKG
+open IceNine.Protocol.Abort
 
 /-!
 ## Cheater Detection Configuration
@@ -455,6 +458,28 @@ instance {PartyId Phase : Type*} [Repr PartyId] [Repr Phase]
     | .noCommit p => s!"ValidationError.noCommit {repr p}"
     | .invalidOpening p => s!"ValidationError.invalidOpening {repr p}"
     | .conflict p => s!"ValidationError.conflict {repr p}"
+
+/-!
+## Abort Error Integration
+
+BlameableError instance for AbortReason, enabling unified error handling.
+-/
+
+/-- BlameableError instance for AbortReason.
+
+    Returns the first blamed party from the reason:
+    - `partyUnresponsive`: Returns first unresponsive party
+    - `requestedBy`: Returns the requester (for tracking who initiated abort)
+    - Other reasons: No specific party to blame -/
+instance {PartyId : Type*} : BlameableError (AbortReason PartyId) PartyId where
+  blamedParty
+    | .timeout _ _ => none
+    | .insufficientParticipants _ _ => none
+    | .partyUnresponsive ps => ps.head?
+    | .trustViolation _ _ => none
+    | .globalNormExceeded _ _ => none
+    | .tooManyComplaints _ _ => none
+    | .requestedBy p => some p
 
 /-!
 ## Convenience Type Aliases

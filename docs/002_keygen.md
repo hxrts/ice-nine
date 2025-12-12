@@ -249,7 +249,7 @@ These coefficients satisfy $\sum_{i \in S} \lambda_i^S \cdot s_i = s$ when the s
 
 The base protocol uses additive shares where $\sum_i s_i = s$. For $n$-of-$n$ signing this is sufficient. For $t$-of-$n$ signing the shares must encode polynomial structure.
 
-One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials. The implementation provides Feldman VSS in `Protocol/DKG/VSSCore.lean` and `Protocol/DKG/VSS.lean`.
+One approach is to run a verifiable secret sharing protocol during DKG. Each party $P_i$ shares its contribution $s_i$ as a polynomial. After aggregation each party holds a share of the sum of polynomials. The implementation provides Feldman VSS in `Protocol/DKG/Feldman.lean` and `Protocol/DKG/VSSDKG.lean`.
 
 An alternative approach uses additive shares with Lagrange adjustment at signing time. The Lagrange coefficients are computed over the active signer set $S$.
 

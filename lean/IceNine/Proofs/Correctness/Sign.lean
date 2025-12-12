@@ -90,7 +90,7 @@ lemma aggregateSignature_add_masks
   -- shares'.map (·.z_i) = shares.map (fun sh => sh.z_i + mask sh.sender)
   have hmap : (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender })).map (·.z_i)
             = shares.map (fun sh => sh.z_i + mask sh.sender) := by
-    simp only [List.map_map, Function.comp]
+    simp only [List.map_map, Function.comp_def]
   rw [hmap]
   -- Apply sum_map_add_eq
   rw [sum_map_add_eq shares (fun sh => sh.z_i) (fun sh => mask sh.sender)]
@@ -109,11 +109,17 @@ lemma aggregateSignature_masks_zero
   = aggregateSignature S c Sset commits shares := by
   -- Use Signature extensionality: show all fields are equal
   simp only [aggregateSignature]
+  -- The mapped shares only change z_i, so context is preserved
+  have hctx : mergeShareContexts S
+      (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender }))
+      = mergeShareContexts S shares := by
+    -- mergeShareContexts uses foldl over .context; z_i modification doesn't affect context
+    simp only [mergeShareContexts, List.foldl_map]
   congr 1
   -- Show z fields are equal
   have hmap : (shares.map (fun sh => { sh with z_i := sh.z_i + mask sh.sender })).map (·.z_i)
             = shares.map (fun sh => sh.z_i + mask sh.sender) := by
-    simp only [List.map_map, Function.comp]
+    simp only [List.map_map, Function.comp_def]
   rw [hmap]
   rw [sum_map_add_eq shares (fun sh => sh.z_i) (fun sh => mask sh.sender)]
   rw [hzero, add_zero]

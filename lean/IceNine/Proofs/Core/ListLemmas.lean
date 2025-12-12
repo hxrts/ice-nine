@@ -98,17 +98,19 @@ lemma sum_zipWith_add_smul
       abel
 
 /-!
-## Sum of zipWith3 with Lagrange coefficients
+## Sum of nested zip with Lagrange coefficients
 
 For threshold signing: Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
 -/
 
 /-- Lagrange-weighted aggregation splits linearly.
     Σ λ_i·(y_i + c·s_i) = Σλ_i·y_i + c·Σλ_i·s_i
-    Requires equal-length lists since zipWith3 truncates. -/
-lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int)
+    Requires equal-length lists since zip truncates.
+
+    Uses nested zip pattern: ((coeffs.zip ys).zip sks).map f -/
+lemma sum_nestedZip_scaled_add_mul (c : Int) (ys sks coeffs : List Int)
     (hlen1 : coeffs.length = ys.length) (hlen2 : ys.length = sks.length) :
-    (zipWith3 (fun coeff y s => coeff * y + coeff * (c * s)) coeffs ys sks).sum
+    (((coeffs.zip ys).zip sks).map fun ((coeff, y), s) => coeff * y + coeff * (c * s)).sum
       = (coeffs.zipWith (fun a b => a * b) ys).sum + c * (coeffs.zipWith (fun a b => a * b) sks).sum := by
   induction coeffs generalizing ys sks with
   | nil =>
@@ -127,7 +129,7 @@ lemma sum_zipWith3_scaled_add_mul (c : Int) (ys sks coeffs : List Int)
       | [] => simp only [length_nil, length_cons] at hlen2; omega
       | s::sks' =>
         simp only [length_cons, add_left_inj] at hlen1 hlen2
-        simp only [zipWith3, zipWith_cons_cons, sum_cons]
+        simp only [zip_cons_cons, map_cons, zipWith_cons_cons, sum_cons]
         rw [ih ys' sks' hlen1 hlen2]
         ring
 

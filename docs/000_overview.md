@@ -67,8 +67,8 @@ The implementation is organized into focused modules within subdirectories:
 **Protocol/DKG/** - Distributed key generation:
 - `DKG/Core.lean` - Basic DKG protocol
 - `DKG/Threshold.lean` - Threshold DKG with exclusion
-- `DKG/VSSCore.lean` - Polynomial commitments, share verification
-- `DKG/VSS.lean` - VSS transcript, complaint mechanism
+- `DKG/Feldman.lean` - Polynomial commitments, share verification
+- `DKG/VSSDKG.lean` - VSS transcript, complaint mechanism
 - `DKG/Dealer.lean` - Trusted dealer mode
 
 **Protocol/Shares/** - Share management:

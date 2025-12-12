@@ -141,7 +141,7 @@ def testAggregateBound : IO Unit := do
   IO.println s!"    z3 norm = {listIntNorm z3}"
 
   -- Aggregate: z = z1 + z2 + z3
-  let z_agg := List.zipWith3 (· + · + ·) z1 z2 z3
+  let z_agg := ((z1.zip z2).zip z3).map fun ((a, b), c) => a + b + c
   let aggNorm := listIntNorm z_agg
 
   IO.println s!"\n  Aggregate:"

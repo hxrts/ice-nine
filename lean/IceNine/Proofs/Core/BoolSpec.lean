@@ -17,7 +17,7 @@ Each lemma connects a Bool-returning function to its propositional specification
 
 import Mathlib
 import IceNine.Protocol.Core.Core
-import IceNine.Protocol.DKG.VSS
+import IceNine.Protocol.DKG.VSSDKG
 import IceNine.Protocol.Shares.RefreshCoord
 
 set_option autoImplicit false

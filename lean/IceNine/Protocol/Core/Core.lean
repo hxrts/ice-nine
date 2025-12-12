@@ -13,9 +13,9 @@ The Protocol modules are organized in layers:
                          ↓
     ┌────────────────────┼────────────────────┐
     ↓                    ↓                    ↓
-VSSCore.lean         Error.lean          Lagrange.lean
-(polynomials,        (BlameableError,    (coefficient
- commitments)        error types)         computation)
+Feldman.lean         Error.lean          Lagrange.lean
+(VSS commitments)    (BlameableError,    (coefficient
+                     error types)         computation)
     ↓                    ↓                    ↓
     └────────────────────┼────────────────────┘
                          ↓

@@ -47,7 +47,7 @@ Reference: FROST RFC Section 7.1, Proactive Secret Sharing (Herzberg et al. 1995
 -/
 
 import IceNine.Protocol.Core.Core
-import IceNine.Protocol.DKG.VSSCore
+import IceNine.Protocol.DKG.Feldman
 import Mathlib
 
 namespace IceNine.Protocol.RefreshDKG

@@ -45,7 +45,7 @@ replaced with constant-time implementations in production:
 1. `lagrangeCoefficient` (Protocol/RepairCoord.lean) - Division varies with inputs
 2. `allCoeffsAtZero` (Protocol/Lagrange.lean) - Loop over party list
 3. `vecInfNorm` (Norms.lean) - Max computation has secret-dependent comparisons
-4. `verifyShareBool` (Protocol/VSSCore.lean) - Comparison may short-circuit
+4. `verifyShareBool` (Protocol/DKG/Feldman.lean) - Comparison may short-circuit
 
 ### Recommendations
 

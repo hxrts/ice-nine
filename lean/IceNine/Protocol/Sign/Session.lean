@@ -13,10 +13,14 @@ constraint in the type system—the nonce is consumed when transitioning from
 
 ```
   FreshNonce ──► Committed ──► Revealed ──► SignedWithStats ──► Done
+                    │              │
+                    └──────► Aborted ◄──────┘
 ```
 
 Each transition consumes the input state and produces the output state.
-There is no way to "go back" or reuse a consumed state.
+There is no way to "go back" or reuse a consumed state. Sessions may
+transition to `Aborted` from `Committed` or `Revealed` if abort consensus
+is reached (see `Protocol/Core/Abort.lean`).
 
 **Local Rejection**: With local rejection sampling (via `signWithLocalRejection`),
 norm bounds are satisfied during signing—no retry loop is needed. Use
@@ -27,6 +31,7 @@ import IceNine.Protocol.Core.Core
 import IceNine.Protocol.Core.ThresholdConfig
 import IceNine.Protocol.Core.NormBounded
 import IceNine.Protocol.Core.Error
+import IceNine.Protocol.Core.Abort
 import IceNine.Protocol.State.Phase
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Sign.LocalRejection
@@ -35,6 +40,7 @@ import Mathlib
 namespace IceNine.Protocol.SignSession
 
 open IceNine.Protocol
+open IceNine.Protocol.Abort
 
 /-!
 ## Linear Nonce (Dual Nonce Version)
@@ -180,6 +186,32 @@ structure Done (S : Scheme) where
   /-- The share message to send to aggregator -/
   shareMsg : SignShareMsg S
 
+/-- Terminal state: session was aborted.
+
+    A session may be aborted due to:
+    - Liveness failures (timeout, insufficient participants)
+    - Security violations (trust violation, global norm exceeded)
+    - Explicit abort request
+
+    Once aborted, the session cannot continue. Any nonces consumed
+    during the session are invalidated and cannot be reused.
+
+    See `Protocol/Core/Abort.lean` for abort coordination. -/
+structure Aborted (S : Scheme) where
+  /-- Session that was aborted -/
+  session : Nat
+  /-- Why the session was aborted -/
+  reason : AbortReason S.PartyId
+  /-- Number of parties that voted for abort -/
+  voteCount : Nat
+  deriving Repr
+
+/-- Create Aborted state from AbortState. -/
+def Aborted.fromState {S : Scheme} (session : Nat) (state : AbortState S) : Aborted S :=
+  { session
+    reason := state.reasons.head?.getD (.timeout 0 0)
+    voteCount := state.voteCount }
+
 /-!
 ## Session Transitions
 
@@ -315,7 +347,8 @@ The session type system provides these guarantees:
 
 2. **Linear flow**: States can only progress forward:
    ReadyToCommit → Committed → Revealed → SignedWithStats → Done
-   Each transition consumes its input.
+   Each transition consumes its input. Sessions may also transition
+   to `Aborted` from `Committed` or `Revealed`.
 
 3. **Local rejection**: With `signWithLocalRejection`, norm bounds are
    satisfied during signing via local rejection sampling. No global
@@ -323,7 +356,56 @@ The session type system provides these guarantees:
 
 4. **Compile-time enforcement**: These aren't runtime checks—the type
    system prevents writing code that would reuse a nonce.
+
+5. **Abort safety**: Aborted sessions cannot continue. Once a session
+   transitions to `Aborted`, any consumed nonces are invalidated.
 -/
+
+/-!
+## Abort Transitions
+
+Sessions may transition to `Aborted` from intermediate states when
+abort consensus is reached. These transitions consume the current
+state, ensuring nonces cannot be reused.
+-/
+
+/-- Transition: Committed → Aborted
+    Aborts a session after commitment but before reveal.
+
+    **When to use**: Timeout waiting for other parties' commitments,
+    or security violation detected during commitment phase. -/
+def abortFromCommitted (S : Scheme)
+    (committed : Committed S)
+    (reason : AbortReason S.PartyId)
+    (voteCount : Nat := 1)
+    : Aborted S :=
+  { session := committed.session
+    reason := reason
+    voteCount := voteCount }
+
+/-- Transition: Revealed → Aborted
+    Aborts a session after reveal but before signing.
+
+    **When to use**: Timeout waiting for other parties' reveals,
+    trust violation detected, or explicit abort request. -/
+def abortFromRevealed (S : Scheme)
+    (revealed : Revealed S)
+    (reason : AbortReason S.PartyId)
+    (voteCount : Nat := 1)
+    : Aborted S :=
+  { session := revealed.session
+    reason := reason
+    voteCount := voteCount }
+
+/-- Create an abort message proposing session termination. -/
+def proposeAbort (S : Scheme)
+    (partyId : S.PartyId)
+    (session : Nat)
+    (reason : AbortReason S.PartyId)
+    : AbortMsg S :=
+  { sender := partyId
+    session := session
+    reason := reason }
 
 /-!
 ## Precomputed Nonces

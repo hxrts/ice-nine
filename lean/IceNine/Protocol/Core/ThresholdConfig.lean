@@ -54,8 +54,8 @@ theorem defaultThreshold_pos (n : Nat) (hn : n > 0) : defaultThreshold n ≥ 1 :
   simp only [defaultThreshold]
   omega
 
-/-- Default threshold never exceeds n. -/
-theorem defaultThreshold_le (n : Nat) : defaultThreshold n ≤ n := by
+/-- Default threshold never exceeds n (for n ≥ 1). -/
+theorem defaultThreshold_le (n : Nat) (hn : n ≥ 1) : defaultThreshold n ≤ n := by
   simp only [defaultThreshold]
   omega
 
@@ -123,13 +123,13 @@ Smart constructor with defaults and automatic proof obligations.
     **Example**:
     ```lean
     -- 5-party scheme with default threshold (4)
-    let cfg := ThresholdConfig.mk 5 131072
+    let cfg := ThresholdConfig.create 5 131072
 
     -- 7-party scheme with custom threshold (5)
-    let cfg := ThresholdConfig.mk 7 131072 (t := 5)
+    let cfg := ThresholdConfig.create 7 131072 (t := 5)
     ```
 -/
-def ThresholdConfig.mk
+def ThresholdConfig.create
     (n : Nat)
     (globalBound : Nat)
     (t : Nat := defaultThreshold n)
@@ -156,6 +156,32 @@ def ThresholdConfig.mk
 /-- Number of tolerable faulty parties: n - t -/
 def ThresholdConfig.maxFaulty (cfg : ThresholdConfig) : Nat :=
   cfg.totalParties - cfg.threshold
+
+/-- Threshold for abort consensus: f + 1 where f = maxFaulty.
+
+    This ensures at least one honest party agreed to abort, preventing
+    a coalition of f malicious parties from forcing spurious aborts.
+
+    Examples (using default 2/3+1 threshold):
+    - n = 3, t = 3: f = 0, abortThreshold = 1
+    - n = 5, t = 4: f = 1, abortThreshold = 2
+    - n = 7, t = 5: f = 2, abortThreshold = 3 -/
+def ThresholdConfig.abortThreshold (cfg : ThresholdConfig) : Nat :=
+  cfg.maxFaulty + 1
+
+/-- Abort threshold is always positive. -/
+theorem ThresholdConfig.abortThreshold_pos (cfg : ThresholdConfig) :
+    cfg.abortThreshold ≥ 1 := by
+  simp only [abortThreshold, maxFaulty]
+  omega
+
+/-- Abort threshold never exceeds total parties (when threshold is positive). -/
+theorem ThresholdConfig.abortThreshold_le (cfg : ThresholdConfig)
+    (h_pos : cfg.threshold ≥ 1) :
+    cfg.abortThreshold ≤ cfg.totalParties := by
+  simp only [abortThreshold, maxFaulty]
+  have h := cfg.threshold_le_total
+  omega
 
 /-- Whether the threshold provides strict majority (t > n/2) -/
 def ThresholdConfig.hasStrictMajority (cfg : ThresholdConfig) : Bool :=
@@ -186,7 +212,7 @@ inductive ConfigValidation
   | maxSignersBelowThreshold (maxSigners t : Nat)
   | globalBoundZero
   | localBoundZero
-  | localBoundTooLarge (local global : Nat)
+  | localBoundTooLarge (localBd globalBd : Nat)
   deriving DecidableEq, Repr
 
 /-- Validate a threshold configuration -/
@@ -217,7 +243,7 @@ instance : ToString ConfigValidation where
     | .maxSignersBelowThreshold m t => s!"maxSigners {m} below threshold {t}"
     | .globalBoundZero => "globalBound must be > 0"
     | .localBoundZero => "localBound is 0 (globalBound too small for maxSigners)"
-    | .localBoundTooLarge l g => s!"localBound {l} * maxSigners exceeds globalBound {g}"
+    | .localBoundTooLarge l g => s!"localBound {l} exceeds globalBound {g}"
 
 /-!
 ## Standard Configurations
@@ -237,17 +263,23 @@ def dilithium5GlobalBound : Nat := 524168
 /-- Create a Dilithium2-level configuration for n parties.
     Uses default 2/3+1 threshold. -/
 def ThresholdConfig.dilithium2 (n : Nat) (hn : n > 0 := by omega) : ThresholdConfig :=
-  ThresholdConfig.mk n dilithium2GlobalBound
+  ThresholdConfig.create n dilithium2GlobalBound
+    (h1 := by simp only [defaultThreshold]; omega)
+    (h3 := Nat.div_mul_le_self _ _)
 
 /-- Create a Dilithium3-level configuration for n parties.
     Uses default 2/3+1 threshold. -/
 def ThresholdConfig.dilithium3 (n : Nat) (hn : n > 0 := by omega) : ThresholdConfig :=
-  ThresholdConfig.mk n dilithium3GlobalBound
+  ThresholdConfig.create n dilithium3GlobalBound
+    (h1 := by simp only [defaultThreshold]; omega)
+    (h3 := Nat.div_mul_le_self _ _)
 
 /-- Create a Dilithium5-level configuration for n parties.
     Uses default 2/3+1 threshold. -/
 def ThresholdConfig.dilithium5 (n : Nat) (hn : n > 0 := by omega) : ThresholdConfig :=
-  ThresholdConfig.mk n dilithium5GlobalBound
+  ThresholdConfig.create n dilithium5GlobalBound
+    (h1 := by simp only [defaultThreshold]; omega)
+    (h3 := Nat.div_mul_le_self _ _)
 
 /-!
 ## Aggregate Bound Guarantee
@@ -274,9 +306,9 @@ theorem aggregate_bound_guarantee (cfg : ThresholdConfig)
         | nil => simp
         | cons x xs ih =>
           simp only [List.sum_cons, List.length_cons]
-          have hx : x ≤ cfg.localBound := hbounds x (List.mem_cons_self x xs)
+          have hx : x ≤ cfg.localBound := hbounds x (List.mem_cons.mpr (Or.inl rfl))
           have hxs : ∀ b ∈ xs, b ≤ cfg.localBound := fun b hb =>
-            hbounds b (List.mem_cons_of_mem x hb)
+            hbounds b (List.mem_cons.mpr (Or.inr hb))
           have ih' := ih (by simp at hlen; omega) hxs
           calc x + xs.sum
               ≤ cfg.localBound + xs.length * cfg.localBound := by

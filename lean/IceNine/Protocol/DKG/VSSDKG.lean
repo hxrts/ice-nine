@@ -1,5 +1,5 @@
 /-
-# Verifiable Secret Sharing Protocol
+# VSS-Backed DKG
 
 VSS-enhanced DKG protocol providing malicious security. Each party acts as
 a dealer for their own secret share, committing to a polynomial and proving
@@ -14,7 +14,7 @@ This provides:
 Verifiable Secret Sharing", CRYPTO 1991.
 -/
 
-import IceNine.Protocol.DKG.VSSCore
+import IceNine.Protocol.DKG.Feldman
 import IceNine.Protocol.DKG.Threshold
 import Mathlib
 

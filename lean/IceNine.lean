@@ -35,8 +35,8 @@ import IceNine.Protocol.State.PhaseHandlers
 import IceNine.Protocol.State.PhaseSig
 import IceNine.Protocol.State.PhaseMerge
 import IceNine.Protocol.Sign.ThresholdMerge
-import IceNine.Protocol.DKG.VSSCore
-import IceNine.Protocol.DKG.VSS
+import IceNine.Protocol.DKG.Feldman
+import IceNine.Protocol.DKG.VSSDKG
 import IceNine.Protocol.Shares.RefreshCoord
 import IceNine.Protocol.Shares.RepairCoord
 import IceNine.Protocol.Core.Error

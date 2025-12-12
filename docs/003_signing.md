@@ -6,7 +6,11 @@ The signing protocol produces a threshold signature from partial contributions. 
 
 The signing implementation is split across focused modules for maintainability:
 
-- **`Protocol/Sign/Types.lean`** - Core types: `SessionTracker`, `NonceRegistry`, message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`), error types (`SignError`, `AbortReason`), and output types (`Signature`, `SignatureDone`)
+- **`Protocol/Sign/Types.lean`** - Core types: `SessionTracker`, `NonceRegistry`, message types (`SignCommitMsg`, `SignRevealWMsg`, `SignShareMsg`), error types (`SignError`), and output types (`Signature`, `SignatureDone`)
+
+- **`Protocol/Sign/LocalRejection.lean`** - Local rejection sampling for norm bounds (eliminates global retry coordination)
+
+- **`Protocol/Core/Abort.lean`** - Session-level abort coordination for liveness failures and security violations
 
 - **`Protocol/Sign/Core.lean`** - Core functions: `lagrangeCoeffAtZero`, `lagrangeCoeffs`, `computeChallenge`, `aggregateSignature`, `aggregateSignatureLagrange`, `ValidSignTranscript`, `validateSigning`
 
@@ -500,13 +504,12 @@ Callers must compute `bindingFactors` (e.g., via `computeBindingFactors`) and su
 inductive SignError (PartyId : Type) where
   | lengthMismatch : SignError PartyId
   | participantMismatch : PartyId → SignError PartyId
-  | duplicateParticipants : SignError PartyId
+  | duplicateParticipants : PartyId → SignError PartyId
   | commitMismatch : PartyId → SignError PartyId
   | sessionMismatch : Nat → Nat → SignError PartyId
-  | normCheckFailed : PartyId → SignError PartyId
-  | maxRetriesExceeded : PartyId → SignError PartyId
-  | sessionAborted : Nat → SignError PartyId
 ```
+
+Note: Legacy error variants (`normCheckFailed`, `maxRetriesExceeded`, `sessionAborted`) have been removed. With local rejection sampling, norm bounds are handled locally. Session-level aborts use `AbortReason` from `Protocol/Core/Abort.lean`.
 
 ### Valid Transcript Predicate
 
@@ -625,95 +628,106 @@ The dual index structure provides:
 - **O(1) lookup** by (partyId, session) for commitment retrieval
 - **O(1) reuse detection** by (partyId, commitment) for security monitoring
 
-## Rejection Sampling
+## Local Rejection Sampling
 
-In lattice signatures, the response $z$ must have bounded norm to prevent leakage.
+In lattice signatures, the response $z$ must have bounded norm to prevent leakage. Ice Nine uses **local rejection sampling** where each signer independently ensures their partial signature satisfies norm bounds before broadcasting.
 
-### Retry State
+### Key Invariant
 
-```lean
-inductive SignAttemptResult (S : Scheme)
-  | success (msg : SignShareMsg S)  -- z_i passed norm check
-  | retry                           -- need fresh nonce
-  | abort                           -- max attempts exceeded
+If each of $T$ signers produces $z_i$ with $\|z_i\|_\infty \leq B_{\text{local}}$, then the aggregate $z = \sum z_i$ satisfies $\|z\|_\infty \leq T \cdot B_{\text{local}} \leq B_{\text{global}}$.
 
-structure SignRetryState (S : Scheme) where
-  base       : SignLocalState S
-  attempt    : Nat
-  challenge  : S.Challenge
-  usedNonces : List S.Secret  -- track nonces for freshness verification
+This eliminates global rejection as a distributed control-flow path.
 
-def maxSigningAttempts : Nat := 16  -- Dilithium expects ~4
-
--- Nonce freshness is security-critical
-def noncesDistinct [DecidableEq S.Secret] (state : SignRetryState S) : Prop :=
-  state.usedNonces.Nodup
-
-def checkNonceFresh [DecidableEq S.Secret] (state : SignRetryState S) (nonce : S.Secret) : Bool :=
-  !state.usedNonces.contains nonce
-```
-
-### Rejection Sampling Axioms
-
-The probabilistic properties of rejection sampling cannot be proven in Lean. We axiomatize the key security properties:
+### Local Sign Result
 
 ```lean
--- Acceptance probability: honest parties accept with prob ≥ 1/κ
-structure AcceptanceProbability (S : Scheme) where
-  expectedIterations : Nat           -- κ ≈ 4 for Dilithium
-  bound_valid : expectedIterations > 0
-
--- Response independence: accepted z reveals nothing about secret
-structure ResponseIndependence (S : Scheme) : Prop where
-  independence : True  -- axiomatized; this is what rejection sampling achieves
+inductive LocalSignResult (S : Scheme)
+  | success (z_i : S.Secret) (hidingNonce bindingNonce : S.Secret) (attempts : Nat)
+  | failure (err : LocalRejectionError S.PartyId)
 ```
+
+### Rejection Loop
+
+Each signer runs local rejection sampling independently:
+
+```lean
+def localRejectionLoop (S : Scheme) (cfg : ThresholdConfig)
+    (partyId : S.PartyId) (sk_i : S.Secret) (challenge : S.Challenge)
+    (bindingFactor : S.Scalar) (sampleNonce : IO (S.Secret × S.Secret))
+    : IO (LocalSignResult S)
+```
+
+The loop:
+1. Samples fresh nonce pair $(y_{\text{hiding}}, y_{\text{binding}})$
+2. Computes $z_i = y_{\text{hiding}} + \rho \cdot y_{\text{binding}} + c \cdot sk_i$
+3. Checks if $\|z_i\|_\infty \leq B_{\text{local}}$
+4. Returns success or retries with new nonces (up to `maxLocalAttempts`)
+
+### Parallelization
+
+Local rejection is trivially parallelizable:
+- **Across signers**: Each signer's loop is independent
+- **Within signer**: Batch multiple nonce candidates (`localRejectionLoopParallel`)
+- **Within batch**: SIMD/vectorized norm checking
 
 **Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009.
 
-### Retry Logic
+## Session Abort Coordination
 
-If $\|z_i\|_\infty \geq \gamma_1 - \beta$:
-1. Sample fresh nonce $y'_i$
-2. Compute $w'_i = A(y'_i)$
-3. Broadcast new commitment
-4. All parties restart with new challenge
-5. Repeat until success or max attempts
+While local rejection handles norm bounds, session-level aborts are needed for:
+- **Liveness failures**: Parties offline, session times out
+- **Security violations**: Trust assumption violated (more than $n-t$ faulty parties)
+- **Explicit cancellation**: Group decides to abandon signing
 
-### Abort Handling
+### Abort Reasons
 
 ```lean
-inductive AbortReason (PartyId : Type)
-  | normBoundExceeded : PartyId → Nat → AbortReason PartyId
-  | maxRetriesReached : PartyId → AbortReason PartyId
-  | coordinationFailure : AbortReason PartyId
-  | timeout : AbortReason PartyId
+inductive AbortReason (PartyId : Type*) where
+  -- Liveness failures (require f+1 votes)
+  | timeout (respondents : Nat) (required : Nat)
+  | insufficientParticipants (actual : Nat) (required : Nat)
+  | partyUnresponsive (parties : List PartyId)
 
-structure SignAbortMsg (S : Scheme) where
-  sender  : S.PartyId
+  -- Security violations (immediate abort, no voting)
+  | trustViolation (faultyCount : Nat) (maxTolerable : Nat)
+  | globalNormExceeded (aggregateNorm : Nat) (bound : Nat)
+  | tooManyComplaints (complaints : Nat) (maxTolerable : Nat)
+
+  -- Explicit request (requires f+1 votes)
+  | requestedBy (requester : PartyId)
+```
+
+### Abort State (CRDT)
+
+```lean
+structure AbortState (S : Scheme) where
   session : Nat
-  reason  : AbortReason S.PartyId
+  votes : Finset S.PartyId
+  reasons : List (AbortReason S.PartyId)
+  immediateTriggered : Bool := false
 
-structure SignAbortState (S : Scheme) where
-  abortedSession : Option Nat
-  abortVotes : Finset S.PartyId   -- deduplicated: one vote per party
-  reasons : List (S.PartyId × AbortReason S.PartyId)
-
-instance (S : Scheme) : Join (SignAbortState S) :=
-  ⟨fun a b => { abortVotes := a.abortVotes ∪ b.abortVotes, ... }⟩
+instance (S : Scheme) : Join (AbortState S) :=
+  ⟨fun a b => {
+    session := a.session
+    votes := a.votes ∪ b.votes
+    reasons := (a.reasons ++ b.reasons).dedup
+    immediateTriggered := a.immediateTriggered || b.immediateTriggered
+  }⟩
 ```
 
-**Anti-griefing protection.** Abort votes use `Finset` (not `List`) to deduplicate by sender—each party gets exactly one vote. The abort threshold requires a majority to prevent single-party griefing attacks:
+### Abort Threshold
+
+Abort consensus uses `ThresholdConfig.abortThreshold` which is $f + 1$ where $f = n - t$ (max faulty parties). This ensures at least one honest party agreed to abort, preventing malicious minorities from forcing spurious aborts.
 
 ```lean
-def minAbortThreshold (totalParties : Nat) : Nat :=
-  (totalParties + 1) / 2 + 1  -- strictly more than half
+def ThresholdConfig.abortThreshold (cfg : ThresholdConfig) : Nat :=
+  cfg.maxFaulty + 1
 
-def SignAbortState.isAborted (state : SignAbortState S) (threshold totalParties : Nat) : Bool :=
-  let effectiveThreshold := max threshold (minAbortThreshold totalParties)
-  state.abortVotes.card ≥ effectiveThreshold
+def AbortState.shouldAbort (state : AbortState S) (cfg : ThresholdConfig) : Bool :=
+  state.hasImmediateReason || state.isConfirmedByVotes cfg
 ```
 
-This ensures a malicious minority cannot force repeated session aborts.
+Security violations trigger immediate abort without voting.
 
 ## Session-Typed Signing
 
@@ -722,12 +736,12 @@ The `Protocol/Sign/Session.lean` module provides a session-typed API that makes 
 ### Session State Machine
 
 ```
-ReadyToCommit ──► Committed ──► Revealed ──► Signed ──► Done
-                                    │
-                                    └──► Aborted (on retry failure)
+ReadyToCommit ──► Committed ──► Revealed ──► SignedWithStats ──► Done
+                      │              │
+                      └──────► Aborted ◄──────┘
 ```
 
-Each transition consumes its input state. There is no way to "go back" or reuse a consumed state. The `ReadyToCommit` state contains a `FreshNonce` that gets consumed during the commit transition.
+Each transition consumes its input state. There is no way to "go back" or reuse a consumed state. The `ReadyToCommit` state contains a `FreshNonce` that gets consumed during the commit transition. Sessions may transition to `Aborted` from `Committed` or `Revealed` when abort consensus is reached.
 
 ### Linear Nonce (Dual Nonce Version)
 
@@ -782,15 +796,18 @@ structure Revealed (S : Scheme) where
   bindingFactor : S.Scalar     -- ρ for this signer
   aggregateNonce : S.Public    -- w = Σ (W_hiding_i + ρ_i·W_binding_i)
 
-structure Signed (S : Scheme) where
-  keyShare : KeyShare S
-  partialSig : S.Secret
-  message : S.Message
-  session : Nat
-  challenge : S.Challenge
+structure SignedWithStats (S : Scheme) extends Signed S where
+  localAttempts : Nat      -- number of local rejection attempts
+  hidingNonce : S.Secret   -- the nonce used
+  bindingNonce : S.Secret
 
 structure Done (S : Scheme) where
   shareMsg : SignShareMsg S
+
+structure Aborted (S : Scheme) where
+  session : Nat
+  reason : AbortReason S.PartyId
+  voteCount : Nat
 ```
 
 ### Session Transitions
@@ -801,54 +818,42 @@ Each transition function consumes its input and produces the next state:
 -- Consumes ReadyToCommit, produces Committed
 -- The FreshNonce inside is consumed; cannot be accessed again
 def commit (S : Scheme) (ready : ReadyToCommit S)
-    : Committed S × SignCommitMsg S
+    : Except (SignError S.PartyId) (CommitResult S)
 
 -- Consumes Committed, produces Revealed
 -- Receives challenge, binding factor, and aggregate nonce from coordinator
 def reveal (S : Scheme) (committed : Committed S)
     (challenge : S.Challenge) (bindingFactor : S.Scalar) (aggregateW : S.Public)
-    : Revealed S × SignRevealWMsg S
+    : Revealed S × SignRevealWMsg S × SessionTracker S × NonceRegistry S
 
--- Consumes Revealed, produces Signed (Left) or returns for retry (Right)
--- Computes z_i = y_eff + c·sk_i where y_eff = hiding + ρ·binding
-def sign (S : Scheme) (revealed : Revealed S)
-    : Sum (Signed S) (Revealed S × String)  -- Left=success, Right=norm check failed
+-- Consumes Revealed, produces SignedWithStats using local rejection sampling
+-- Never fails norm check because rejection happens internally
+def signWithLocalRejection (S : Scheme) (revealed : Revealed S)
+    (cfg : ThresholdConfig) (sampleNonce : IO (S.Secret × S.Secret))
+    : IO (Except (LocalRejectionError S.PartyId) (SignedWithStats S))
 
 -- Consumes Signed, produces Done
 def finalize (S : Scheme) (signed : Signed S) : Done S
+
+-- Abort transitions (consume current state, produce Aborted)
+def abortFromCommitted (S : Scheme) (committed : Committed S)
+    (reason : AbortReason S.PartyId) (voteCount : Nat) : Aborted S
+
+def abortFromRevealed (S : Scheme) (revealed : Revealed S)
+    (reason : AbortReason S.PartyId) (voteCount : Nat) : Aborted S
 ```
 
-### Retry Handling
+### Local Rejection vs Global Abort
 
-When norm check fails, we need a fresh nonce. This requires creating a NEW `ReadyToCommit` with a NEW `FreshNonce`. The old session state is consumed:
+With local rejection sampling, norm bounds are handled **locally** by each signer:
+- Each signer runs rejection sampling independently
+- No global retry coordination needed
+- `signWithLocalRejection` never returns a norm failure
 
-```lean
-structure RetryContext (S : Scheme) where
-  attempt : Nat          -- current attempt (1-indexed)
-  maxAttempts : Nat
-  keyShare : KeyShare S
-  message : S.Message
-  session : Nat          -- base session ID (constant across retries)
-
--- Consumes Revealed state, cannot be used again
-def mkRetryContext (S : Scheme) (revealed : Revealed S) (maxAttempts : Nat)
-    : RetryContext S
-
--- Must provide NEW FreshNonce for retry (same session ID for coordination)
-def retryWithFreshNonce (S : Scheme) (ctx : RetryContext S) (freshNonce : FreshNonce S)
-    : ReadyToCommit S
-
--- Alternative: new session ID for independent parallel attempts
-def retryWithNewSession (S : Scheme) (ctx : RetryContext S)
-    (freshNonce : FreshNonce S) (newSession : Nat) : ReadyToCommit S
-```
-
-**Session ID Design:** The session ID remains constant across retries within the same signing session. This is intentional for threshold coordination:
-
-1. **Coordination**: All parties must agree on which session they're retrying
-2. **Nonce Safety**: Prevented by `FreshNonce` type, not by session ID
-3. **Distinguishing Retries**: The `attempt` field distinguishes retry rounds; full identifier is `(session, attempt)`
-4. **Alternative**: Use `retryWithNewSession` when retries should be independent sessions
+Session aborts are for **global** failures that cannot be resolved locally:
+- Timeout waiting for other parties
+- Security violations (trust assumption breached)
+- Explicit cancellation by consensus
 
 ### Type-Level Guarantees
 
@@ -856,11 +861,13 @@ The session type system provides these guarantees:
 
 1. **Nonce uniqueness**: Each `FreshNonce` can only be consumed once. The `commit` function consumes the `ReadyToCommit` state, and the nonce value moves into `Committed`. There's no path back.
 
-2. **Linear flow**: States can only progress forward. Each transition consumes its input.
+2. **Linear flow**: States can only progress forward. Each transition consumes its input. Sessions may also transition to `Aborted`.
 
-3. **No nonce reuse on retry**: When signing fails norm check, we must create a NEW `ReadyToCommit` with a NEW `FreshNonce`. The old `Revealed` state is consumed by `mkRetryContext`.
+3. **Local rejection**: With `signWithLocalRejection`, norm bounds are satisfied during signing via local rejection sampling. No global retry loop is needed.
 
 4. **Compile-time enforcement**: These aren't runtime checks—the type system prevents writing code that would reuse a nonce.
+
+5. **Abort safety**: Aborted sessions cannot continue. Once a session transitions to `Aborted`, any consumed nonces are invalidated.
 
 ### Example: Nonce Reuse is Uncompilable
 
@@ -927,8 +934,8 @@ See [Protocol Integration](06_integration.md) for detailed usage patterns with e
 
 **Challenge entropy.** The hash function must produce challenges with sufficient entropy. In the random oracle model this is guaranteed.
 
-**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Rejection sampling with retry ensures signatures are independent of the secret.
+**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Local rejection sampling ensures each partial signature is independent of the secret—no global retry coordination needed.
 
-**Abort coordination.** When a party must abort due to norm failure, all parties must restart together. The CRDT abort state coordinates this.
+**Abort coordination.** Session-level aborts (for liveness failures or security violations) use CRDT state with an $f+1$ threshold, ensuring at least one honest party agreed to abort.
 
 **Totality.** The validation function always returns either a valid signature or a structured error.
