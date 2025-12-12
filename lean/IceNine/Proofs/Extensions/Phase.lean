@@ -17,6 +17,8 @@ import Mathlib
 import Std.Data.HashMap.Basic
 import Std.Data.HashMap.Lemmas
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Extensions.Phase
 
 open IceNine.Protocol

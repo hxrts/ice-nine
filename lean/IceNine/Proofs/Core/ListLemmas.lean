@@ -12,6 +12,8 @@ The closest are `List.sum_map_add` for mapped addition and various
 
 import Mathlib
 
+set_option autoImplicit false
+
 namespace List
 
 /-!

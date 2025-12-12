@@ -19,6 +19,8 @@ import Mathlib
 import IceNine.Protocol.Core.Core
 import IceNine.Proofs.Core.Assumptions
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Core.HighBits
 
 open IceNine.Protocol

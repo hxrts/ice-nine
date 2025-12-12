@@ -33,20 +33,20 @@ In VSS-DKG, each party i:
 -/
 
 /-- VSS commitment message: party broadcasts their polynomial commitment. -/
-structure VSSCommitMsg (S : Scheme) where
+structure VSSCommitMsg (S : Scheme) [CommRing S.Scalar] where
   sender : S.PartyId
   /-- Commitment to polynomial coefficients -/
   polyCommit : PolyCommitment S
 
 /-- VSS share message: party sends share privately to recipient. -/
-structure VSSShareMsg (S : Scheme) where
+structure VSSShareMsg (S : Scheme) [CommRing S.Scalar] where
   sender : S.PartyId
   recipient : S.PartyId
   /-- The share value f_sender(recipient) -/
   share : VSSShare S
 
 /-- VSS complaint: party j complains that party i's share is invalid. -/
-structure VSSComplaint (S : Scheme) where
+structure VSSComplaint (S : Scheme) [CommRing S.Scalar] where
   /-- Party filing the complaint -/
   complainant : S.PartyId
   /-- Party being accused -/
@@ -75,13 +75,13 @@ Each party maintains:
 -/
 
 /-- Party's local state during VSS-DKG.
-    Note: We use List S.Secret for polynomial coefficients since Mathlib's
-    Polynomial requires Semiring but S.Secret is only an AddCommGroup. -/
-structure VSSLocalState (S : Scheme) where
+    Uses `PolynomialModule` polynomials so coefficients live in `S.Secret`
+    without needing a `Semiring S.Secret`. -/
+structure VSSLocalState (S : Scheme) [CommRing S.Scalar] where
   /-- This party's ID -/
   pid : S.PartyId
-  /-- This party's polynomial coefficients (secret) - stored as list -/
-  polyCoeffs : List S.Secret
+  /-- This party's secret polynomial f_i. -/
+  secretPoly : SecretPoly S
   /-- This party's commitment (public) -/
   commitment : PolyCommitment S
   /-- Shares this party has generated for others -/
@@ -95,40 +95,26 @@ structure VSSLocalState (S : Scheme) where
 ## VSS-DKG Protocol Functions
 -/
 
-/-- Commit to polynomial coefficients stored as a list.
-    Unlike `commitPolynomial`, this works without `Semiring S.Secret`. -/
-def commitPolynomialFromList (S : Scheme) (coeffs : List S.Secret) (hne : coeffs ≠ []) : PolyCommitment S :=
-  { commitments := coeffs.map S.A
-    threshold := coeffs.length
-    consistent := by simp [List.length_map] }
-
-/-- Generate share from coefficient list.
-    Uses `evalPolynomialScalar` to avoid `Semiring S.Secret`. -/
-def generateShareFromList (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Secret] [Module S.Scalar S.Secret]
-    (coeffs : List S.Secret) (recipient : S.PartyId) (evalPoint : S.Scalar) : VSSShare S :=
-  { recipient := recipient
-    evalPoint := evalPoint
-    value := evalPolynomialScalar S coeffs evalPoint }
-
 /-- Initialize VSS state for a party.
     Party samples polynomial with their secret contribution as constant term.
-    Note: Uses list-based polynomial to avoid Semiring requirement on Secret. -/
-def vssInit (S : Scheme) [Monoid S.Scalar] [AddCommMonoid S.Secret] [Module S.Scalar S.Secret]
+    Uses `PolynomialModule` polynomials (coefficients in `S.Secret`). -/
+noncomputable def vssInit (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (pid : S.PartyId)
     (secretContribution : S.Secret)  -- sk_i: this party's share of the master secret
     (randomCoeffs : List S.Secret)   -- random coefficients for polynomial
     (parties : List (S.PartyId × S.Scalar))  -- all parties with their eval points
     : VSSLocalState S :=
-  let coeffs := secretContribution :: randomCoeffs
-  -- Coeffs is non-empty by construction
-  let hne : coeffs ≠ [] := by simp [coeffs]
-  let commit := commitPolynomialFromList S coeffs hne
+  let threshold := randomCoeffs.length + 1
+  let poly := mkPolynomial S secretContribution randomCoeffs
+  let commit := commitPolynomial S poly threshold
   let shares := parties.map fun (recipient, evalPt) =>
     { sender := pid
       recipient := recipient
-      share := generateShareFromList S coeffs recipient evalPt }
+      share := generateShare S poly recipient evalPt }
   { pid := pid
-    polyCoeffs := coeffs
+    secretPoly := poly
     commitment := commit
     outgoingShares := shares
     incomingShares := []
@@ -146,7 +132,8 @@ def vssShareMsgFor (S : Scheme) [DecidableEq S.PartyId]
 
 /-- Receive and verify a share from another party.
     Returns updated state with share added (if valid) or complaint filed. -/
-def vssReceiveShare (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Public]
+noncomputable def vssReceiveShare (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (st : VSSLocalState S)
     (msg : VSSShareMsg S)
     (senderCommit : PolyCommitment S)
@@ -167,7 +154,8 @@ def vssReceiveShare (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Publi
       complaints := complaint :: st.complaints }
 
 /-- Verify a complaint is valid (the share really doesn't verify). -/
-def verifyComplaint (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Public]
+noncomputable def verifyComplaint (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (complaint : VSSComplaint S) : Bool :=
   -- Complaint is valid if the share does NOT verify
   !verifyShareBool S complaint.commitment complaint.badShare
@@ -205,8 +193,8 @@ def vssFinalize (S : Scheme)
     -- Compute public share
     let pk_i := computePublicShare S sk
     -- Compute global public key from commitments
-    -- pk = Σ_i A(a_{i,0}) = Σ_i C_{i,0} (first commitment from each dealer)
-    let pk := (allCommitments.filterMap (fun c => c.polyCommit.commitments.head?)).sum
+    -- pk = Σ_i A(a_{i,0}) = Σ_i C_{i,0} (constant term commitment from each dealer)
+    let pk := (allCommitments.map (fun c => c.polyCommit.poly 0)).sum
     some { pid := st.pid
            sk_i := SecretBox.wrap sk
            pk_i := pk_i
@@ -222,7 +210,7 @@ Complete transcript for verification and blame attribution.
 -/
 
 /-- Complete VSS-DKG transcript. -/
-structure VSSDKGTranscript (S : Scheme) where
+structure VSSDKGTranscript (S : Scheme) [CommRing S.Scalar] where
   /-- All commitment messages -/
   commitments : List (VSSCommitMsg S)
   /-- All share messages (normally private, revealed for disputes) -/
@@ -233,13 +221,15 @@ structure VSSDKGTranscript (S : Scheme) where
   threshold : Nat
 
 /-- Check if VSS-DKG succeeded (no valid complaints). -/
-def vssDKGSuccess (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Public]
+noncomputable def vssDKGSuccess (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     (transcript : VSSDKGTranscript S) : Bool :=
   -- Success if all complaints are invalid (shares actually verify)
   transcript.complaints.all (fun c => !verifyComplaint S c)
 
 /-- Get list of faulty parties (those with valid complaints against them). -/
-def vssFaultyParties (S : Scheme) [Module S.Scalar S.Public] [DecidableEq S.Public]
+noncomputable def vssFaultyParties (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
     [DecidableEq S.PartyId]
     (transcript : VSSDKGTranscript S) : List S.PartyId :=
   (transcript.complaints.filter (fun c => verifyComplaint S c)).map (·.accused)

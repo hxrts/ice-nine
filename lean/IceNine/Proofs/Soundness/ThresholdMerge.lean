@@ -23,6 +23,8 @@ This file provides additional theorems about merge properties.
 import IceNine.Protocol.Sign.ThresholdMerge
 import Mathlib
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Soundness.ThresholdMerge
 
 open IceNine.Protocol

@@ -17,6 +17,8 @@ These properties ensure convergence in distributed state replication.
 
 import IceNine.Proofs.Extensions.Phase
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Soundness.CRDT
 
 open IceNine.Protocol

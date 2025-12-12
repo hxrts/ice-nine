@@ -15,6 +15,8 @@ import IceNine.Protocol.Shares.Rerandomize
 import IceNine.Proofs.Extensions.Repair
 import IceNine.Proofs.Correctness.Sign
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Extensions.RefreshRepair
 
 open IceNine.Protocol

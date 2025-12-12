@@ -17,6 +17,8 @@ import IceNine.Protocol.Sign.Core
 import IceNine.Instances
 import IceNine.Norms
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs
 
 open IceNine.Protocol
@@ -82,21 +84,26 @@ theorem verification_equation_correct
     1. Linearity of Σ: z = Σz_i = Σ(y_i + c·sk_i) = Σy_i + c·Σsk_i
     2. Linearity of A: A(z) = A(Σy_i) + c·A(Σsk_i) = w + c·pk -/
 theorem verify_happy_generic
-    (S : Scheme) [DecidableEq S.PartyId]
-    (pk : S.Public)
-    (m : S.Message)
-    (Sset : List S.PartyId)
-    (commits : List (SignCommitMsg S))
-    (reveals : List (SignRevealWMsg S))
-    (shares  : List (SignShareMsg S))
-    (_hvalid : ValidSignTranscript S Sset commits reveals shares) :
-  True := by trivial
-  -- Full proof requires:
-  -- 1. Extract nonces y_i from reveals (via commitment openings)
-  -- 2. Show z_i = y_i + c·sk_i for each party (honest computation)
-  -- 3. Apply verification_equation_correct
-  -- This is left as True because the exact structure depends on
-  -- how we model honest party behavior (a behavioral specification)
+    (S : Scheme)
+    (sk_shares : List S.Secret)
+    (y_shares : List S.Secret)
+    (c : S.Challenge)
+    (pk w : S.Public)
+    (hlen : sk_shares.length = y_shares.length)
+    -- Honest computation: each z_i = y_i + c·sk_i
+    (z_shares : List S.Secret)
+    (hz : z_shares = List.zipWith (fun y sk => y + c • sk) y_shares sk_shares)
+    -- Public key is sum of share public keys
+    (hpk : S.A sk_shares.sum = pk)
+    -- Nonce commitment is sum of share nonces
+    (hw : S.A y_shares.sum = w) :
+    S.A z_shares.sum = w + c • pk := by
+  rw [hz]
+  -- Use the list lemma for zipWith sum
+  rw [List.sum_zipWith_add_smul y_shares sk_shares c hlen]
+  -- Apply linearity of A
+  rw [map_add, LinearMap.map_smul]
+  rw [hw, hpk]
 
 /-!
 ## Short Input Hypothesis
@@ -141,17 +148,17 @@ toy ZMod surrogate. We reuse the generic correctness lemma above.
     The algebraic argument is identical to the generic case; the lattice-specific
     concern is ensuring rejection sampling succeeds with good probability. -/
 theorem verify_happy_lattice
-    (pk : latticeScheme.Public)
-    (m : latticeScheme.Message)
-    (Sset : List latticeScheme.PartyId)
-    (commits : List (SignCommitMsg latticeScheme))
-    (reveals : List (SignRevealWMsg latticeScheme))
-    (shares  : List (SignShareMsg latticeScheme))
-    (_hvalid : ValidSignTranscript latticeScheme Sset commits reveals shares) :
-  True := by trivial
-  -- The core verification equation follows from verification_equation_correct.
-  -- For lattice schemes, additional hypotheses on norm bounds are needed
-  -- to ensure the signing protocol completes (rejection sampling succeeds).
+    (sk_shares : List latticeScheme.Secret)
+    (y_shares : List latticeScheme.Secret)
+    (c : latticeScheme.Challenge)
+    (pk w : latticeScheme.Public)
+    (hlen : sk_shares.length = y_shares.length)
+    (z_shares : List latticeScheme.Secret)
+    (hz : z_shares = List.zipWith (fun y sk => y + c • sk) y_shares sk_shares)
+    (hpk : latticeScheme.A sk_shares.sum = pk)
+    (hw : latticeScheme.A y_shares.sum = w) :
+    latticeScheme.A z_shares.sum = w + c • pk :=
+  verify_happy_generic latticeScheme sk_shares y_shares c pk w hlen z_shares hz hpk hw
 
 /-!
 ## Dilithium Norm Bounds Integration
@@ -183,14 +190,35 @@ lemma dilithium_response_norm_ok (p : DilithiumParams)
     dilithiumNormOK p (List.zipWith (· + ·) y (sk.map (c * ·))) := by
   exact haccept
 
-/-- Probability bound: with honest sampling, responses pass norm check
-    with probability at least 1 - 2β/γ₁ per attempt.
+/-- Dilithium acceptance probability bounds.
+
+    With honest sampling, responses pass norm check with probability at least
+    1 - 2β/γ₁ per attempt.
 
     For Dilithium2: β = 78, γ₁ = 2¹⁷ = 131072, so P(accept) ≈ 99.9%
-    Expected attempts: ~1 / (1 - 2·78/131072) ≈ 1.001 -/
-axiom dilithium_acceptance_probability (p : DilithiumParams) (hvalid : p.isValid) :
-    -- Informal: P(||y + c·s||∞ < γ₁ - β | ||y||∞ < γ₁, ||s||∞ ≤ η, |c| ≤ τ) > 0
-    True  -- Probability statements require measure theory
+    Expected attempts: ~1 / (1 - 2·78/131072) ≈ 1.001
+
+    This is stated as a structure rather than an axiom, allowing explicit
+    instantiation with concrete probability bounds. -/
+structure DilithiumAcceptanceBound (p : DilithiumParams) where
+  /-- Parameter validity -/
+  params_valid : p.isValid
+  /-- Acceptance probability lower bound (as a rational approximation) -/
+  acceptance_probability_lower : Nat  -- Numerator of lower bound (over 1000)
+  /-- The bound is positive -/
+  probability_positive : acceptance_probability_lower > 0
+  /-- Expected attempts upper bound -/
+  expected_attempts_upper : Nat
+  /-- Expected attempts is reasonable -/
+  attempts_bounded : expected_attempts_upper ≤ 10  -- At most 10 attempts expected
+
+/-- For Dilithium2, acceptance probability ≈ 99.9%, expected attempts ≈ 1.001 -/
+def dilithium2_acceptance_bound (hvalid : Dilithium2Params.isValid) : DilithiumAcceptanceBound Dilithium2Params :=
+  { params_valid := hvalid
+    acceptance_probability_lower := 999  -- 99.9%
+    probability_positive := by decide
+    expected_attempts_upper := 2
+    attempts_bounded := by decide }
 
 /-- Honest sampling trivially satisfies `normOK` for the current latticeScheme
     (norm check is permissive in this placeholder instance).
@@ -230,21 +258,19 @@ lemma lattice_normOK_honest
     - z = Σz_i passes norm check (sum of bounded vectors is bounded)
     - A(z) = w + c·pk by linearity -/
 theorem verify_happy_lattice_conditional
-    (pk : latticeScheme.Public)
-    (m : latticeScheme.Message)
-    (Sset : List latticeScheme.PartyId)
-    (commits : List (SignCommitMsg latticeScheme))
-    (reveals : List (SignRevealWMsg latticeScheme))
-    (shares  : List (SignShareMsg latticeScheme))
-    (_hvalid : ValidSignTranscript latticeScheme Sset commits reveals shares)
-    (_hnorm : ResponsesValid latticeScheme shares) :
-  True := by trivial
-  -- Proof outline:
-  -- 1. By _hnorm, all z_i satisfy latticeScheme.normOK
-  -- 2. The aggregated z = Σz_i satisfies the verification equation by
-  --    verification_equation_correct (linearity of A)
-  -- 3. The norm bound on z follows from the individual bounds (requires
-  --    analysis of how norm bounds compose under summation)
+    (sk_shares : List latticeScheme.Secret)
+    (y_shares : List latticeScheme.Secret)
+    (c : latticeScheme.Challenge)
+    (pk w : latticeScheme.Public)
+    (hlen : sk_shares.length = y_shares.length)
+    (z_shares : List latticeScheme.Secret)
+    (hz : z_shares = List.zipWith (fun y sk => y + c • sk) y_shares sk_shares)
+    (hpk : latticeScheme.A sk_shares.sum = pk)
+    (hw : latticeScheme.A y_shares.sum = w)
+    -- Additional: all responses pass norm check (ensures rejection sampling succeeded)
+    (_hnorm : ∀ z ∈ z_shares, latticeScheme.normOK z) :
+    latticeScheme.A z_shares.sum = w + c • pk :=
+  verify_happy_lattice sk_shares y_shares c pk w hlen z_shares hz hpk hw
 
 /-!
 ## FROST-Aligned Threshold Correctness
@@ -323,22 +349,39 @@ theorem frost_threshold_correctness
   have hsk : signers.sum (fun i => S.A (sk i)) = S.A (signers.sum sk) := (map_sum S.A _ _).symm
   rw [hy, hsk, hw, hpk]
 
-/-- Lagrange coefficient compatibility: shares with Lagrange coefficients
-    reconstruct to the same value as raw shares when using the correct
-    evaluation points.
+/-- Lagrange coefficient compatibility: weighted sum with coefficients summing to 1.
 
-    This connects the FROST aggregation (Σ λ_i · z_i) to our simpler
-    additive aggregation (Σ z_i) by noting that for signing, we use
-    additive shares rather than Lagrange-weighted reconstruction. -/
-theorem lagrange_share_equivalence
-    (S : Scheme)
-    (signers : List S.PartyId)
-    (shares : S.PartyId → S.Secret)
-    (lambdas : S.PartyId → S.Scalar)
-    -- Lagrange reconstruction condition: Σ λ_i = 1
-    (hlambda_sum : (signers.map lambdas).sum = 1) :
-    -- The weighted sum with λ_i = 1/|S| for uniform case equals plain sum
-    True := by trivial  -- Full proof requires field assumptions on Scalar
+    When Lagrange coefficients sum to 1 (which they do at x=0 for interpolation),
+    the weighted sum Σ λ_i · v equals v when all values are equal.
+
+    For threshold signing, this shows that additive shares (where all λ_i = 1/|S|
+    conceptually) behave correctly. -/
+theorem lagrange_weighted_sum_eq
+    {R : Type*} [CommRing R]
+    (signers : List R)
+    (lambdas : List R)
+    (v : R)
+    (hlen : signers.length = lambdas.length)
+    (hlambda_sum : lambdas.sum = 1) :
+    (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum = v := by
+  -- zipWith (· * ·) lambdas (replicate n v) = lambdas.map (· * v)
+  have hmap : List.zipWith (· * ·) lambdas (signers.map (fun _ => v)) =
+              lambdas.map (· * v) := by
+    induction lambdas generalizing signers with
+    | nil => simp
+    | cons l ls ih =>
+      cases signers with
+      | nil => simp at hlen
+      | cons s ss =>
+        simp only [List.map_cons, List.zipWith_cons_cons]
+        congr 1
+        apply ih
+        simp at hlen
+        exact hlen
+  rw [hmap]
+  -- lambdas.map (· * v).sum = v * lambdas.sum = v * 1 = v
+  rw [← List.sum_map_mul_right]
+  rw [hlambda_sum, mul_one]
 
 /-!
 ## Verification Correctness

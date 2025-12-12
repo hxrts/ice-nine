@@ -13,6 +13,8 @@ import IceNine.Protocol.DKG.Threshold
 import IceNine.Protocol.DKG.Dealer
 import IceNine.Proofs.Core.ListLemmas
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Correctness.DKG
 
 open IceNine.Protocol

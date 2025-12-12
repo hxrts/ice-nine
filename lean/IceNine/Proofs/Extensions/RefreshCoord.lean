@@ -18,6 +18,8 @@ proactive security through periodic share refresh.
 import IceNine.Protocol.Shares.RefreshCoord
 import Mathlib
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Extensions.RefreshCoord
 
 open IceNine.Protocol.RefreshCoord

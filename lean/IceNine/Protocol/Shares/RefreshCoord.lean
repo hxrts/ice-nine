@@ -528,6 +528,13 @@ private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
       injection hmasks with heq
       rw [← hfn, ← heq]
 
+/-- For a nodup list, count of any member is 1. -/
+private lemma nodup_count_eq_one {α : Type*} [DecidableEq α]
+    {l : List α} (hnodup : l.Nodup) {x : α} (hx : x ∈ l.toFinset) :
+    l.count x = 1 := by
+  rw [List.mem_toFinset] at hx
+  exact List.count_eq_one_of_mem hnodup hx
+
 /-- Helper: derive zero-sum proof from runtime checks.
     This uses the fact that Finset.sum over a nodup list equals the list sum. -/
 private theorem constructZeroSumMask_proof (S : Scheme)
@@ -540,15 +547,13 @@ private theorem constructZeroSumMask_proof (S : Scheme)
     (hnodup : st.parties.Nodup) :
     st.parties.toFinset.sum maskFn.mask = 0 := by
   have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
-  -- Convert Finset.sum to List.sum using nodup property
-  calc st.parties.toFinset.sum maskFn.mask
-      = st.parties.toFinset.sum (fun a => st.parties.count a • maskFn.mask a) := by
-          apply Finset.sum_congr rfl
-          intro x hx
-          rw [List.toFinset_count_eq_one_of_nodup hnodup hx, one_smul]
-    _ = (st.parties.map maskFn.mask).sum := by rw [Finset.sum_list_map_count]
-    _ = masks.sum := by rw [heq]
-    _ = 0 := hzero
+  -- For nodup lists, Finset.sum over toFinset equals List.sum
+  have hsum : st.parties.toFinset.sum maskFn.mask = (st.parties.map maskFn.mask).sum := by
+    rw [← List.sum_toFinset_eq_sum_of_nodup _ hnodup]
+    congr 1
+    ext x
+    simp [List.count_toFinset hnodup]
+  rw [hsum, heq, hzero]
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/

@@ -17,6 +17,8 @@ import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.DKG.Core
 import IceNine.Protocol.Core.Serialize
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs
 
 open IceNine.Protocol

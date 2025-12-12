@@ -17,6 +17,8 @@ import IceNine.Proofs.Core.ListLemmas
 import IceNine.Protocol.Shares.Repair
 import IceNine.Protocol.Sign.Types
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs
 
 open IceNine.Protocol
@@ -78,6 +80,9 @@ lemma repair_smul
   -- Goal: (msgs.map (fun m => c • m.delta)).sum = ((msgs.map (·.delta)).map (c • ·)).sum
   congr 1
   rw [List.map_map]
+  -- Both sides are now msgs.map (fun m => c • m.delta) and msgs.map ((c • ·) ∘ (·.delta))
+  -- These are definitionally equal, but we prove it via funext
+  rfl
 
 /-!
 ## Correctness Properties

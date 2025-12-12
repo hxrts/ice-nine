@@ -71,7 +71,7 @@ structure RefreshLocalState (S : Scheme) where
   opening : S.Opening
 
 /-- Round 1 commit message: commitment to zero-polynomial. -/
-structure RefreshCommitMsg (S : Scheme) where
+structure RefreshCommitMsg (S : Scheme) [CommRing S.Scalar] where
   sender : S.PartyId
   /-- Polynomial commitment (public coefficients) -/
   polyCommit : VSS.PolyCommitment S
@@ -105,19 +105,16 @@ def generateZeroPolynomial
 
 /-- Round 1: Generate commitment to zero-polynomial.
     Returns local state (kept private) and commit message (broadcast). -/
-def refreshRound1
-    (S : Scheme)
+noncomputable def refreshRound1
+    (S : Scheme) [CommRing S.Scalar]
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (pid : S.PartyId)
     (randomCoeffs : List S.Secret)  -- random coefficients a₁...a_{t-1}
     (opening : S.Opening)
     : RefreshLocalState S × RefreshCommitMsg S :=
   let coeffs := generateZeroPolynomial S randomCoeffs
-  -- Create polynomial commitment: [A(0), A(a₁), A(a₂), ...]
-  let polyCommit : VSS.PolyCommitment S := {
-    commitments := coeffs.map S.A
-    threshold := coeffs.length
-    consistent := by simp [List.length_map]
-  }
+  let polyCommit := VSS.commitPolynomialFromCoeffs S coeffs
   let st : RefreshLocalState S := {
     pid := pid
     coefficients := coeffs
@@ -178,8 +175,9 @@ def computeOwnShare
 
     The expected public value is computed by evaluating the commitment
     polynomial at the recipient's point. -/
-def verifyRefreshShare
-    (S : Scheme) [DecidableEq S.Public] [Mul S.Scalar] [Add S.Public]
+noncomputable def verifyRefreshShare
+    (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Public]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (pidToScalar : S.PartyId → S.Scalar)
     (commits : List (RefreshCommitMsg S))
     (shareMsg : RefreshShareMsg S)
@@ -189,8 +187,7 @@ def verifyRefreshShare
   | some commitMsg =>
       -- Compute expected public value at recipient's point
       let x := pidToScalar shareMsg.recipient
-      let expectedPub := commitMsg.polyCommit.commitments.reverse.foldl
-        (fun acc c => c + x • acc) 0
+      let expectedPub := VSS.expectedPublicValue S commitMsg.polyCommit x
       -- Verify A(share) = expected
       S.A shareMsg.share = expectedPub
 
@@ -204,9 +201,10 @@ inductive RefreshDKGError (PartyId : Type*)
 
 /-- Round 3: Aggregate all received shares to compute refresh delta.
     Each party sums: δ_i = f_i(i) + Σⱼ≠ᵢ f_j(i) -/
-def refreshRound3
-    (S : Scheme) [DecidableEq S.PartyId] [DecidableEq S.Public]
-    [Mul S.Scalar] [Add S.Secret] [Add S.Public]
+noncomputable def refreshRound3
+    (S : Scheme) [CommRing S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Public]
+    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    [Mul S.Scalar] [Add S.Secret]
     (pidToScalar : S.PartyId → S.Scalar)
     (st : RefreshLocalState S)
     (commits : List (RefreshCommitMsg S))

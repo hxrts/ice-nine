@@ -38,6 +38,8 @@ import IceNine.Protocol.DKG.Core
 import IceNine.Instances
 import Mathlib
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs
 
 open IceNine.Protocol
@@ -60,6 +62,8 @@ structure SISParams where
   q : Nat
   /-- Solution norm bound -/
   beta : Nat
+  /-- Security level in bits (e.g., 128, 192, 256) -/
+  securityParam : Nat := 128
 
 /-- Heuristic parameter-growth requirement for classic SIS hardness.
 
@@ -95,15 +99,15 @@ def SISHard (p : SISParams) : Prop :=
     NOTE: The m_large constraint is not satisfied by standard Dilithium parameters.
     Dilithium's security relies on different lattice hardness arguments (MLWE/MSIS). -/
 def sisL1 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 78 }
+  { n := 256, m := 512, q := 8380417, beta := 78, securityParam := 128 }
 
 /-- NIST PQC (Dilithium3-ish) SIS parameters, Level 3 (~192-bit) -/
 def sisL3 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 120 }
+  { n := 256, m := 512, q := 8380417, beta := 120, securityParam := 192 }
 
 /-- NIST PQC (Dilithium5-ish) SIS parameters, Level 5 (~256-bit) -/
 def sisL5 : SISParams :=
-  { n := 256, m := 512, q := 8380417, beta := 196 }
+  { n := 256, m := 512, q := 8380417, beta := 196, securityParam := 256 }
 
 /-!
 ## Module Learning With Errors (MLWE) Problem

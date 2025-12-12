@@ -14,6 +14,8 @@ import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.Sign.Core
 import IceNine.Protocol.Sign.Threshold
 
+set_option autoImplicit false
+
 namespace IceNine.Proofs.Correctness.Sign
 
 open IceNine.Protocol
