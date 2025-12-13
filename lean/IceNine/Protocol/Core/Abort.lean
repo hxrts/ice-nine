@@ -125,7 +125,6 @@ structure AbortMsg (S : Scheme) where
   reason : AbortReason S.PartyId
   /-- Evidence (e.g., list of unresponsive parties) -/
   evidence : List S.PartyId := []
-  deriving Repr
 
 /-- Create an abort message for timeout. -/
 def AbortMsg.timeout (S : Scheme) (sender : S.PartyId) (session : Nat)
@@ -171,7 +170,6 @@ structure AbortState (S : Scheme) where
   reasons : List (AbortReason S.PartyId)
   /-- Whether an immediate abort was triggered -/
   immediateTriggered : Bool := false
-  deriving Repr
 
 /-- Empty abort state for a session. -/
 def AbortState.empty (S : Scheme) (session : Nat) : AbortState S :=
@@ -251,7 +249,6 @@ Unified result type for operations that may abort.
 inductive AbortResult (S : Scheme) (A : Type*) where
   | success (value : A)
   | aborted (reason : AbortReason S.PartyId) (votes : Nat)
-  deriving Repr
 
 /-- Check if result is success. -/
 def AbortResult.isSuccess {S : Scheme} {A : Type*} : AbortResult S A → Bool

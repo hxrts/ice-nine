@@ -34,74 +34,17 @@ open IceNine.Protocol.Lagrange
 open Polynomial Lagrange Finset
 
 /-!
-## List.indexOf Definition and Lemmas
+## List Index Lookup
 
-In Lean 4 / Mathlib4, `List.indexOf` is not directly available with the interface we need.
-We define a local version here for use in Lagrange interpolation proofs.
+We use Mathlib's `List.idxOf` (the preferred name over deprecated `indexOf`)
+for finding element indices in lists. Key lemmas from Mathlib:
+- `idxOf_lt_length_iff`: idxOf a l < l.length ↔ a ∈ l
+- `getElem_idxOf`: l[idxOf a l] = a when a ∈ l
+- `idxOf_cons_eq`: idxOf a (a :: l) = 0
+- `idxOf_cons_ne`: idxOf b (a :: l) = idxOf b l + 1 when a ≠ b
 -/
 
 variable {α : Type*}
-
-/-- Index of first occurrence of element in list, or length if not found. -/
-def List.indexOf' [DecidableEq α] (a : α) : List α → Nat
-  | [] => 0
-  | x :: xs => if x = a then 0 else 1 + List.indexOf' a xs
-
-/-- indexOf' a (a :: l) = 0 -/
-lemma List.indexOf'_cons_self [DecidableEq α] (a : α) (l : List α) :
-    List.indexOf' a (a :: l) = 0 := by
-  simp only [indexOf', if_true]
-
-/-- indexOf' b (a :: l) = 1 + indexOf' b l when b ≠ a -/
-lemma List.indexOf'_cons_ne [DecidableEq α] {a b : α} (l : List α) (hne : a ≠ b) :
-    List.indexOf' b (a :: l) = 1 + List.indexOf' b l := by
-  simp only [indexOf', if_neg hne]
-
-/-- indexOf' returns index less than or equal to length -/
-lemma List.indexOf'_le_length [DecidableEq α] (a : α) (l : List α) :
-    List.indexOf' a l ≤ l.length := by
-  induction l with
-  | nil => simp [indexOf']
-  | cons x xs ih =>
-    simp only [indexOf', List.length_cons]
-    split_ifs
-    · omega
-    · omega
-
-/-- indexOf' returns index less than length when element is in list -/
-lemma List.indexOf'_lt_length [DecidableEq α] (a : α) (l : List α) (h : a ∈ l) :
-    List.indexOf' a l < l.length := by
-  induction l with
-  | nil => cases h
-  | cons x xs ih =>
-    simp only [indexOf', List.length_cons]
-    split_ifs with heq
-    · omega
-    · have hmem : a ∈ xs := by
-        cases h with
-        | head => exact (heq rfl).elim
-        | tail _ hmem => exact hmem
-      have hih := ih hmem
-      omega
-
-/-- getElem at indexOf' returns the element when element is in list -/
-lemma List.getElem_indexOf' [DecidableEq α] (a : α) (l : List α) (h : a ∈ l) :
-    l[List.indexOf' a l]'(List.indexOf'_lt_length a l h) = a := by
-  induction l with
-  | nil => cases h
-  | cons x xs ih =>
-    simp only [indexOf']
-    split_ifs with heq
-    · simp [heq]
-    · have hmem : a ∈ xs := by
-        cases h with
-        | head => exact (heq rfl).elim
-        | tail _ hmem => exact hmem
-      have hlt : indexOf' a xs < xs.length := indexOf'_lt_length a xs hmem
-      -- Goal is (x :: xs)[1 + indexOf' a xs] = a
-      -- Use simp to handle the Nat.add_comm and getElem_cons_succ together
-      simp only [Nat.add_comm 1 (indexOf' a xs), List.getElem_cons_succ]
-      exact ih hmem
 
 /-!
 ## Connection to Mathlib
@@ -250,7 +193,7 @@ lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
     (hlen : partyScalars.length = values.length) :
     (List.zipWith (fun p v => f p * v) partyScalars values).sum =
     partyScalars.toFinset.sum (fun x =>
-      f x * (values.getD (List.indexOf' x partyScalars) 0)) := by
+      f x * (values.getD (partyScalars.idxOf x) 0)) := by
   induction partyScalars generalizing values with
   | nil => simp
   | cons p ps ih =>
@@ -273,17 +216,16 @@ lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
       rw [hunion, Finset.sum_union hdisjoint]
       simp only [Finset.sum_singleton]
       congr 1
-      · -- The p term: indexOf' p in (p::ps) = 0, so getD 0 = v
-        rw [List.indexOf'_cons_self, List.getD_cons_zero]
-      · -- The ps terms: indexOf' x in (p::ps) = 1 + indexOf' x in ps
+      · -- The p term: idxOf p in (p::ps) = 0, so getD 0 = v
+        simp only [List.idxOf_cons_eq, List.getD_cons_zero]
+      · -- The ps terms: idxOf x in (p::ps) = idxOf x ps + 1
         apply Finset.sum_congr rfl
         intro x hx
         have hxne : p ≠ x := by
           intro heq
           rw [heq] at hnotmem
           exact hnotmem (List.mem_toFinset.mp hx)
-        rw [List.indexOf'_cons_ne _ hxne]
-        conv_rhs => rw [Nat.add_comm, List.getD_cons_succ]
+        simp only [List.idxOf_cons_ne hxne, List.getD_cons_succ]
 
 /-- Lagrange interpolation: the weighted sum of values equals the polynomial
     evaluated at 0, where weights are Lagrange coefficients.
@@ -310,7 +252,7 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     let coeffs := partyScalars.map fun p => coeffAtZero p partyScalars
     let s := partyScalars.toFinset
     let r : F → F := fun x =>
-      if x ∈ partyScalars then values.getD (List.indexOf' x partyScalars) 0 else 0
+      if x ∈ partyScalars then values.getD (partyScalars.idxOf x) 0 else 0
     (List.zipWith (· * ·) coeffs values).sum = eval 0 (Lagrange.interpolate s id r) := by
   intro coeffs s r
   have _hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
@@ -338,10 +280,10 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
   -- Show the finset sums are equal
   apply Finset.sum_congr rfl
   intro x hx
-  -- For x ∈ s, show: coeffAtZero x * getD (indexOf' x) = r x * basis eval
+  -- For x ∈ s, show: coeffAtZero x * getD (idxOf x) = r x * basis eval
   have hxmem : x ∈ partyScalars := List.mem_toFinset.mp hx
-  -- r x = values.getD (indexOf' x) 0 for x ∈ partyScalars
-  have hr : r x = values.getD (List.indexOf' x partyScalars) 0 := by
+  -- r x = values.getD (idxOf x) 0 for x ∈ partyScalars
+  have hr : r x = values.getD (partyScalars.idxOf x) 0 := by
     simp only [r, hxmem, ↓reduceIte]
   rw [hr, hcoeff_eq x hx]
   ring

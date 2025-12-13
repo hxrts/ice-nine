@@ -95,44 +95,44 @@ All operations are pure and return structured results.
 namespace NormOp
 
 /-- Check if a value's norm is within a bound -/
-def check [NormBounded α] (bound : Nat) (x : α) : NormCheckResult :=
+def check {α : Type*} [NormBounded α] (bound : Nat) (x : α) : NormCheckResult :=
   let n := norm x
   if n ≤ bound then .ok else .exceeded n bound
 
 /-- Check against local bound from ThresholdConfig -/
-def checkLocal [NormBounded α] (cfg : ThresholdConfig) (x : α) : NormCheckResult :=
+def checkLocal {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α) : NormCheckResult :=
   check cfg.localBound x
 
 /-- Check against global bound from ThresholdConfig -/
-def checkGlobal [NormBounded α] (cfg : ThresholdConfig) (x : α) : NormCheckResult :=
+def checkGlobal {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α) : NormCheckResult :=
   check cfg.globalBound x
 
 /-- Check a list of values against a bound, returning first failure -/
-def checkAll [NormBounded α] (bound : Nat) (xs : List α)
+def checkAll {α : Type*} [NormBounded α] (bound : Nat) (xs : List α)
     : NormCheckResult :=
   match xs.find? (fun x => !(check bound x).isOk) with
   | none => .ok
   | some x => check bound x
 
 /-- Check a list of values and return all failures -/
-def checkAllWithFailures [NormBounded α] (bound : Nat) (xs : List α)
+def checkAllWithFailures {α : Type*} [NormBounded α] (bound : Nat) (xs : List α)
     : List (α × NormCheckResult) :=
   xs.filterMap fun x =>
     let result := check bound x
     if result.isOk then none else some (x, result)
 
 /-- Compute margin: how far below the bound -/
-def margin [NormBounded α] (bound : Nat) (x : α) : Option Nat :=
+def margin {α : Type*} [NormBounded α] (bound : Nat) (x : α) : Option Nat :=
   let n := norm x
   if n ≤ bound then some (bound - n) else none
 
 /-- Check if a value would pass local rejection -/
-def wouldPassLocal [NormBounded α] (cfg : ThresholdConfig) (x : α) : Bool :=
+def wouldPassLocal {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α) : Bool :=
   (checkLocal cfg x).isOk
 
 /-- Check if aggregation of values would pass global bound.
     Uses triangle inequality: ‖Σ x_i‖∞ ≤ Σ ‖x_i‖∞ -/
-def wouldPassAggregate [NormBounded α] (cfg : ThresholdConfig) (xs : List α) : Bool :=
+def wouldPassAggregate {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (xs : List α) : Bool :=
   let sumNorms := xs.map norm |>.sum
   sumNorms ≤ cfg.globalBound
 
@@ -161,12 +161,12 @@ instance : NormBounded Int where
 
 /-- NormBounded instance for pairs (max of components).
     ‖(a, b)‖∞ = max(‖a‖∞, ‖b‖∞) -/
-instance [NormBounded α] [NormBounded β] : NormBounded (α × β) where
+instance {α : Type*} {β : Type*} [NormBounded α] [NormBounded β] : NormBounded (α × β) where
   norm p := max (norm p.1) (norm p.2)
 
 /-- NormBounded instance for Option (0 for none, norm for some).
     This is useful for partial results. -/
-instance [NormBounded α] : NormBounded (Option α) where
+instance {α : Type*} [NormBounded α] : NormBounded (Option α) where
   norm
     | none => 0
     | some x => norm x
@@ -190,21 +190,208 @@ theorem norm_mem_le (v : List Int) (x : Int) (hx : x ∈ v) :
     cases List.mem_cons.mp hx with
     | inl heq =>
       rw [heq]
-      -- Need to show |y| ≤ foldl max (max 0 |y|) ys
-      sorry  -- TODO: Complete proof
+      -- |y| ≤ foldl max (max 0 |y|) ys
+      have h1 : Int.natAbs y ≤ max 0 (Int.natAbs y) := Nat.le_max_right 0 _
+      exact Nat.le_trans h1 (foldl_max_ge_init ys (max 0 (Int.natAbs y)))
     | inr hmem =>
-      -- Use induction hypothesis
-      sorry  -- TODO: Complete proof
+      have h1 := ih hmem
+      exact Nat.le_trans h1 (foldl_max_mono ys 0 (max 0 (Int.natAbs y)) (Nat.le_max_left _ _))
+where
+  foldl_max_ge_init (l : List Int) (init : Nat) : init ≤ l.foldl (fun acc x => max acc (Int.natAbs x)) init := by
+    induction l generalizing init with
+    | nil => exact Nat.le_refl init
+    | cons x xs ih =>
+      simp only [List.foldl]
+      exact Nat.le_trans (Nat.le_max_left init _) (ih _)
+  foldl_max_mono (l : List Int) (a b : Nat) (hab : a ≤ b) :
+      l.foldl (fun acc x => max acc (Int.natAbs x)) a ≤ l.foldl (fun acc x => max acc (Int.natAbs x)) b := by
+    induction l generalizing a b with
+    | nil => exact hab
+    | cons x xs ih =>
+      simp only [List.foldl]
+      apply ih
+      omega
 
-/-- Triangle inequality for list norm under zipWith addition -/
+/-- Triangle inequality for list norm under zipWith addition.
+    Uses the fact that max |v_i + w_i| ≤ max |v_i| + max |w_i| by pointwise triangle inequality. -/
 theorem norm_add_le (v w : List Int) (hlen : v.length = w.length) :
     norm (List.zipWith (· + ·) v w) ≤ norm v + norm w := by
-  sorry  -- TODO: Complete proof (see Norms.lean for reference)
+  -- Every element of the result is bounded by corresponding elements
+  -- |v_i + w_i| ≤ |v_i| + |w_i| ≤ norm v + norm w
+  -- Therefore max |v_i + w_i| ≤ norm v + norm w
+  have hbound : ∀ z ∈ List.zipWith (· + ·) v w, Int.natAbs z ≤ norm v + norm w := by
+    intro z hz
+    -- z = v_i + w_i for some i. Use induction on the lists.
+    induction v generalizing w with
+    | nil => simp at hz
+    | cons a as ih =>
+      cases w with
+      | nil => simp at hz
+      | cons b bs =>
+        simp only [List.zipWith_cons_cons, List.mem_cons] at hz
+        cases hz with
+        | inl heq =>
+          rw [heq]
+          calc Int.natAbs (a + b)
+               ≤ Int.natAbs a + Int.natAbs b := Int.natAbs_add_le a b
+             _ ≤ norm (a :: as) + norm (b :: bs) := by
+                 apply Nat.add_le_add
+                 · exact norm_mem_le (a :: as) a (List.mem_cons_self a as)
+                 · exact norm_mem_le (b :: bs) b (List.mem_cons_self b bs)
+        | inr hmem =>
+          have hlen' : as.length = bs.length := by simp at hlen; exact hlen
+          have := ih bs hlen' hmem
+          calc Int.natAbs z
+               ≤ norm as + norm bs := this
+             _ ≤ norm (a :: as) + norm (b :: bs) := by
+                 apply Nat.add_le_add
+                 · exact norm_cons_ge as a
+                 · exact norm_cons_ge bs b
+  -- Now show norm of result ≤ this bound
+  unfold norm
+  induction (List.zipWith (· + ·) v w) with
+  | nil => exact Nat.zero_le _
+  | cons x xs ih =>
+    simp only [List.foldl]
+    have hx := hbound x (List.mem_cons_self x xs)
+    have hxs : ∀ z ∈ xs, Int.natAbs z ≤ norm v + norm w := by
+      intro z hz
+      exact hbound z (List.mem_cons_of_mem x hz)
+    -- foldl max (max 0 |x|) xs ≤ norm v + norm w
+    have h1 : max 0 (Int.natAbs x) ≤ norm v + norm w := by omega
+    exact foldl_max_le_bound xs (norm v + norm w) h1 hxs
+where
+  norm_cons_ge (l : List Int) (x : Int) : norm l ≤ norm (x :: l) := by
+    unfold norm
+    simp only [List.foldl]
+    exact foldl_max_mono l 0 (max 0 (Int.natAbs x)) (Nat.zero_le _)
+  foldl_max_mono (l : List Int) (a b : Nat) (hab : a ≤ b) :
+      l.foldl (fun acc x => max acc (Int.natAbs x)) a ≤ l.foldl (fun acc x => max acc (Int.natAbs x)) b := by
+    induction l generalizing a b with
+    | nil => exact hab
+    | cons x xs ih =>
+      simp only [List.foldl]
+      apply ih
+      omega
+  foldl_max_le_bound (l : List Int) (bound : Nat) (hinit : max 0 (0 : Nat) ≤ bound)
+      (helem : ∀ z ∈ l, Int.natAbs z ≤ bound) :
+      l.foldl (fun acc x => max acc (Int.natAbs x)) 0 ≤ bound := by
+    induction l with
+    | nil => simp; omega
+    | cons x xs ih =>
+      simp only [List.foldl]
+      have hx := helem x (List.mem_cons_self x xs)
+      have hxs : ∀ z ∈ xs, Int.natAbs z ≤ bound := fun z hz => helem z (List.mem_cons_of_mem x hz)
+      have hmax : max 0 (Int.natAbs x) ≤ bound := by omega
+      exact foldl_max_le_bound' xs bound hmax hxs
+  foldl_max_le_bound' (l : List Int) (bound : Nat) (hinit : (init : Nat) ≤ bound)
+      (helem : ∀ z ∈ l, Int.natAbs z ≤ bound) :
+      l.foldl (fun acc x => max acc (Int.natAbs x)) init ≤ bound := by
+    induction l generalizing init with
+    | nil => exact hinit
+    | cons x xs ih =>
+      simp only [List.foldl]
+      have hx := helem x (List.mem_cons_self x xs)
+      have hxs : ∀ z ∈ xs, Int.natAbs z ≤ bound := fun z hz => helem z (List.mem_cons_of_mem x hz)
+      have hmax : max init (Int.natAbs x) ≤ bound := Nat.max_le.mpr ⟨hinit, hx⟩
+      exact ih hmax hxs
 
-/-- Scaling bound: ‖c·v‖∞ ≤ |c| · ‖v‖∞ -/
+/-- Scaling bound: ‖c·v‖∞ ≤ |c| · ‖v‖∞.
+    Actually an equality: max |c * x_i| = |c| * max |x_i|. -/
 theorem norm_smul_le (c : Int) (v : List Int) :
     norm (v.map (c * ·)) ≤ Int.natAbs c * norm v := by
-  sorry  -- TODO: Complete proof (see Norms.lean for reference)
+  -- |c * x| = |c| * |x| for each element
+  -- max |c * x_i| = |c| * max |x_i| since |c| ≥ 0
+  unfold norm
+  induction v with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.map_cons, List.foldl]
+    have hmul : Int.natAbs (c * x) = Int.natAbs c * Int.natAbs x := Int.natAbs_mul c x
+    rw [hmul]
+    calc xs.map (c * ·) |>.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs c * Int.natAbs x))
+         ≤ max (Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0)
+               (Int.natAbs c * Int.natAbs x) := by
+           have hih : xs.map (c * ·) |>.foldl (fun acc a => max acc (Int.natAbs a)) 0
+                    ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0 := by
+             specialize ih
+             simp only [norm] at ih
+             exact ih
+           -- Use monotonicity of foldl
+           have hge : (max 0 (Int.natAbs c * Int.natAbs x))
+                    ≤ max (Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0)
+                          (Int.natAbs c * Int.natAbs x) := Nat.le_max_right _ _
+           have hfold := foldl_max_le_of_init_and_elem xs.map (c * ·)
+                           (max (Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0)
+                                (Int.natAbs c * Int.natAbs x))
+                           hge
+                           (by
+                             intro z hz
+                             simp only [List.mem_map] at hz
+                             obtain ⟨y, hy, rfl⟩ := hz
+                             rw [Int.natAbs_mul]
+                             calc Int.natAbs c * Int.natAbs y
+                                  ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0 := by
+                                    apply Nat.mul_le_mul_left
+                                    exact foldl_max_ge_elem xs y hy
+                                _ ≤ max _ _ := Nat.le_max_left _ _)
+           exact hfold
+       _ = Int.natAbs c * max (xs.foldl (fun acc a => max acc (Int.natAbs a)) 0) (Int.natAbs x) := by
+           rw [← Nat.mul_max_of_nonneg _ _ (Int.natAbs c) (Nat.zero_le _)]
+       _ = Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs x)) := by
+           congr 1
+           induction xs with
+           | nil => simp
+           | cons y ys ih2 =>
+             simp only [List.foldl] at *
+             rw [ih2]
+             congr 1
+             omega
+where
+  foldl_max_ge_elem (l : List Int) (x : Int) (hx : x ∈ l) :
+      Int.natAbs x ≤ l.foldl (fun acc a => max acc (Int.natAbs a)) 0 := by
+    induction l with
+    | nil => exact absurd hx (List.not_mem_nil x)
+    | cons y ys ih =>
+      simp only [List.foldl]
+      cases List.mem_cons.mp hx with
+      | inl heq =>
+        rw [heq]
+        calc Int.natAbs y ≤ max 0 (Int.natAbs y) := Nat.le_max_right 0 _
+           _ ≤ ys.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs y)) := by
+             induction ys generalizing y with
+             | nil => exact Nat.le_refl _
+             | cons z zs ih2 => simp only [List.foldl]; exact Nat.le_trans (Nat.le_max_left _ _) (ih2 z)
+      | inr hmem =>
+        have := ih hmem
+        calc Int.natAbs x ≤ ys.foldl (fun acc a => max acc (Int.natAbs a)) 0 := this
+           _ ≤ ys.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs y)) := by
+             induction ys with
+             | nil => exact Nat.zero_le _
+             | cons z zs ih2 =>
+               simp only [List.foldl]
+               calc zs.foldl _ (max 0 (Int.natAbs z))
+                    ≤ zs.foldl _ (max (max 0 (Int.natAbs y)) (Int.natAbs z)) := by
+                      induction zs with
+                      | nil => exact Nat.le_max_right _ _
+                      | cons w ws ih3 =>
+                        simp only [List.foldl] at *
+                        have := ih3
+                        calc ws.foldl _ (max _ _)
+                             ≤ ws.foldl _ (max (max (max 0 (Int.natAbs y)) (Int.natAbs z)) _) := by
+                               induction ws with
+                               | nil => omega
+                               | cons u us ih4 => simp only [List.foldl] at *; omega
+  foldl_max_le_of_init_and_elem (l : List Int) (bound : Nat) (hinit : init ≤ bound)
+      (helem : ∀ z ∈ l, Int.natAbs z ≤ bound) :
+      l.foldl (fun acc a => max acc (Int.natAbs a)) init ≤ bound := by
+    induction l generalizing init with
+    | nil => exact hinit
+    | cons x xs ih =>
+      simp only [List.foldl]
+      have hx := helem x (List.mem_cons_self x xs)
+      have hxs : ∀ z ∈ xs, Int.natAbs z ≤ bound := fun z hz => helem z (List.mem_cons_of_mem x hz)
+      exact ih (Nat.max_le.mpr ⟨hinit, hx⟩) hxs
 
 /-!
 ## Integration with ThresholdConfig
@@ -214,14 +401,14 @@ Operations that use ThresholdConfig for bounds.
 
 /-- Check that a partial signature passes local rejection.
     Returns the norm if it exceeds the bound. -/
-def checkLocalBound [NormBounded α] (cfg : ThresholdConfig) (x : α)
+def checkLocalBound {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α)
     : Except Nat Unit :=
   match NormOp.checkLocal cfg x with
   | .ok => .ok ()
   | .exceeded actual _ => .error actual
 
 /-- Check that an aggregate passes global bound. -/
-def checkGlobalBound [NormBounded α] (cfg : ThresholdConfig) (x : α)
+def checkGlobalBound {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α)
     : Except Nat Unit :=
   match NormOp.checkGlobal cfg x with
   | .ok => .ok ()
@@ -229,7 +416,7 @@ def checkGlobalBound [NormBounded α] (cfg : ThresholdConfig) (x : α)
 
 /-- Verify aggregate bound guarantee at runtime.
     Checks that sum of individual norms ≤ globalBound. -/
-def verifyAggregateBound [NormBounded α] (cfg : ThresholdConfig) (xs : List α)
+def verifyAggregateBound {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (xs : List α)
     : Bool :=
   let individualNorms := xs.map norm
   let sumBound := individualNorms.sum
@@ -242,23 +429,23 @@ Make norm checking decidable for use in if-then-else.
 -/
 
 /-- Decidable predicate for norm being within bound -/
-instance normWithinBound_decidable [NormBounded α] (bound : Nat) (x : α)
+instance normWithinBound_decidable {α : Type*} [NormBounded α] (bound : Nat) (x : α)
     : Decidable (norm x ≤ bound) :=
   Nat.decLe (norm x) bound
 
 /-- Decidable predicate for local bound check -/
-def localBoundOK [NormBounded α] (cfg : ThresholdConfig) (x : α) : Prop :=
+def localBoundOK {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α) : Prop :=
   norm x ≤ cfg.localBound
 
-instance [NormBounded α] (cfg : ThresholdConfig) (x : α)
+instance {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α)
     : Decidable (localBoundOK cfg x) :=
   Nat.decLe (norm x) cfg.localBound
 
 /-- Decidable predicate for global bound check -/
-def globalBoundOK [NormBounded α] (cfg : ThresholdConfig) (x : α) : Prop :=
+def globalBoundOK {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α) : Prop :=
   norm x ≤ cfg.globalBound
 
-instance [NormBounded α] (cfg : ThresholdConfig) (x : α)
+instance {α : Type*} [NormBounded α] (cfg : ThresholdConfig) (x : α)
     : Decidable (globalBoundOK cfg x) :=
   Nat.decLe (norm x) cfg.globalBound
 

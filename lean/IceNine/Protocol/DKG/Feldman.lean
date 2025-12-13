@@ -184,8 +184,7 @@ structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
 theorem generateShare_evalPoint (S : Scheme) [CommRing S.Scalar]
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     (p : SecretPoly S) (pid : S.PartyId) (pt : S.Scalar) :
-    (generateShare S p pid pt).evalPoint = pt := by
-  simp only [generateShare]
+    (generateShare S p pid pt).evalPoint = pt := rfl
 
 /-- Helper lemma: generateShares preserves eval points in order. -/
 theorem generateShares_evalPoints (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
@@ -196,10 +195,8 @@ theorem generateShares_evalPoints (S : Scheme) [CommRing S.Scalar] [DecidableEq 
   induction parties with
   | nil => rfl
   | cons hd tl ih =>
-    simp only [generateShares, List.map]
-    constructor
-    · rfl
-    · exact ih
+    simp only [generateShares, List.map_cons, List.map]
+    rw [ih]
 
 /-- Create VSS transcript from a polynomial and party list.
     Requires that party evaluation points are distinct. -/
