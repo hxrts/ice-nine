@@ -171,7 +171,10 @@ def dkgLagrangeCoeff {PartyId : Type*} {F : Type*} [Field F] [DecidableEq F] [De
     - pk = f(0) is the combined public key
 
     Then: pk = Σ_{i∈S} coeff_i · pk_i where S is any t-sized subset
-    and coeff_i are the Lagrange coefficients for evaluating at 0. -/
+    and coeff_i are the Lagrange coefficients for evaluating at 0.
+
+    Note: Uses explicit @SMul.smul to avoid instance diamond conflicts between
+    [Field S.Scalar] and S.publicModule. -/
 def reconstructPkFromSubset
     (S : Scheme) [Field S.Scalar] [DecidableEq S.Scalar] [DecidableEq S.PartyId]
     (pidToScalar : S.PartyId → S.Scalar)
@@ -179,7 +182,7 @@ def reconstructPkFromSubset
   let validPids := validReveals.map (·.sender)
   let weightedPks := validReveals.map fun r =>
     let coeff_i := dkgLagrangeCoeff pidToScalar validPids r.sender
-    coeff_i • r.pk_i
+    @SMul.smul _ _ S.publicModule.toSMul coeff_i r.pk_i
   weightedPks.sum
 
 /-- Full DKG with complaint handling and reconstruction from valid subset.

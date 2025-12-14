@@ -49,15 +49,7 @@ This can be overridden for different security requirements.
     - n = 7: t = 5 -/
 def defaultThreshold (n : Nat) : Nat := 2 * n / 3 + 1
 
-/-- Default threshold is at least 1 for any positive n. -/
-theorem defaultThreshold_pos (n : Nat) (hn : n > 0) : defaultThreshold n ≥ 1 := by
-  simp only [defaultThreshold]
-  omega
-
-/-- Default threshold never exceeds n (for n ≥ 1). -/
-theorem defaultThreshold_le (n : Nat) (hn : n ≥ 1) : defaultThreshold n ≤ n := by
-  simp only [defaultThreshold]
-  omega
+-- Proofs for defaultThreshold properties are in Proofs/Correctness/ThresholdConfig.lean
 
 /-!
 ## Threshold Configuration Structure
@@ -169,19 +161,7 @@ def ThresholdConfig.maxFaulty (cfg : ThresholdConfig) : Nat :=
 def ThresholdConfig.abortThreshold (cfg : ThresholdConfig) : Nat :=
   cfg.maxFaulty + 1
 
-/-- Abort threshold is always positive. -/
-theorem ThresholdConfig.abortThreshold_pos (cfg : ThresholdConfig) :
-    cfg.abortThreshold ≥ 1 := by
-  simp only [abortThreshold, maxFaulty]
-  omega
-
-/-- Abort threshold never exceeds total parties (when threshold is positive). -/
-theorem ThresholdConfig.abortThreshold_le (cfg : ThresholdConfig)
-    (h_pos : cfg.threshold ≥ 1) :
-    cfg.abortThreshold ≤ cfg.totalParties := by
-  simp only [abortThreshold, maxFaulty]
-  have h := cfg.threshold_le_total
-  omega
+-- Proofs for abortThreshold properties are in Proofs/Correctness/ThresholdConfig.lean
 
 /-- Whether the threshold provides strict majority (t > n/2) -/
 def ThresholdConfig.hasStrictMajority (cfg : ThresholdConfig) : Bool :=
@@ -281,45 +261,7 @@ def ThresholdConfig.dilithium5 (n : Nat) (hn : n > 0 := by omega) : ThresholdCon
     (h1 := by simp only [defaultThreshold]; omega)
     (h3 := Nat.div_mul_le_self _ _)
 
-/-!
-## Aggregate Bound Guarantee
-
-The fundamental theorem that enables local rejection:
-if each signer's share is within localBound, the aggregate is within globalBound.
--/
-
-/-- The aggregate bound guarantee: T shares within localBound sum to within globalBound.
-
-    This is the key theorem for local rejection correctness:
-    - Each signer produces z_i with ‖z_i‖∞ ≤ localBound
-    - Aggregate z = Σ z_i has ‖z‖∞ ≤ T · localBound ≤ globalBound
-
-    Proof: By triangle inequality for ℓ∞ norm and the config invariant. -/
-theorem aggregate_bound_guarantee (cfg : ThresholdConfig)
-    (shareBounds : List Nat)
-    (hlen : shareBounds.length ≤ cfg.maxSigners)
-    (hbounds : ∀ b ∈ shareBounds, b ≤ cfg.localBound) :
-    shareBounds.sum ≤ cfg.globalBound := by
-  calc shareBounds.sum
-      ≤ shareBounds.length * cfg.localBound := by
-        induction shareBounds with
-        | nil => simp
-        | cons x xs ih =>
-          simp only [List.sum_cons, List.length_cons]
-          have hx : x ≤ cfg.localBound := hbounds x (List.mem_cons.mpr (Or.inl rfl))
-          have hxs : ∀ b ∈ xs, b ≤ cfg.localBound := fun b hb =>
-            hbounds b (List.mem_cons.mpr (Or.inr hb))
-          have ih' := ih (by simp at hlen; omega) hxs
-          calc x + xs.sum
-              ≤ cfg.localBound + xs.length * cfg.localBound := by
-                apply Nat.add_le_add hx ih'
-            _ = (xs.length + 1) * cfg.localBound := by ring
-            _ = (x :: xs).length * cfg.localBound := by simp
-    _ ≤ cfg.maxSigners * cfg.localBound := by
-        apply Nat.mul_le_mul_right
-        exact hlen
-    _ = cfg.localBound * cfg.maxSigners := by ring
-    _ ≤ cfg.globalBound := cfg.local_global_bound
+-- Aggregate bound guarantee proof is in Proofs/Correctness/ThresholdConfig.lean
 
 /-!
 ## Pretty Printing

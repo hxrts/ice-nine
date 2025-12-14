@@ -507,6 +507,9 @@ def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Deci
     sum_zero := hsum
     }
 
+-- NOTE: Public versions of these proof helpers are in Proofs/Extensions/RefreshCoord.lean
+-- These private versions are kept here to avoid Protocol importing from Proofs.
+
 /-- Helper: prove mask function equals computed masks. -/
 private theorem makeMaskFn_eq_finalMasks_aux (S : Scheme)
     [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]

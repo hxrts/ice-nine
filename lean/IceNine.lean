@@ -49,11 +49,13 @@ import IceNine.Proofs.Core.Assumptions
 import IceNine.Proofs.Core.ListLemmas
 import IceNine.Proofs.Core.HighBits
 import IceNine.Proofs.Core.MsgMapLemmas
+import IceNine.Proofs.Core.NormProperties
 -- Proofs/Correctness
 import IceNine.Proofs.Correctness.Correctness
 import IceNine.Proofs.Correctness.Lagrange
 import IceNine.Proofs.Correctness.DKG
 import IceNine.Proofs.Correctness.Sign
+import IceNine.Proofs.Correctness.ThresholdConfig
 -- Proofs/Soundness
 import IceNine.Proofs.Soundness.Soundness
 import IceNine.Proofs.Soundness.Robustness
@@ -64,3 +66,4 @@ import IceNine.Proofs.Extensions.Phase
 import IceNine.Proofs.Extensions.Coordination
 import IceNine.Proofs.Extensions.Repair
 import IceNine.Proofs.Extensions.RefreshRepair
+import IceNine.Proofs.Extensions.RefreshCoord

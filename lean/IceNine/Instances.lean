@@ -102,8 +102,6 @@ Norm bounds for lattice security are provided via the NormBounded typeclass.
 This replaces the old `normOK` predicate on Scheme.
 -/
 
-open IceNine.Protocol.NormBounded
-
 /-- Compute ℓ∞ norm of an integer vector (max absolute value), as a Nat. -/
 def intVecInfNorm {n : Nat} (v : Fin n → Int) : Nat :=
   Finset.univ.sup (fun i => Int.natAbs (v i))
@@ -130,7 +128,7 @@ lemma intVecInfLeq_of_coeff_bound {n : Nat} {B : Nat} (v : Fin n → Int)
 
 /-- The norm function matches intVecInfNorm. -/
 theorem norm_eq_intVecInfNorm {n : Nat} (v : Fin n → Int) :
-    norm v = intVecInfNorm v := rfl
+    NormBounded.norm v = intVecInfNorm v := rfl
 
 /-!
 ## Concrete lattice-friendly scheme
@@ -186,7 +184,7 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
   , Public    := Fin p.n → Int
   , Challenge := Int
   , Scalar    := Int
-  , scalarSemiring := inferInstance
+  , scalarCommRing := inferInstance
   , secretAdd := inferInstance
   , publicAdd := inferInstance
   , secretModule := inferInstance

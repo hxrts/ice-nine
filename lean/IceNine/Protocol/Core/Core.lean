@@ -91,8 +91,9 @@ structure Scheme where
   -- Scalar ring for module operations
   Scalar    : Type u
 
-  -- Algebraic structure: scalars form a semiring
-  [scalarSemiring : Semiring Scalar]
+  -- Algebraic structure: scalars form a commutative ring
+  -- (CommRing required for PolynomialModule operations in VSS)
+  [scalarCommRing : CommRing Scalar]
   -- Secrets form an additive group (for share combination)
   [secretAdd    : AddCommGroup Secret]
   -- Public values form an additive group (for key aggregation)
@@ -282,7 +283,7 @@ structure Scheme where
   deriveIdentifier : ByteArray → Option PartyId := fun _ => none
 
 
-attribute [instance] Scheme.scalarSemiring Scheme.secretAdd Scheme.publicAdd
+attribute [instance] Scheme.scalarCommRing Scheme.secretAdd Scheme.publicAdd
 
 /-!
 ## Standard Constraint Aliases
@@ -496,6 +497,8 @@ using domain-separated hashing. This is FROST's HID function.
     should reject zero values (which could cause issues in Lagrange interpolation). -/
 def Scheme.deriveId (S : Scheme) (data : ByteArray) : Option S.PartyId :=
   S.deriveIdentifier data
+attribute [instance] Scheme.scalarCommRing
+attribute [instance] Scheme.secretAdd Scheme.publicAdd
 attribute [instance] Scheme.secretModule Scheme.publicModule
 attribute [instance] Scheme.challengeSMulSecret Scheme.challengeSMulPublic
 

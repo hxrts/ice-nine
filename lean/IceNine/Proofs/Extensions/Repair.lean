@@ -300,8 +300,12 @@ determine the polynomial. Lagrange coefficients λ_j weight the shares.
 -/
 
 /-- Lagrange reconstruction setup: coefficients that sum shares to target.
-    The key algebraic constraint for polynomial secret sharing. -/
-structure LagrangeReconstruction (S : Scheme) [Field S.Scalar] where
+    The key algebraic constraint for polynomial secret sharing.
+
+    Note: We avoid taking `[Field S.Scalar]` as a typeclass parameter to prevent
+    instance diamond conflicts with `S.secretModule`. Instead, we use the Scheme's
+    CommRing and Module instances directly. -/
+structure LagrangeReconstruction (S : Scheme) where
   /-- Party whose share we're reconstructing -/
   targetPid    : S.PartyId
   /-- Parties providing helper shares -/
@@ -310,18 +314,17 @@ structure LagrangeReconstruction (S : Scheme) [Field S.Scalar] where
   pidToScalar  : S.PartyId → S.Scalar
   /-- Lagrange coefficients: λ_j for each helper j -/
   coefficients : S.PartyId → S.Scalar
-  /-- Lagrange property: Σ λ_j·share_j = target_share -/
+  /-- Lagrange property: Σ λ_j·share_j = target_share
+      Uses the Scheme's Module instance via @SMul.smul to avoid instance ambiguity. -/
   lagrange_property :
     ∀ (shares : S.PartyId → S.Secret),
-      (helperPids.map (fun j => coefficients j • shares j)).sum
+      (helperPids.map (fun j => @SMul.smul _ _ S.secretModule.toSMul (coefficients j) (shares j))).sum
         = shares targetPid
 
 /-- Main Lagrange theorem: valid coefficients → correct repair.
-    Follows directly from the Lagrange property.
-    Note: we explicitly select `S.scalarSemiring`/`S.secretModule` to avoid instance
-    ambiguity when a separate `[Field S.Scalar]` is also in scope. -/
+    Follows directly from the Lagrange property. -/
 theorem lagrange_repair_correct
-  (S : Scheme) [Field S.Scalar] [DecidableEq S.PartyId]
+  (S : Scheme) [DecidableEq S.PartyId]
   (recon : LagrangeReconstruction S)
   (helperShares : S.PartyId → KeyShare S)
   (_hshares : ∀ j ∈ recon.helperPids, (helperShares j).pid = j) :
@@ -329,9 +332,6 @@ theorem lagrange_repair_correct
     helperContribution S (helperShares j) recon.targetPid (recon.coefficients j))
   repairShare S msgs = (fun pid => (helperShares pid).secret) recon.targetPid := by
   classical
-  -- Coherence: use the scheme's scalar structure so the scheme's Module instance applies.
-  letI : Semiring S.Scalar := S.scalarSemiring
-  letI : Module S.Scalar S.Secret := S.secretModule
   let shares : S.PartyId → S.Secret := fun pid => (helperShares pid).secret
   -- Apply the abstract Lagrange reconstruction property to the concrete shares.
   -- The goal's `msgs`-binding is definitional and will be unfolded by `simpa`.

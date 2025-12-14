@@ -383,7 +383,7 @@ Extensions to DilithiumParams for local rejection sampling configuration.
 def DilithiumParams.toThresholdConfig (p : DilithiumParams) (n : Nat)
     (hn : n > 0 := by omega) : ThresholdConfig :=
   let globalBound := p.zBound.natAbs  -- Convert Int to Nat (always positive for valid params)
-  ThresholdConfig.mk n globalBound
+  ThresholdConfig.create n globalBound
 
 /-- Get the local rejection bound for a given number of signers.
     This is the per-signer bound B_local such that T · B_local ≤ B_global. -/
@@ -413,7 +413,8 @@ theorem local_bounds_sum_le_global (p : DilithiumParams) (maxSigners : Nat)
     (hpos : maxSigners > 0) :
     maxSigners * p.localBound maxSigners ≤ p.zBound.natAbs := by
   simp only [DilithiumParams.localBound]
-  exact Nat.div_mul_le_self _ _
+  rw [Nat.mul_comm]
+  exact Nat.div_mul_le_self p.zBound.natAbs maxSigners
 
 /-- Each signer's contribution within local bound ensures aggregate within global bound. -/
 theorem aggregate_within_global_bound (p : DilithiumParams) (maxSigners : Nat)
@@ -428,7 +429,7 @@ theorem aggregate_within_global_bound (p : DilithiumParams) (maxSigners : Nat)
         | nil => simp
         | cons x xs ih =>
           simp only [List.sum_cons, List.length_cons]
-          have hx := hbounds x (List.mem_cons_self x xs)
+          have hx := hbounds x (by simp)
           have hxs : ∀ c ∈ xs, c ≤ p.localBound maxSigners := fun c hc =>
             hbounds c (List.mem_cons_of_mem x hc)
           have ih' := ih (by simp at hlen; omega) hxs

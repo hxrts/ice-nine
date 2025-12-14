@@ -36,12 +36,12 @@ open Polynomial Lagrange Finset
 /-!
 ## List Index Lookup
 
-We use Mathlib's `List.idxOf` (the preferred name over deprecated `indexOf`)
-for finding element indices in lists. Key lemmas from Mathlib:
-- `idxOf_lt_length_iff`: idxOf a l < l.length ↔ a ∈ l
-- `getElem_idxOf`: l[idxOf a l] = a when a ∈ l
-- `idxOf_cons_eq`: idxOf a (a :: l) = 0
-- `idxOf_cons_ne`: idxOf b (a :: l) = idxOf b l + 1 when a ≠ b
+We use Mathlib's `List.indexOf` for finding element indices in lists.
+Key lemmas from Mathlib:
+- `indexOf_lt_length_iff`: indexOf a l < l.length ↔ a ∈ l
+- `getElem_indexOf`: l[indexOf a l] = a when a ∈ l
+- `indexOf_cons_self`: indexOf a (a :: l) = 0
+- `indexOf_cons_ne`: indexOf b (a :: l) = indexOf b l + 1 when a ≠ b
 -/
 
 variable {α : Type*}
@@ -193,7 +193,7 @@ lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
     (hlen : partyScalars.length = values.length) :
     (List.zipWith (fun p v => f p * v) partyScalars values).sum =
     partyScalars.toFinset.sum (fun x =>
-      f x * (values.getD (partyScalars.idxOf x) 0)) := by
+      f x * (values.getD (partyScalars.indexOf x) 0)) := by
   induction partyScalars generalizing values with
   | nil => simp
   | cons p ps ih =>
@@ -217,7 +217,7 @@ lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
       simp only [Finset.sum_singleton]
       congr 1
       · -- The p term: idxOf p in (p::ps) = 0, so getD 0 = v
-        simp only [List.idxOf_cons_eq, List.getD_cons_zero]
+        simp only [List.indexOf_cons_self, List.getD_cons_zero]
       · -- The ps terms: idxOf x in (p::ps) = idxOf x ps + 1
         apply Finset.sum_congr rfl
         intro x hx
@@ -225,7 +225,8 @@ lemma zipWith_mul_sum_eq_finset_sum {F : Type*} [Field F] [DecidableEq F]
           intro heq
           rw [heq] at hnotmem
           exact hnotmem (List.mem_toFinset.mp hx)
-        simp only [List.idxOf_cons_ne hxne, List.getD_cons_succ]
+        rw [List.indexOf_cons_ne hxne.symm]
+        simp only [List.getD_cons_succ]
 
 /-- Lagrange interpolation: the weighted sum of values equals the polynomial
     evaluated at 0, where weights are Lagrange coefficients.
@@ -252,7 +253,7 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
     let coeffs := partyScalars.map fun p => coeffAtZero p partyScalars
     let s := partyScalars.toFinset
     let r : F → F := fun x =>
-      if x ∈ partyScalars then values.getD (partyScalars.idxOf x) 0 else 0
+      if x ∈ partyScalars then values.getD (partyScalars.indexOf x) 0 else 0
     (List.zipWith (· * ·) coeffs values).sum = eval 0 (Lagrange.interpolate s id r) := by
   intro coeffs s r
   have _hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
@@ -283,7 +284,7 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
   -- For x ∈ s, show: coeffAtZero x * getD (idxOf x) = r x * basis eval
   have hxmem : x ∈ partyScalars := List.mem_toFinset.mp hx
   -- r x = values.getD (idxOf x) 0 for x ∈ partyScalars
-  have hr : r x = values.getD (partyScalars.idxOf x) 0 := by
+  have hr : r x = values.getD (partyScalars.indexOf x) 0 := by
     simp only [r, hxmem, ↓reduceIte]
   rw [hr, hcoeff_eq x hx]
   ring
