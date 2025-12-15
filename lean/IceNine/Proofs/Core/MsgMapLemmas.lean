@@ -83,9 +83,9 @@ theorem HashMap.mem_iff_getElem?_some {K V : Type*} [BEq K] [Hashable K] [EquivB
       rwa [← HashMap.contains_eq_isSome_getElem?, HashMap.contains_iff_mem]
     exact Option.isSome_iff_exists.mp hisSome
   · intro ⟨v, hv⟩
-    rw [HashMap.contains_iff_mem]
     have hisSome : m[k]?.isSome = true := by simp [hv]
-    rwa [HashMap.contains_eq_isSome_getElem?]
+    rw [← HashMap.contains_eq_isSome_getElem?] at hisSome
+    exact HashMap.contains_iff_mem.mp hisSome
 
 /-!
 ## HashMap Insert Lemmas
@@ -127,14 +127,14 @@ Lemmas connecting toList membership to HashMap operations.
 
 /-- toList membership ↔ getElem? = some -/
 theorem HashMap.mem_toList_iff_getElem?_some {K V : Type*}
-    [BEq K] [Hashable K] [EquivBEq K] [LawfulHashable K]
+    [BEq K] [Hashable K] [EquivBEq K] [LawfulHashable K] [LawfulBEq K]
     (m : HashMap K V) (k : K) (v : V) :
     (k, v) ∈ m.toList ↔ m[k]? = some v :=
   HashMap.mem_toList_iff_getElem?_eq_some
 
 /-- Key in toList.map Prod.fst ↔ key in map -/
 theorem HashMap.mem_toList_keys_iff_mem {K V : Type*}
-    [BEq K] [Hashable K] [EquivBEq K] [LawfulHashable K]
+    [BEq K] [Hashable K] [EquivBEq K] [LawfulHashable K] [LawfulBEq K]
     (m : HashMap K V) (k : K) :
     k ∈ m.toList.map Prod.fst ↔ k ∈ m := by
   constructor
@@ -172,14 +172,15 @@ theorem HashMap.fold_noop_eq_init {K V : Type*}
     (hall : ∀ kv ∈ m.toList, init.contains kv.1 = true) :
     m.fold (fun acc k v => if acc.contains k then acc else acc.insert k v) init = init := by
   rw [HashMap.fold_eq_foldl_toList]
-  generalize hl : m.toList = l at hall
-  induction l generalizing init with
+  induction m.toList with
   | nil => simp
   | cons kv tl ih =>
     simp only [List.foldl_cons]
     have hkv : init.contains kv.1 = true := hall kv (List.mem_cons_self kv tl)
     simp only [hkv, ↓reduceIte]
-    exact ih init (fun x hx => hall x (List.mem_cons_of_mem kv hx))
+    apply ih
+    intro x hx
+    exact hall x (List.mem_cons_of_mem _ hx)
 
 /-!
 ## MsgMap Membership Lemmas
@@ -190,6 +191,7 @@ Lemmas connecting MsgMap operations to sender set membership.
 /-- MsgMap.senders membership ↔ MsgMap.map contains -/
 theorem MsgMap.mem_senders_iff_contains {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [LawfulBEq S.PartyId]
     (m : MsgMap S M) (k : S.PartyId) :
     k ∈ m.senders ↔ m.map.contains k = true := by
   simp only [MsgMap.senders]
@@ -258,7 +260,8 @@ theorem MsgMap.insert_monotone {S : Scheme} {M : Type*}
         rw [← heq]
         exact hbSender
       | false =>
-        simp only [h, Bool.false_or] at hk
+        rw [h] at hk
+        simp only [Bool.false_or] at hk
         exact hab k hk
   · rw [if_neg hbSender]
     by_cases haSender : a.map.contains sender = true
@@ -269,7 +272,8 @@ theorem MsgMap.insert_monotone {S : Scheme} {M : Type*}
       cases h : (sender == k) with
       | true => simp [h]
       | false =>
-        simp only [h, Bool.false_or] at hk ⊢
+        rw [h] at hk
+        simp only [Bool.false_or] at hk ⊢
         exact hab k hk
 
 /-!
@@ -298,8 +302,7 @@ theorem MsgMap.size_empty {S : Scheme} {M : Type*}
 theorem MsgMap.senders_empty {S : Scheme} {M : Type*}
     [BEq S.PartyId] [Hashable S.PartyId] :
     (MsgMap.empty : MsgMap S M).senders = [] := by
-  simp only [MsgMap.senders, MsgMap.empty]
-  native_decide
+  simp [MsgMap.senders, MsgMap.empty]
 
 /-- MsgMap.senders.toFinset of empty is empty finset (set-level statement) -/
 theorem MsgMap.senders_toFinset_empty {S : Scheme} {M : Type*}
@@ -318,8 +321,8 @@ theorem MsgMap.get?_some_implies_contains {S : Scheme} {M : Type*}
     (hget : m.get? k = some v) :
     m.contains k = true := by
   simp only [MsgMap.get?, MsgMap.contains] at hget ⊢
-  rw [HashMap.contains_eq_isSome_getElem?, hget]
-  rfl
+  rw [HashMap.contains_eq_isSome_getElem?]
+  simp [hget]
 
 /-- MsgMap.contains true implies get? is some -/
 theorem MsgMap.contains_implies_get?_some {S : Scheme} {M : Type*}

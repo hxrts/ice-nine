@@ -79,7 +79,7 @@ private theorem foldl_max_le_bound' (l : List Int) (bound : Nat) (init : Nat)
   | nil => exact hinit
   | cons x xs ih =>
     simp only [List.foldl]
-    have hx := helem x (List.mem_cons_self x xs)
+    have hx := helem x List.mem_cons_self
     have hxs : ∀ z ∈ xs, Int.natAbs z ≤ bound := fun z hz => helem z (List.mem_cons_of_mem x hz)
     have hmax : max init (Int.natAbs x) ≤ bound := Nat.max_le.mpr ⟨hinit, hx⟩
     exact ih (max init (Int.natAbs x)) hmax hxs
@@ -101,25 +101,19 @@ theorem norm_add_le (v w : List Int) (hlen : v.length = w.length) :
         rcases hz with heq | hmem
         · rw [heq]
           have h1 : Int.natAbs (a + b) ≤ Int.natAbs a + Int.natAbs b := Int.natAbs_add_le a b
-          have h2 : Int.natAbs a ≤ infNorm (a :: as) := norm_mem_le (a :: as) a (List.mem_cons_self a as)
-          have h3 : Int.natAbs b ≤ infNorm (b :: bs) := norm_mem_le (b :: bs) b (List.mem_cons_self b bs)
+          have h2 : Int.natAbs a ≤ infNorm (a :: as) := norm_mem_le (a :: as) a List.mem_cons_self
+          have h3 : Int.natAbs b ≤ infNorm (b :: bs) := norm_mem_le (b :: bs) b List.mem_cons_self
           omega
         · have hlen' : as.length = bs.length := by simp at hlen; exact hlen
           have h1 := ih bs hlen' hmem
           have h2 : infNorm as ≤ infNorm (a :: as) := norm_cons_ge as a
           have h3 : infNorm bs ≤ infNorm (b :: bs) := norm_cons_ge bs b
           omega
-  -- Now show norm of result ≤ this bound
+  -- Now show norm of result ≤ this bound using the fold bound lemma
   unfold infNorm NormBounded.norm
-  induction (List.zipWith (· + ·) v w) with
-  | nil => exact Nat.zero_le _
-  | cons x xs _ih =>
-    have hx := hbound x (List.mem_cons_self x xs)
-    have hxs : ∀ z ∈ xs, Int.natAbs z ≤ infNorm v + infNorm w := by
-      intro z hz
-      exact hbound z (List.mem_cons_of_mem x hz)
-    have h1 : max 0 (Int.natAbs x) ≤ infNorm v + infNorm w := by omega
-    exact foldl_max_le_bound' xs (infNorm v + infNorm w) (max 0 (Int.natAbs x)) h1 hxs
+  have hinit : (0 : Nat) ≤ infNorm v + infNorm w := Nat.zero_le _
+  exact foldl_max_le_bound' (l := List.zipWith (· + ·) v w)
+      (bound := infNorm v + infNorm w) (init := 0) hinit hbound
 
 /-!
 ## Scaling Property
@@ -129,41 +123,24 @@ theorem norm_add_le (v w : List Int) (hlen : v.length = w.length) :
     Actually an equality: max |c * x_i| = |c| * max |x_i|. -/
 theorem norm_smul_le (c : Int) (v : List Int) :
     infNorm (v.map (c * ·)) ≤ Int.natAbs c * infNorm v := by
-  -- Use induction and the fact that |c * x| = |c| * |x|
+  -- Bound every coefficient of the scaled list by |c| * ‖v‖∞, then apply `foldl_max_le_bound'`.
   unfold infNorm NormBounded.norm
-  induction v with
-  | nil => simp
-  | cons x xs ih =>
-    simp only [List.map_cons, List.foldl, Int.natAbs_mul]
-    -- The result follows from: foldl on mapped list ≤ c * foldl on original
-    -- This requires showing that multiplying by |c| distributes over max
-    calc (xs.map (c * ·)).foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs c * Int.natAbs x))
-         ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs x)) := by
-           -- Use foldl_max_le_bound' with bound = c * foldl xs
-           have hbound := Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs x))
-           -- Show init ≤ bound
-           have hinit : max 0 (Int.natAbs c * Int.natAbs x) ≤ hbound := by
-             calc max 0 (Int.natAbs c * Int.natAbs x)
-                  ≤ Int.natAbs c * Int.natAbs x := Nat.le_max_right 0 _
-                _ ≤ Int.natAbs c * max 0 (Int.natAbs x) := by
-                    apply Nat.mul_le_mul_left
-                    exact Nat.le_max_right 0 _
-                _ ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs x)) := by
-                    apply Nat.mul_le_mul_left
-                    exact foldl_max_ge_init xs _
-           -- Show each element ≤ bound
-           have helem : ∀ z ∈ xs.map (c * ·), Int.natAbs z ≤ hbound := by
-             intro z hz
-             simp only [List.mem_map] at hz
-             obtain ⟨y, hy, rfl⟩ := hz
-             rw [Int.natAbs_mul]
-             calc Int.natAbs c * Int.natAbs y
-                  ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) 0 := by
-                    apply Nat.mul_le_mul_left
-                    exact norm_mem_le xs y hy
-                _ ≤ Int.natAbs c * xs.foldl (fun acc a => max acc (Int.natAbs a)) (max 0 (Int.natAbs x)) := by
-                    apply Nat.mul_le_mul_left
-                    exact foldl_max_mono xs 0 (max 0 (Int.natAbs x)) (Nat.zero_le _)
-           exact foldl_max_le_bound' _ hbound _ hinit helem
+  let base := v.foldl (fun acc x => max acc (Int.natAbs x)) 0
+  have hbase : base = v.foldl (fun acc x => max acc (Int.natAbs x)) 0 := rfl
+  -- Every element of the scaled list is within the bound
+  have helem : ∀ z ∈ v.map (c * ·), Int.natAbs z ≤ Int.natAbs c * base := by
+    intro z hz
+    rcases List.mem_map.mp hz with ⟨x, hx, rfl⟩
+    have hx_le : Int.natAbs x ≤ base := by
+      -- reuse `norm_mem_le` on the original list
+      simpa [infNorm, NormBounded.norm, hbase] using (norm_mem_le v x hx)
+    calc
+      Int.natAbs (c * x) = Int.natAbs c * Int.natAbs x := Int.natAbs_mul _ _
+      _ ≤ Int.natAbs c * base := Nat.mul_le_mul_left _ hx_le
+  -- Apply fold bound with init = 0
+  have hinit : (0 : Nat) ≤ Int.natAbs c * base := Nat.zero_le _
+  have h := foldl_max_le_bound' (l := v.map (c * ·))
+      (bound := Int.natAbs c * base) (init := 0) hinit helem
+  simpa [infNorm, NormBounded.norm, hbase] using h
 
 end IceNine.Proofs.Core.NormProperties

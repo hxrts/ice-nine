@@ -25,6 +25,9 @@ let cfg := ThresholdConfig.mk 7 131072 (t := 5)
 
 import Mathlib
 
+-- Avoid linter noise for names that match the enclosing namespace.
+set_option linter.dupNamespace false
+
 set_option autoImplicit false
 
 namespace IceNine.Protocol.ThresholdConfig

@@ -59,9 +59,6 @@ namespace IceNine.Protocol
 
 open List
 
--- Re-export from Security and Patterns for backward compatibility
--- Users importing Core get access to these types automatically
-
 universe u
 
 /-!

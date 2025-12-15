@@ -26,6 +26,9 @@ Following `NonceLifecycle.lean`, we provide:
 import IceNine.Protocol.Core.ThresholdConfig
 import Mathlib
 
+-- Suppress duplication warnings (namespace `NormBounded` contains the class `NormBounded`).
+set_option linter.dupNamespace false
+
 set_option autoImplicit false
 
 namespace IceNine.Protocol.NormBounded
@@ -151,7 +154,7 @@ instance : NormBounded (List Int) where
     ‖v‖∞ = max_{i} |v(i)| -/
 instance {n : Nat} : NormBounded (Fin n → Int) where
   norm v :=
-    if h : n = 0 then 0
+    if _h : n = 0 then 0
     else Finset.univ.sup (fun i => Int.natAbs (v i))
 
 /-- NormBounded instance for single Int.

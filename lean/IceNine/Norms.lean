@@ -383,7 +383,16 @@ Extensions to DilithiumParams for local rejection sampling configuration.
 def DilithiumParams.toThresholdConfig (p : DilithiumParams) (n : Nat)
     (hn : n > 0 := by omega) : ThresholdConfig :=
   let globalBound := p.zBound.natAbs  -- Convert Int to Nat (always positive for valid params)
+  -- Use a conservative configuration: threshold = maxSigners = n.
+  -- This avoids non-linear arithmetic obligations in the smart constructor.
   ThresholdConfig.create n globalBound
+    (t := n)
+    (maxSigners := n)
+    (h1 := by exact Nat.le_refl _)
+    (h2 := by exact Nat.le_refl _)
+    (h3 := by
+      -- (globalBound / n) * n ≤ globalBound always holds; rely on built lemma.
+      simpa using Nat.div_mul_le_self globalBound n)
 
 /-- Get the local rejection bound for a given number of signers.
     This is the per-signer bound B_local such that T · B_local ≤ B_global. -/

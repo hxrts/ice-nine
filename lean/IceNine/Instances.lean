@@ -23,6 +23,7 @@ import IceNine.Protocol.Core.NormBounded
 namespace IceNine.Instances
 
 open IceNine.Protocol
+open IceNine.Protocol.NormBounded
 
 /-!
 ## Hash-based commitment
@@ -140,7 +141,7 @@ instance {n : Nat} : ToString (Fin n → Int) where
 
 /-- ToString instance for ByteArray (for hash serialization). -/
 instance : ToString ByteArray where
-  toString b := String.intercalate "" (b.toList.map fun byte => String.mk [Char.ofNat byte.toNat])
+  toString b := String.intercalate "" (b.toList.map fun byte => String.ofList [Char.ofNat byte.toNat])
 
 structure LatticeParams where
   n : Nat := 256          -- dimension
@@ -149,10 +150,10 @@ structure LatticeParams where
   deriving Repr
 
 /-- Binding assumption for hash-based commitments: collision resistance of the digest. -/
-structure HashBinding : Prop :=
-  (binding :
+structure HashBinding : Prop where
+  binding :
     ∀ {P N} [ToString P] [ToString N] (x1 x2 : P) (o1 o2 : N),
-      hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) → x1 = x2)
+      hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) → x1 = x2
 
 /-- Axiomatically assume digest binding; replace with a proven instance when available. -/
 axiom hashBindingAssumption : HashBinding
