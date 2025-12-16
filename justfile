@@ -185,8 +185,21 @@ clean-book:
 # Deployment (requires DEPLOY_SERVER and DEPLOY_PATH in .env)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Clear stale SSH connections (runs before server commands)
+# Fixes "No route to host" errors caused by stale ControlMaster sockets
+_ssh-reset:
+    #!/usr/bin/env bash
+    # Extract host from DEPLOY_SERVER (handles user@host format)
+    HOST="${DEPLOY_SERVER#*@}"
+    # Kill any stale SSH ControlMaster processes for this host
+    pkill -f "ssh.*${HOST}.*ControlMaster" 2>/dev/null || true
+    # Remove stale control sockets (common locations)
+    rm -f ~/.ssh/sockets/*${HOST}* 2>/dev/null || true
+    rm -f ~/.ssh/controlmasters/*${HOST}* 2>/dev/null || true
+    rm -f /tmp/ssh-*/*${HOST}* 2>/dev/null || true
+
 # Sync project to NixOS server
-deploy-sync:
+deploy-sync: _ssh-reset
     @echo "Syncing to $DEPLOY_SERVER:$DEPLOY_PATH..."
     rsync -avz --delete \
         --exclude '.git' \
@@ -198,14 +211,14 @@ deploy-sync:
     @echo "✓ Synced to server"
 
 # Download Mathlib cache on remote server
-deploy-cache:
+deploy-cache: _ssh-reset
     @echo "Downloading Mathlib cache on $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command lake exe cache get"
     @echo "✓ Mathlib cache downloaded on server"
 
 # Build Lean on remote server (downloads cache first)
 # Uses lockfile to prevent concurrent builds
-deploy-lean:
+deploy-lean: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     LOCKFILE="/tmp/ice-nine-build.lock"
@@ -228,7 +241,7 @@ deploy-lean:
     echo "✓ Lean built on server"
 
 # Force-kill any running build on server
-deploy-kill:
+deploy-kill: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     LOCKFILE="/tmp/ice-nine-build.lock"
@@ -255,13 +268,13 @@ deploy-kill:
     echo "✓ Builds killed"
 
 # Build Rust on remote server
-deploy-build:
+deploy-build: _ssh-reset
     @echo "Building Rust on $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command cargo build --release"
     @echo "✓ Rust built on server"
 
 # Run tests on remote server
-deploy-test:
+deploy-test: _ssh-reset
     @echo "Testing on $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command cargo test"
 
@@ -270,18 +283,18 @@ deploy: deploy-sync deploy-lean deploy-build
     @echo "✓ Deployment complete"
 
 # SSH into server at project directory
-ssh:
+ssh: _ssh-reset
     ssh -t $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop"
 
 # Check server status
-deploy-status:
+deploy-status: _ssh-reset
     @echo "Checking $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH 2>/dev/null && echo '✓ Project exists' || echo '✗ Project not found'"
     ssh $DEPLOY_SERVER "which nix && nix --version"
 
 # Pin development shell to GC root (prevents garbage collection of dependencies)
 # Uses TMPDIR on large volume to avoid filling root during builds
-deploy-pin:
+deploy-pin: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Pinning development shell on $DEPLOY_SERVER..."
@@ -308,7 +321,7 @@ deploy-pin:
     echo "✓ Development shell pinned to GC root"
 
 # Free up disk space on server (preserves pinned dependencies)
-deploy-gc:
+deploy-gc: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Freeing up space on $DEPLOY_SERVER..."
@@ -325,12 +338,12 @@ deploy-gc:
     echo "✓ Garbage collection complete"
 
 # Show disk usage on server
-deploy-df:
+deploy-df: _ssh-reset
     @echo "Disk usage on $DEPLOY_SERVER:"
     ssh $DEPLOY_SERVER "df -h / /nix/store /mnt/data 2>/dev/null || df -h"
 
 # Show what's pinned (GC roots)
-deploy-roots:
+deploy-roots: _ssh-reset
     @echo "GC roots on $DEPLOY_SERVER:"
     ssh $DEPLOY_SERVER "ls -la /nix/var/nix/gcroots/per-user/root/ 2>/dev/null || echo 'No per-user roots'"
     @echo ""
@@ -345,7 +358,7 @@ deploy-init: deploy-sync deploy-pin deploy-cache-pin
 
 # Pin Mathlib cache to persistent location (survives rm -rf .lake)
 # Moves .lake/packages to /mnt/data/lake-packages and symlinks it back
-deploy-cache-pin:
+deploy-cache-pin: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Pinning Lake packages cache on $DEPLOY_SERVER..."
@@ -379,13 +392,13 @@ deploy-cache-pin:
     echo "✓ Lake packages pinned to /mnt/data/lake-packages"
 
 # Clean stale IceNine build artifacts (preserves Mathlib cache)
-deploy-clean:
+deploy-clean: _ssh-reset
     @echo "Cleaning IceNine build artifacts on $DEPLOY_SERVER..."
     ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && rm -rf .lake/build/lib/lean/IceNine* .lake/build/ir/IceNine* .lake/build/lib/*.olean .lake/build/lib/*.ilean 2>/dev/null || true"
     @echo "✓ IceNine artifacts cleaned (Mathlib cache preserved)"
 
 # Full clean: remove all .lake except packages symlink
-deploy-clean-full:
+deploy-clean-full: _ssh-reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Full clean on $DEPLOY_SERVER (preserving packages cache)..."

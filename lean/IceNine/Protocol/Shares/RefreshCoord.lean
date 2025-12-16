@@ -503,7 +503,7 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
     the proof from `hmasks` and `hzero`. -/
 def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S) (maskFn : MaskFn S)
-    (hsum : ∑ pid in st.parties.toFinset, maskFn.mask pid = 0)
+    (hsum : st.parties.toFinset.sum (fun pid => maskFn.mask pid) = 0)
     : ZeroSumMaskFn S (List.toFinset st.parties) :=
   { fn := maskFn
     sum_zero := hsum
@@ -556,7 +556,7 @@ private theorem constructZeroSumMask_proof (S : Scheme)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    ∑ pid in st.parties.toFinset, maskFn.mask pid = 0 := by
+    st.parties.toFinset.sum (fun pid => maskFn.mask pid) = 0 := by
   have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
   -- For nodup lists, toFinset.toList is a permutation of the original list
   have hperm : List.Perm st.parties.toFinset.toList st.parties := List.toFinset_toList hnodup

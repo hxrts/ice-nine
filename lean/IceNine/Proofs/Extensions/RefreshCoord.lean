@@ -86,7 +86,7 @@ theorem constructZeroSumMask_proof (S : Scheme)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    ∑ pid in st.parties.toFinset, maskFn.mask pid = 0 := by
+    st.parties.toFinset.sum (fun pid => maskFn.mask pid) = 0 := by
   have heq := makeMaskFn_eq_finalMasks S st masks maskFn hmaskFn hmasks
   -- For nodup lists, toFinset.toList is a permutation of the original list
   have hperm : List.Perm st.parties.toFinset.toList st.parties := List.toFinset_toList hnodup

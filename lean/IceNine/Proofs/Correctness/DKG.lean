@@ -147,11 +147,8 @@ lemma dkgAggregateChecked_sound
         exact h.symm
       | error _ =>
         simp [hlen, hdup, hcp] at h
-        cases h
     · simp [hlen, hdup] at h
-      cases h
   · simp [dkgAggregateChecked, hlen] at h
-    cases h
 
 /-- Ok result → dkgValid predicate holds.
     Uses checkPairs_ok_forall2 to establish the validity predicate. -/
@@ -173,11 +170,8 @@ lemma dkgAggregateChecked_ok_valid
         simpa [dkgValid] using hv
       | error _ =>
         simp [hlen, hdup, hcp] at h
-        cases h
     · simp [hlen, hdup] at h
-      cases h
   · simp [dkgAggregateChecked, hlen] at h
-    cases h
 
 /-!
 ## Complaint-Based Aggregation
