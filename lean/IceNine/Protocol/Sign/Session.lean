@@ -663,15 +663,15 @@ def signFastWithLocalRejection (S : Scheme)
     (precomputed : PrecomputedNonce S)
     (challenge : S.Challenge)
     (bindingFactor : S.Scalar)
-    (cfg : Protocol.ThresholdConfig.ThresholdConfig)
-    (session : Nat)
-    (sampleNonce : IO (S.Secret × S.Secret))
-    (context : ExternalContext := {})
-    : IO (Except (Protocol.Error.LocalRejectionError S.PartyId) (SignShareMsg S × Nat)) := do
+  (cfg : Protocol.ThresholdConfig.ThresholdConfig)
+  (session : Nat)
+  (sampleNonce : IO (S.Secret × S.Secret))
+  (context : ExternalContext := {})
+  : IO (Except (Protocol.Error.LocalRejectionError S.PartyId) (SignShareMsg S × Nat)) := do
   -- First try the precomputed nonce
-  let hiding := precomputed.nonce.hidingNonce
-  let binding := precomputed.nonce.bindingNonce
-  match Protocol.LocalRejection.RejectionOp.tryOnce cfg keyShare.secret challenge hiding binding bindingFactor with
+  let hid := precomputed.nonce.hidingNonce
+  let bind := precomputed.nonce.bindingNonce
+  match Protocol.LocalRejection.RejectionOp.tryOnce cfg keyShare.secret challenge hid bind bindingFactor with
   | some z =>
       -- Precomputed nonce works!
       return .ok ({ sender := keyShare.pid, session := session, z_i := z, context := context }, 1)

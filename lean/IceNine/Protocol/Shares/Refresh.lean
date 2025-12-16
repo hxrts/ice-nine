@@ -52,7 +52,13 @@ instance (S : Scheme) (active : Finset S.PartyId) : Join (ZeroSumMaskFn S active
   ⟨fun a b =>
     { fn := { mask := fun pid => a.fn.mask pid + b.fn.mask pid }
     , sum_zero := by
-        simp only [List.map_map, List.sum_map_add]; simp [a.sum_zero, b.sum_zero] }⟩
+        calc
+          (active.toList.map (fun pid => a.fn.mask pid + b.fn.mask pid)).sum
+              = (active.toList.map (fun pid => a.fn.mask pid)).sum +
+                (active.toList.map (fun pid => b.fn.mask pid)).sum := by
+                  simpa [List.sum_map_add]
+          _ = 0 + 0 := by simp [a.sum_zero, b.sum_zero]
+          _ = 0 := by simp }⟩
 
 /-!
 ## Refresh Operation

@@ -188,6 +188,8 @@ namespace NonceOp
 variable {S : Scheme}
     [BEq S.PartyId] [Hashable S.PartyId]
     [BEq S.Commitment] [Hashable S.Commitment]
+    {α : Type}
+    {α : Type}
 
 /-- Check if a session ID is fresh (not previously used). -/
 def isFresh (session : Nat) (st : NonceState S) : Bool × NonceState S :=
@@ -229,11 +231,13 @@ def detectReuse (commit : S.Commitment) (st : NonceState S)
 /-- Check for reuse and throw error if detected.
     This is a **security-critical** check - reuse enables key recovery! -/
 def assertNoReuse (commit : S.Commitment) (st : NonceState S)
-    : NonceResult S Unit := do
-  let (reuse, st') ← detectReuse commit st
-  match reuse with
-  | some (s1, s2) => .error (.commitmentReuse s1 s2 st.partyId)
-  | none => .ok ((), st')
+    : NonceResult S Unit :=
+  match detectReuse commit st with
+  | .ok (reuse, st') =>
+      match reuse with
+      | some (s1, s2) => .error (.commitmentReuse s1 s2 st.partyId)
+      | none => .ok ((), st')
+  | .error e => .error e
 
 /-- Add a precomputed nonce to the pool. -/
 def addToPool (pn : PrecomputedNonce S) (st : NonceState S)
@@ -275,11 +279,16 @@ def prunePool (currentTime : Nat) (st : NonceState S)
 /-- Full commit operation: check fresh, mark used, record, check reuse.
     This is the primary operation for starting a signing session. -/
 def commitSession (session : Nat) (commit : S.Commitment)
-    (st : NonceState S) : NonceResult S Unit := do
-  let ((), st) ← checkFresh session st
-  let ((), st) ← markUsed session st
-  let ((), st) ← recordCommitment session commit st
-  assertNoReuse commit st
+    (st : NonceState S) : NonceResult S Unit :=
+  match checkFresh session st with
+  | .error e => .error e
+  | .ok ((), st) =>
+      match markUsed session st with
+      | .error e => .error e
+      | .ok ((), st) =>
+          match recordCommitment session commit st with
+          | .error e => .error e
+          | .ok ((), st) => assertNoReuse commit st
 
 end NonceOp
 
@@ -302,28 +311,28 @@ variable {S : Scheme}
     [BEq S.Commitment] [Hashable S.Commitment]
 
 /-- Lift a pure operation into NonceM. -/
-def lift (op : NonceState S → NonceResult S α) : NonceM S α := do
+def lift {α : Type} (op : NonceState S → NonceResult S α) : NonceM S α := do
   let st ← get
   match op st with
   | .ok (a, st') => set st'; pure a
   | .error e => throw e
 
 /-- Run NonceM, returning final state and result or error. -/
-def run (m : NonceM S α) (st : NonceState S)
+def run {α : Type} (m : NonceM S α) (st : NonceState S)
     : Except (NonceError S.PartyId) (α × NonceState S) :=
-  m.run st
+  StateT.run m st
 
 /-- Run NonceM, discarding final state. -/
-def eval (m : NonceM S α) (st : NonceState S)
+def eval {α : Type} (m : NonceM S α) (st : NonceState S)
     : Except (NonceError S.PartyId) α :=
-  match m.run st with
+  match StateT.run m st with
   | .ok (a, _) => .ok a
   | .error e => .error e
 
 /-- Run NonceM, returning only final state. -/
-def exec (m : NonceM S α) (st : NonceState S)
+def exec {α : Type} (m : NonceM S α) (st : NonceState S)
     : Except (NonceError S.PartyId) (NonceState S) :=
-  match m.run st with
+  match StateT.run m st with
   | .ok (_, st') => .ok st'
   | .error e => .error e
 

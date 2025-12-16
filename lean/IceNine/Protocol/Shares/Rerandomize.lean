@@ -51,11 +51,9 @@ instance (S : Scheme) (Sset : List S.PartyId) : Join (RerandMasks S Sset) :=
   ⟨fun a b =>
     { masks := a.masks ⊔ b.masks
     , shareSumZero := by
-        simp only [Join.join, List.map_map, List.sum_map_add]
-        simp [a.shareSumZero, b.shareSumZero]
+        simp [Join.join, a.shareSumZero, b.shareSumZero]
     , nonceSumZero := by
-        simp only [Join.join, List.map_map, List.sum_map_add]
-        simp [a.nonceSumZero, b.nonceSumZero] }⟩
+        simp [Join.join, a.nonceSumZero, b.nonceSumZero] }⟩
 
 /-- Convenience accessor for share mask -/
 def RerandMasks.shareMask {S : Scheme} {Sset : List S.PartyId}

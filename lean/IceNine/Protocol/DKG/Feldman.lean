@@ -182,7 +182,7 @@ theorem generateShares_evalPoints (S : Scheme) [DecidableEq S.Scalar]
   | nil => simp [generateShares]
   | cons hd tl ih =>
     rcases hd with ⟨pid, pt⟩
-    simp [generateShares, generateShare_evalPoint, ih]
+    simp [generateShares, generateShare_evalPoint]
 
 /-- Create VSS transcript from a polynomial and party list.
     Requires that party evaluation points are distinct. -/

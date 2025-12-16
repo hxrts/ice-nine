@@ -94,7 +94,7 @@ theorem nonce_reuse_key_recovery
 def recoverSecretKey
     {F : Type*} [Field F] [DecidableEq F]
     (z₁ z₂ : F) (c₁ c₂ : F) : Option F :=
-  if h : c₁ = c₂ then none
+  if _h : c₁ = c₂ then none
   else some ((z₁ - z₂) / (c₁ - c₂))
 
 /-- The recovery function is correct when challenges differ. -/
@@ -363,9 +363,9 @@ structure VSSHiding (t : Nat) where
 theorem threshold_security_composition
     (S : Scheme) (p : SISParams)
     (params : ThresholdSecurityParams S)
-    (hsim : ThresholdSimulation S params)
-    (hsis : SISHard p)
-    (hvss_hiding : VSSHiding params.t) :
+    (_hsim : ThresholdSimulation S params)
+    (_hsis : SISHard p)
+    (_hvss_hiding : VSSHiding params.t) :
     -- The reduction exists with valid parameters
     ∃ (reduction : ThresholdUnforgeability S p params),
       reduction.sisAdvantage ≥ reduction.forgerAdvantage / reduction.hashQueries - 1 / (2 ^ p.securityParam) := by

@@ -131,7 +131,7 @@ theorem decompose_correct (r : Int) (alpha : Nat) (hα : alpha > 0) :
       refine ⟨r / (alpha : Int) + 1, ?_⟩
       calc
         r - (r0 - (alpha : Int)) = (r - r0) + (alpha : Int) := by ring
-        _ = (alpha : Int) * (r / (alpha : Int)) + (alpha : Int) := by simpa [hr_sub]
+        _ = (alpha : Int) * (r / (alpha : Int)) + (alpha : Int) := by simp [hr_sub]
         _ = (alpha : Int) * (r / (alpha : Int) + 1) := by ring
     have hmul :
         (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) =
@@ -141,7 +141,7 @@ theorem decompose_correct (r : Int) (alpha : Nat) (hα : alpha > 0) :
         (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) + (r0 - (alpha : Int)) = r := by
       calc
         (r - (r0 - (alpha : Int))) / (alpha : Int) * (alpha : Int) + (r0 - (alpha : Int))
-            = (r - (r0 - (alpha : Int))) + (r0 - (alpha : Int)) := by simpa [hmul]
+            = (r - (r0 - (alpha : Int))) + (r0 - (alpha : Int)) := by simp [hmul]
         _ = r := by ring
     simpa [decompose, hα0, r0, hadj] using this
   · -- Non-adjusted case: r₀' = r0
@@ -151,8 +151,8 @@ theorem decompose_correct (r : Int) (alpha : Nat) (hα : alpha > 0) :
       Int.ediv_mul_cancel hdiv
     have : (r - r0) / (alpha : Int) * (alpha : Int) + r0 = r := by
       calc
-        (r - r0) / (alpha : Int) * (alpha : Int) + r0 = (r - r0) + r0 := by simpa [hmul]
-        _ = r := by simpa using (sub_add_cancel r r0)
+        (r - r0) / (alpha : Int) * (alpha : Int) + r0 = (r - r0) + r0 := by simp [hmul]
+        _ = r := by simp using (sub_add_cancel r r0)
     simpa [decompose, hα0, r0, hadj] using this
 
 /-- Low bits are bounded by α/2
@@ -238,9 +238,9 @@ def polyInfNorm (coeffs : List Int) : Nat :=
     HighBits (in most cases - there are edge cases at boundaries). -/
 theorem highBits_perturbation
     (w e : List Int) (alpha : Nat)
-    (hα : alpha > 0)
-    (h_small : polyInfNorm e < alpha / 2)
-    (h_len : w.length = e.length) :
+    (_hα : alpha > 0)
+    (_h_small : polyInfNorm e < alpha / 2)
+    (_h_len : w.length = e.length) :
     -- The high bits are either preserved or shift by 1
     True := by
   trivial  -- Full proof requires detailed coefficient analysis

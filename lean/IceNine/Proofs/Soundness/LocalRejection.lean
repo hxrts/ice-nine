@@ -154,12 +154,12 @@ theorem aggregate_norm_bound
     have h_rep_len : (List.replicate s.length (0 : Int)).length = s.length := by simp
     have h_rep_norm : intVecInfNorm' (List.replicate s.length (0 : Int)) = 0 :=
       intVecInfNorm'_replicate_zero s.length
-    have h_lens' : ∀ t ∈ (s :: ss), t.length = (List.replicate s.length (0 : Int)).length := by
-      intro t ht
-      simp only [h_rep_len]
-      exact h_lens t ht
-    have h_acc : intVecInfNorm' (List.replicate s.length (0 : Int)) ≤ 0 := by
-      simpa [h_rep_norm]
+  have h_lens' : ∀ t ∈ (s :: ss), t.length = (List.replicate s.length (0 : Int)).length := by
+    intro t ht
+    simp only [h_rep_len]
+    exact h_lens t ht
+  have h_acc : intVecInfNorm' (List.replicate s.length (0 : Int)) ≤ 0 := by
+    simp [h_rep_norm]
     have h := aggregate_norm_bound_acc (s :: ss) (List.replicate s.length (0 : Int)) bound 0
               h_acc h_local h_lens'
     -- Simplify the bound: accBound = 0

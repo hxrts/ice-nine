@@ -54,7 +54,8 @@ lemma checkPair_ok_pred
   unfold checkPair verifyCommitmentOpening at h
   split_ifs at h with h1 h2
   · exact ⟨h1, of_decide_eq_true h2⟩
-  all_goals contradiction
+  · cases h
+  · cases h
 
 /-- Helper: forM on zipped list returning ok implies Forall₂.
     Induction on the lists, using checkPair_ok_pred at each step.
@@ -87,16 +88,15 @@ lemma forM_zip_ok_forall2
               (List.zip cs rs).forM (fun (c, r) => checkPair S c r)) =
             Except.ok () := by
         simpa [List.zip_cons_cons, List.forM_cons] using h
-      cases hpair : checkPair S c r with
-      | ok u =>
-        cases u
-        have hpair' : checkPair S c r = Except.ok () := by
-          simpa [hpair]
-        have hhead : c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk :=
-          checkPair_ok_pred (S := S) c r hpair'
-        have htail :
-            (List.zip cs rs).forM (fun (c, r) => checkPair S c r) = Except.ok () := by
-          simpa [hpair] using h0
+    cases hpair : checkPair S c r with
+    | ok u =>
+      cases u
+      have hpair' : checkPair S c r = Except.ok () := hpair
+      have hhead : c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk :=
+        checkPair_ok_pred (S := S) c r hpair'
+      have htail :
+          (List.zip cs rs).forM (fun (c, r) => checkPair S c r) = Except.ok () := by
+        simpa [hpair] using h0
         exact List.Forall₂.cons hhead (ih rs hlen' htail)
       | error e =>
         cases (by simpa [hpair] using h0)
@@ -114,7 +114,7 @@ lemma checkPairs_ok_forall2
   unfold checkPairs at h
   by_cases hlen : commits.length ≠ reveals.length
   · -- Length mismatch branch throws .lengthMismatch, so cannot be ok
-    simp [checkPairs, hlen] at h
+    simp [hlen] at h
   · have hlen' : commits.length = reveals.length := not_not.mp hlen
     have hforM :
         (List.zip commits reveals).forM (fun (c, r) => checkPair S c r) = Except.ok () := by
@@ -149,13 +149,13 @@ lemma dkgAggregateChecked_sound
     cases hcp : checkPairs S commits reveals with
     | ok u =>
       cases u
-      simp only [hcp, Except.map_ok, Except.ok.injEq] at h
+      simp [hcp] at h
       exact h.symm
     | error e =>
-      simp only [hcp, Except.map_error] at h
       cases h
+  · cases h
+  · cases h
   -- Handle remaining branches from split_ifs (length/nodup failures)
-  all_goals simp at h
 
 /-- Ok result → dkgValid predicate holds.
     Uses checkPairs_ok_forall2 to establish the validity predicate. -/
@@ -178,10 +178,10 @@ lemma dkgAggregateChecked_ok_valid
       simp only [dkgValid]
       exact checkPairs_ok_forall2 (S := S) commits reveals hcp'
     | error e =>
-      simp only [hcp] at h
       cases h
   -- Handle remaining branches from split_ifs (length/nodup failures)
-  all_goals simp at h
+  · cases h
+  · cases h
 
 /-!
 ## Complaint-Based Aggregation
@@ -257,25 +257,25 @@ lemma dealerKeygen_wellFormed
       have hwf_zip :
           ∀ (ps : List S.PartyId) (ss : List S.Secret) (os : List S.Opening),
             ∀ sh, sh ∈ (ps.zip (ss.zip os)).map mkShare → DealerShare.wellFormed S sh := by
-        intro ps ss os
-        induction ps generalizing ss os with
+    intro ps ss os
+    induction ps generalizing ss os with
+    | nil =>
+      intro sh hmem
+      simp [List.zip, List.map] at hmem
+    | cons pid ps ih =>
+      intro sh hmem
+      cases ss with
+      | nil =>
+        simp [List.zip, List.map] at hmem
+      | cons sk ss' =>
+        cases os with
         | nil =>
-          intro sh hmem
-          exact False.elim (by simpa [List.zip, List.map] using hmem)
-        | cons pid ps ih =>
-          intro sh hmem
-          cases ss with
-          | nil =>
-            exact False.elim (by simpa [List.zip, List.map] using hmem)
-          | cons sk ss' =>
-            cases os with
-            | nil =>
-              exact False.elim (by simpa [List.zip, List.map] using hmem)
-            | cons op os' =>
-              simp only [List.zip_cons_cons, List.map_cons, List.mem_cons] at hmem
-              cases hmem with
-              | inl hEq =>
-                subst hEq
+          simp [List.zip, List.map] at hmem
+        | cons op os' =>
+          simp only [List.zip_cons_cons, List.map_cons, List.mem_cons] at hmem
+          cases hmem with
+          | inl hEq =>
+            subst hEq
                 simp [DealerShare.wellFormed, mkShare]
               | inr hIn =>
                 exact ih ss' os' sh hIn

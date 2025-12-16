@@ -43,15 +43,15 @@ def aggregateWithStrategy
   (shares : List (SignShareMsg S))
   (strategy : CoeffStrategy S)
   : Option (Signature S) :=
-  if hfrom : ∀ sh ∈ shares, sh.sender ∈ active then
+  if _hfrom : ∀ sh ∈ shares, sh.sender ∈ active then
     match strategy with
     | .ones =>
-        if hlen : shares.length = active.length then
+        if _hlen : shares.length = active.length then
           some (aggregateSignature S c active commits shares)
         else none
     | .lagrange coeffs =>
-        if hlen : shares.length = coeffs.length then
-          if hpid : coeffs.map (·.pid) = active then
+        if _hlen : shares.length = coeffs.length then
+          if _hpid : coeffs.map (·.pid) = active then
             some (aggregateSignatureLagrange S c active commits coeffs shares)
           else none
         else none

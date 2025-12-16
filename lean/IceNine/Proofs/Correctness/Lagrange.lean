@@ -48,7 +48,7 @@ def listIndexOf {α : Type*} [DecidableEq α] (x : α) (l : List α) : Nat :=
 
 theorem listIndexOf_cons_self {α : Type*} [DecidableEq α] (a : α) (l : List α) :
     listIndexOf a (a :: l) = 0 := by
-  simp [listIndexOf, List.findIdx_cons, beq_self_eq_true]
+  simp [listIndexOf, List.findIdx_cons]
 
 theorem listIndexOf_cons_ne {α : Type*} [DecidableEq α] (a b : α) (l : List α) (hne : a ≠ b) :
     listIndexOf b (a :: l) = listIndexOf b l + 1 := by
@@ -112,7 +112,7 @@ lemma coeffAtZeroFinset_sum_one {F : Type*} [Field F] [DecidableEq F]
         have hinj : Set.InjOn id (s : Set F) := Function.injective_id.injOn
         have hsum : (∑ j ∈ s, Lagrange.basis s id j) = (1 : F[X]) := by
           simpa using Lagrange.sum_basis (s := s) (v := id) hinj h
-        simpa [hsum]
+        simp [hsum]
     _ = 1 := eval_one
 
 /-!
@@ -134,7 +134,7 @@ theorem coeffs_sum_to_one {F : Type*} [Field F] [DecidableEq F]
     exact ⟨x, List.mem_toFinset.mpr hx⟩
   have hco : (allCoeffsAtZero partyScalars).map Prod.snd =
               partyScalars.map (fun p => coeffAtZeroFinset partyScalars.toFinset p) := by
-    simp only [allCoeffsAtZero, List.map_map, Function.comp]
+    simp only [allCoeffsAtZero, List.map_map]
     congr 1; ext p
     exact coeffAtZero_list_nodup p partyScalars hnodup
   have hsum_list_finset : (partyScalars.map (fun p => coeffAtZeroFinset partyScalars.toFinset p)).sum =
@@ -273,7 +273,7 @@ theorem lagrange_interpolation {F : Type*} [Field F] [DecidableEq F]
   -- Evaluate the interpolation polynomial at 0
   have heval : eval 0 (Lagrange.interpolate s id r) =
                s.sum (fun x => r x * eval 0 (Lagrange.basis s id x)) := by
-    simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C, id_eq]
+    simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C]
   rw [heval]
   -- Connect coefficients to basis evaluation
   have hcoeff_eq : ∀ x ∈ s, coeffAtZero x partyScalars = eval 0 (Lagrange.basis s id x) := by
@@ -309,7 +309,7 @@ theorem lagrange_weighted_sum {F : Type*} [Field F] [DecidableEq F]
     partyScalars.toFinset.sum (fun x => coeffAtZeroFinset partyScalars.toFinset x * values x) =
     eval 0 (Lagrange.interpolate partyScalars.toFinset id values) := by
   have hinj : Set.InjOn id (partyScalars.toFinset : Set F) := Function.injective_id.injOn
-  simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C, id_eq]
+  simp only [Lagrange.interpolate_apply, eval_finset_sum, eval_mul, eval_C]
   congr 1
   ext x
   rw [coeffAtZeroFinset_eq_eval_basis]

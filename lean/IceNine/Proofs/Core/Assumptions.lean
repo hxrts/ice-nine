@@ -91,7 +91,7 @@ structure SISSolution (p : SISParams) (inst : SISInstance p) where
     (Finset.univ.sum fun j => inst.A i j * (z j : ZMod p.q)) = 0
 
 /-- SIS hardness assumption: no efficient algorithm finds solutions -/
-def SISHard (p : SISParams) : Prop :=
+def SISHard (_p : SISParams) : Prop :=
   -- Axiomatized: for random A, finding SISSolution is computationally infeasible
   True
 
@@ -146,7 +146,7 @@ structure MLWESecret (p : MLWEParams) where
   e_short : ∀ i j, Int.natAbs (e i j) ≤ p.eta
 
 /-- MLWE hardness: distinguishing (A, As+e) from (A, u) is hard -/
-def MLWEHard (p : MLWEParams) : Prop :=
+def MLWEHard (_p : MLWEParams) : Prop :=
   -- Axiomatized: (A, As+e) computationally indistinguishable from (A, uniform)
   True
 
@@ -413,7 +413,7 @@ def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
 
 /-- Liveness: honest parties either complete signing or detect abort.
     No silent failures - either succeed or return error. -/
-def livenessOrAbort (S : Scheme) (A : Assumptions S) : Prop := True
+def livenessOrAbort (_S : Scheme) (_A : Assumptions _S) : Prop := True
 
 /-!
 ## Parameter Validation
@@ -514,8 +514,8 @@ def MLWEParams.isSecure (p : MLWEParams) : Prop :=
   p.eta ≤ 4
 
 -- Security-bit estimates are not computed here; use external lattice-estimator.
-def SISParams.estimatedSecurityBits (p : SISParams) : Option Nat := none
-def MLWEParams.estimatedSecurityBits (p : MLWEParams) : Option Nat := none
+def SISParams.estimatedSecurityBits (_p : SISParams) : Option Nat := none
+def MLWEParams.estimatedSecurityBits (_p : MLWEParams) : Option Nat := none
 
 /-!
 ## Dilithium Signing Parameters

@@ -147,7 +147,7 @@ lemma repair_masked_zero
         cases mask with
         | nil => simp
         | cons z mask =>
-            simp [List.zipWith_cons_cons, ih]
+            simp [List.zipWith_cons_cons]
   rw [hmap]
   -- Rewrite the RHS zipWith as zipWith-add over `msgs.map delta`.
   have hzip :
@@ -173,7 +173,7 @@ lemma repair_masked_zero
   have hsum :=
     List.sum_zipWith_add_eq (msgs.map (·.delta)) mask hlen'
   -- Apply the zero-sum mask assumption.
-  simpa [hsum, hmask]
+  simp [hsum, hmask]
 
 /-- Privacy theorem: zero-sum masks preserve repair result.
     Helpers can't learn target share from their own contribution. -/
@@ -203,8 +203,8 @@ theorem repair_privacy_zerosum
     Cryptosystems." Journal of Cryptology 20(1), 2007. (Section 4: Proactive Security) -/
 def singleHelperPrivacy
   (S : Scheme)
-  (helperDelta : S.Secret)
-  (otherDeltasSum : S.Secret)
+  (_helperDelta : S.Secret)
+  (_otherDeltasSum : S.Secret)
   : Prop :=
   -- target = helperDelta + otherDeltasSum, but otherDeltasSum is unknown
   -- Axiomatized: formal proof would require a simulation-based argument showing
@@ -267,7 +267,7 @@ lemma repairBundle_join_comm_sum
   repairShare S (a ⊔ b).msgs = repairShare S (b ⊔ a).msgs := by
   simp [Join.join]
   rw [repair_append, repair_append]
-  simpa [add_comm, add_left_comm, add_assoc]
+  simp [add_comm, add_left_comm, add_assoc]
 
 /-- Idempotence structure: a ⊔ a = list doubling.
     Note: not true idempotence (msgs duplicated), but result unchanged. -/

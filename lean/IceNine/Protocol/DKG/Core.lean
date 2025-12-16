@@ -249,11 +249,11 @@ def dkgAggregateChecked
   (reveals : List (DkgRevealMsg S))
   : Except (DkgError S.PartyId) S.Public := do
   -- Check list lengths match
-  if hlen : commits.length = reveals.length then pure () else
+  if _hlen : commits.length = reveals.length then pure () else
     throw (.lengthMismatch)
   -- Check no duplicate party IDs
   let pids := reveals.map (·.sender)
-  if hdup : pids.Nodup then pure () else
+  if _hdup : pids.Nodup then pure () else
     throw (.duplicatePids)
   -- Check each commitment opens correctly AND verify PoK
   checkPairs S commits reveals

@@ -282,7 +282,7 @@ theorem MsgMap.insert_monotone {S : Scheme} {M : Type*}
     · rw [if_neg haSender] at hk
       rw [HashMap.contains_insert] at hk ⊢
       cases h : (sender == k) with
-      | true => simp [h]
+      | true => simp
       | false =>
         rw [h] at hk
         simp only [Bool.false_or] at hk ⊢
@@ -301,7 +301,7 @@ theorem MsgMap.size_insert_le {S : Scheme} {M : Type*}
   by_cases h : m.map.contains (getSender msg)
   · simp [h]
   · simp only [Bool.not_eq_true] at h
-    simp only [h, ↓reduceIte]
+    simp only [h]
     exact HashMap.size_insert_le
 
 /-- MsgMap.empty has size 0 -/
@@ -318,8 +318,7 @@ theorem MsgMap.senders_empty {S : Scheme} {M : Type*}
   have h : (({} : HashMap S.PartyId M).toList.isEmpty) = true := by
     simp [HashMap.isEmpty_toList]
   have hnil : ({} : HashMap S.PartyId M).toList = [] := by
-    apply List.isEmpty_iff.mp
-    simpa using h
+    exact List.isEmpty_iff.mp h
   simp [MsgMap.senders, MsgMap.empty, hnil]
 
 /-- MsgMap.senders.toFinset of empty is empty finset (set-level statement) -/

@@ -70,7 +70,7 @@ def vecL2SqLeqBound (B : Int) (v : List Int) : Prop :=
 
 /-- Function-based vector ℓ∞ norm for Fin n → α -/
 def finVecInfNorm {n : Nat} (v : Fin n → Int) : Nat :=
-  if h : n = 0 then 0
+  if _h : n = 0 then 0
   else Finset.univ.sup (fun i => Int.natAbs (v i))
 
 /-- ℓ∞ bound for function-based vectors -/
@@ -289,7 +289,7 @@ lemma vecInfNorm_add_le (v w : List Int) (hlen : v.length = w.length) :
     | nil => simp at hlen
     | cons y ys =>
       simp only [List.zipWith_cons_cons, vecInfNorm_cons]
-      simp only [List.length_cons, Nat.succ_eq_add_one, add_left_inj] at hlen
+      simp only [List.length_cons, add_left_inj] at hlen
       have ih_applied := ih ys hlen
       calc max (Int.natAbs (x + y)) (vecInfNorm (List.zipWith (· + ·) xs ys))
           ≤ max (Int.natAbs x + Int.natAbs y) (vecInfNorm xs + vecInfNorm ys) := by
@@ -381,7 +381,7 @@ Extensions to DilithiumParams for local rejection sampling configuration.
     -- cfg.localBound = 130994 / 4 = 32748
     ``` -/
 def DilithiumParams.toThresholdConfig (p : DilithiumParams) (n : Nat)
-    (hn : n > 0 := by omega) : ThresholdConfig :=
+    (_hn : n > 0 := by omega) : ThresholdConfig :=
   let globalBound := p.zBound.natAbs  -- Convert Int to Nat (always positive for valid params)
   -- Use a conservative configuration: threshold = maxSigners = n.
   -- This avoids non-linear arithmetic obligations in the smart constructor.
@@ -397,13 +397,13 @@ def DilithiumParams.toThresholdConfig (p : DilithiumParams) (n : Nat)
 /-- Get the local rejection bound for a given number of signers.
     This is the per-signer bound B_local such that T · B_local ≤ B_global. -/
 def DilithiumParams.localBound (p : DilithiumParams) (maxSigners : Nat)
-    (hpos : maxSigners > 0 := by omega) : Nat :=
+    (_hpos : maxSigners > 0 := by omega) : Nat :=
   p.zBound.natAbs / maxSigners
 
 /-- Expected local rejection attempts given local bound.
     Tighter local bounds require more rejection attempts. -/
 def DilithiumParams.expectedLocalAttempts (p : DilithiumParams) (maxSigners : Nat)
-    (hpos : maxSigners > 0 := by omega) : Nat :=
+    (_hpos : maxSigners > 0 := by omega) : Nat :=
   let localB := p.localBound maxSigners
   if p.gamma1 > 2 * localB then
     p.gamma1 / (p.gamma1 - 2 * localB)

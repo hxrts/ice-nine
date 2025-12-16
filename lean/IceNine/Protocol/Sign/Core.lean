@@ -126,9 +126,9 @@ Reference: FROST RFC Section 4.4
     **Output**: Scalar binding factor ρ_i -/
 def computeBindingFactor (S : Scheme)
     (msgHash : ByteArray)
-    (pk : S.Public)
+    (_pk : S.Public)
     (encodedCommits : ByteArray)
-    (pid : S.PartyId)
+    (_pid : S.PartyId)
     : S.Scalar :=
   -- Concatenate: domain || msgHash || pk_bytes || commits_bytes || pid_bytes
   -- The actual serialization depends on scheme; this shows the structure

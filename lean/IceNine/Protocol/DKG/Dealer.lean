@@ -77,7 +77,7 @@ def dealerKeygen
   (opens   : List S.Opening)  -- commitment randomness per party
   : Option (DealerTranscript S) :=
   -- Validate all lists have same length
-  if hlen : pids.length = secrets.length ∧ secrets.length = opens.length then
+  if _hlen : pids.length = secrets.length ∧ secrets.length = opens.length then
     -- Create share for each party using nested zip
     let shares :=
       (pids.zip (secrets.zip opens)).map fun (pid, sk, op) =>

@@ -318,7 +318,7 @@ theorem frost_threshold_correctness
     (S : Scheme)
     (t n : Nat)
     (signers : Finset (Fin n))
-    (ht : t ≤ signers.card)
+    (_ht : t ≤ signers.card)
     (sk : Fin n → S.Secret)
     (y : Fin n → S.Secret)
     (c : S.Scalar)
@@ -355,6 +355,14 @@ theorem frost_threshold_correctness
   have hsk : signers.sum (fun i => S.A (sk i)) = S.A (signers.sum sk) := (map_sum S.A _ _).symm
   rw [hy, hsk, hw, hpk]
 
+/-- ZipWith with a replicate of a constant collapses to a map of scalar multiplication. -/
+lemma zipWith_mul_replicate {R : Type*} [Semiring R] (l : List R) (v : R) :
+    List.zipWith (· * ·) l (List.replicate l.length v) = l.map (· * v) := by
+  induction l with
+  | nil => simp
+  | cons x xs ih =>
+      simp [List.replicate, List.zipWith_cons_cons, ih]
+
 /-- Lagrange coefficient compatibility: weighted sum with coefficients summing to 1.
 
     When Lagrange coefficients sum to 1 (which they do at x=0 for interpolation),
@@ -366,25 +374,19 @@ theorem lagrange_weighted_sum_eq
     {R : Type*} [CommRing R]
     (signers : List R)
     (lambdas : List R)
-    (v : R)
-    (hlen : signers.length = lambdas.length)
-    (hlambda_sum : lambdas.sum = 1) :
-    (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum = v := by
+  (v : R)
+  (hlen : signers.length = lambdas.length)
+  (hlambda_sum : lambdas.sum = 1) :
+  (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum = v := by
   classical
   -- The signer values are constant, so replace with a replicate of matching length.
   have hconst : signers.map (fun _ => v) = List.replicate lambdas.length v := by
-    have hconst' : signers.map (fun _ => v) = List.replicate signers.length v := by
-      induction signers <;> simp [*]
-    simpa [hlen] using hconst'
-  -- ZipWith with a replicate collapses to a map.
-  have hmap : List.zipWith (· * ·) lambdas (List.replicate lambdas.length v) =
-      lambdas.map (· * v) := by
-    induction lambdas <;> simp [*]
+    simp [List.map_const, hlen]
   calc
     (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum
         = (List.zipWith (· * ·) lambdas (List.replicate lambdas.length v)).sum := by
             simpa [hconst]
-    _ = (lambdas.map (· * v)).sum := by simpa [hmap]
+    _ = (lambdas.map (· * v)).sum := by simpa [zipWith_mul_replicate (l := lambdas) v]
     _ = lambdas.sum * v := by
           -- `List.sum_map_mul_right` with f := id, r := v
           simpa using (List.sum_map_mul_right (l := lambdas) (f := id) (r := v))
@@ -409,11 +411,11 @@ theorem verifyWithNonce_correct
     (Sset : List S.PartyId)
     (commits : List S.Commitment)
     (w : S.Public)
-    (hpk : S.A sk = pk)
-    (hw : S.A y = w)
-    (hsmul : S.A (c • sk) = c • pk) :
-    let sig : Signature S := { z := y + c • sk, c := c, Sset := Sset, commits := commits }
-    verifyWithNonce S pk sig w = true := by
-  simp [verifyWithNonce, decide_eq_true_eq, map_add, hw, hsmul, hpk]
+  (hpk : S.A sk = pk)
+  (hw : S.A y = w)
+  (hsmul : S.A (c • sk) = c • pk) :
+  let sig : Signature S := { z := y + c • sk, c := c, Sset := Sset, commits := commits }
+  verifyWithNonce S pk sig w = true := by
+  simp [verifyWithNonce, map_add, hw, hsmul, hpk]
 
 end IceNine.Proofs
