@@ -267,7 +267,7 @@ lemma repairBundle_join_comm_sum
   repairShare S (a ⊔ b).msgs = repairShare S (b ⊔ a).msgs := by
   simp [Join.join]
   rw [repair_append, repair_append]
-  simp [add_comm, add_left_comm, add_assoc]
+  simp [add_comm]
 
 /-- Idempotence structure: a ⊔ a = list doubling.
     Note: not true idempotence (msgs duplicated), but result unchanged. -/

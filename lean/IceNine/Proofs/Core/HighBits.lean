@@ -149,11 +149,11 @@ theorem decompose_correct (r : Int) (alpha : Nat) (hα : alpha > 0) :
       exact ⟨r / (alpha : Int), hr_sub⟩
     have hmul : (r - r0) / (alpha : Int) * (alpha : Int) = r - r0 :=
       Int.ediv_mul_cancel hdiv
-    have : (r - r0) / (alpha : Int) * (alpha : Int) + r0 = r := by
+    have hsum : (r - r0) / (alpha : Int) * (alpha : Int) + r0 = r := by
       calc
         (r - r0) / (alpha : Int) * (alpha : Int) + r0 = (r - r0) + r0 := by simp [hmul]
-        _ = r := by simp using (sub_add_cancel r r0)
-    simpa [decompose, hα0, r0, hadj] using this
+        _ = r := by ring
+    simpa [decompose, hα0, r0, hadj] using hsum
 
 /-- Low bits are bounded by α/2
 

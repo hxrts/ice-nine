@@ -381,7 +381,7 @@ theorem lagrange_weighted_sum_eq
   classical
   -- The signer values are constant, so replace with a replicate of matching length.
   have hconst : signers.map (fun _ => v) = List.replicate lambdas.length v := by
-    simp [List.map_const, hlen]
+    simp [hlen]
   calc
     (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum
         = (List.zipWith (· * ·) lambdas (List.replicate lambdas.length v)).sum := by

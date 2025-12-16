@@ -13,6 +13,8 @@ but Σ pk_i stays fixed when Σ m_i = 0.
 import IceNine.Protocol.Core.Core
 import IceNine.Protocol.State.Phase  -- for Join class
 
+open scoped BigOperators
+
 namespace IceNine.Protocol
 
 open List

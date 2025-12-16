@@ -18,6 +18,8 @@ import IceNine.Protocol.Shares.Refresh
 import IceNine.Protocol.State.Phase
 import Mathlib
 
+open scoped BigOperators
+
 namespace IceNine.Protocol.RefreshCoord
 
 open IceNine.Protocol
@@ -501,7 +503,7 @@ def constructMaskFn (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [Decidable
     the proof from `hmasks` and `hzero`. -/
 def constructZeroSumMask (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId]
     (st : RefreshRoundState S) (maskFn : MaskFn S)
-    (hsum : (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0)
+    (hsum : ∑ pid in st.parties.toFinset, maskFn.mask pid = 0)
     : ZeroSumMaskFn S (List.toFinset st.parties) :=
   { fn := maskFn
     sum_zero := hsum
@@ -554,7 +556,7 @@ private theorem constructZeroSumMask_proof (S : Scheme)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0 := by
+    ∑ pid in st.parties.toFinset, maskFn.mask pid = 0 := by
   have heq := makeMaskFn_eq_finalMasks_aux S st masks maskFn hmaskFn hmasks
   -- For nodup lists, toFinset.toList is a permutation of the original list
   have hperm : List.Perm st.parties.toFinset.toList st.parties := List.toFinset_toList hnodup
@@ -563,7 +565,11 @@ private theorem constructZeroSumMask_proof (S : Scheme)
                             (st.parties.map (fun pid => maskFn.mask pid)) :=
     hperm.map (fun pid => maskFn.mask pid)
   -- Sum is invariant under permutation
-  rw [hperm_map.sum_eq, heq, hzero]
+  have hsum_list : (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0 := by
+    simpa [hperm_map.sum_eq, heq] using hzero
+  -- Convert list sum over toFinset.toList to finset sum
+  classical
+  simpa [Finset.sum_toList] using hsum_list
 
 /-- Convenience function: construct zero-sum mask with runtime checks.
     Returns None if preconditions fail. -/

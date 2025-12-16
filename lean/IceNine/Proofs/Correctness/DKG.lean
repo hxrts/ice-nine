@@ -83,7 +83,9 @@ lemma forM_zip_ok_forall2
           (checkPair S c r >>= fun _ =>
               (List.zip cs rs).forM (fun (c, r) => checkPair S c r)) =
             Except.ok () := by
-        simpa [List.zip_cons_cons, List.forM_cons] using h
+        have h' := h
+        simp [List.zip_cons_cons, List.forM_cons] at h'
+        exact h'
       cases hpair : checkPair S c r with
       | ok _ =>
         have hhead : c.sender = r.sender ∧ S.commit r.pk_i r.opening = c.commitPk :=

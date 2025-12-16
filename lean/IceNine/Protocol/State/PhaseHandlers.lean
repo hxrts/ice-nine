@@ -84,7 +84,7 @@ noncomputable def tryAggregate
   let shareList := st.shareList  -- convert MsgMap to List
   let commitList := st.commitList  -- convert MsgMap to List
   -- Check all shares come from active signers
-  if hfrom : ∀ sh ∈ shareList, sh.sender ∈ ctx.active then
+  if _hfrom : ∀ sh ∈ shareList, sh.sender ∈ ctx.active then
     match aggregateSignatureWithCtx S challenge ctx (commitList.map (·.commitPk)) shareList with
     | some sig => some ⟨sig⟩
     | none => none

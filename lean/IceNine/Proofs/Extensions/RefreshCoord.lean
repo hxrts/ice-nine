@@ -9,6 +9,8 @@ Separated from Protocol/Shares/RefreshCoord.lean to maintain protocol/proof sepa
 import IceNine.Protocol.Shares.RefreshCoord
 import Mathlib
 
+open scoped BigOperators
+
 set_option autoImplicit false
 
 namespace IceNine.Proofs.Extensions.RefreshCoord
@@ -84,7 +86,7 @@ theorem constructZeroSumMask_proof (S : Scheme)
     (hmasks : computeFinalMasks S st = .ok masks)
     (hzero : masks.sum = 0)
     (hnodup : st.parties.Nodup) :
-    (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0 := by
+    ∑ pid in st.parties.toFinset, maskFn.mask pid = 0 := by
   have heq := makeMaskFn_eq_finalMasks S st masks maskFn hmaskFn hmasks
   -- For nodup lists, toFinset.toList is a permutation of the original list
   have hperm : List.Perm st.parties.toFinset.toList st.parties := List.toFinset_toList hnodup
@@ -93,6 +95,9 @@ theorem constructZeroSumMask_proof (S : Scheme)
                             (st.parties.map (fun pid => maskFn.mask pid)) :=
     hperm.map (fun pid => maskFn.mask pid)
   -- Sum is invariant under permutation
-  rw [hperm_map.sum_eq, heq, hzero]
+  have hsum_list : (st.parties.toFinset.toList.map (fun pid => maskFn.mask pid)).sum = 0 := by
+    simpa [hperm_map.sum_eq, heq] using hzero
+  classical
+  simpa [Finset.sum_toList] using hsum_list
 
 end IceNine.Proofs.Extensions.RefreshCoord
