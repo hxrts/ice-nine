@@ -261,7 +261,9 @@ def aggregateValidated (S : Scheme)
     -- Build signature
     let sig : Signature S :=
       { c := challenge
-        z := z }
+        z := z
+        Sset := toAggregate.map (·.sender)
+        commits := [] }
 
     { signature := some sig
       includedParties := toAggregate.map (·.sender)
@@ -278,7 +280,7 @@ def aggregateSimple (S : Scheme)
     (shares : List (SignShareMsg S))
     : Signature S :=
   let z := shares.map (·.z_i) |>.foldl (· + ·) 0
-  { c := challenge, z := z }
+  { c := challenge, z := z, Sset := shares.map (·.sender), commits := [] }
 
 /-!
 ## Verification Integration
@@ -286,7 +288,7 @@ def aggregateSimple (S : Scheme)
 
 /-- Verify that aggregated signature satisfies global bound.
     This should always pass for properly validated aggregation. -/
-def verifyAggregateBound [NormBounded S.Secret]
+def verifyAggregateBound (S : Scheme) [NormBounded S.Secret]
     (cfg : ThresholdConfig)
     (sig : Signature S)
     : NormCheckResult :=
@@ -303,7 +305,7 @@ def verifyAggregateBound [NormBounded S.Secret]
     **Checks**:
     1. ‖z‖∞ ≤ globalBound
     2. A(z) = w + c · pk -/
-def verifySignature [NormBounded S.Secret] [DecidableEq S.Public]
+def verifySignature (S : Scheme) [NormBounded S.Secret] [DecidableEq S.Public]
     [AddCommGroup S.Public] [SMul S.Challenge S.Public]
     (cfg : ThresholdConfig)
     (sig : Signature S)
@@ -311,7 +313,7 @@ def verifySignature [NormBounded S.Secret] [DecidableEq S.Public]
     (aggregateW : S.Public)
     : Bool :=
   -- Check global norm bound
-  match verifyAggregateBound cfg sig with
+  match verifyAggregateBound S cfg sig with
   | .exceeded _ _ => false
   | .ok =>
       -- Check algebraic relation

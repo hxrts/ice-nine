@@ -44,7 +44,7 @@ We now state correctness generically for any `Scheme` satisfying:
 - linear map `A`
 - honest messages use consistent session ids
 - hash is the Fiat–Shamir defined in the scheme
-These are already encoded in `Scheme`; we only require decidable equality for
+These are already encoded in `Scheme`. We only require decidable equality for
 participants to reuse the existing validation machinery.
 -/
 
@@ -67,13 +67,13 @@ theorem verification_equation_correct
     (S : Scheme)
     (sk : S.Secret)
     (y : S.Secret)
-    (c : S.Challenge)
+    (c : S.Scalar)
+    (pk w : S.Public)
     (hpk : S.A sk = pk)
     (hw : S.A y = w) :
     S.A (y + c • sk) = w + c • pk := by
   -- Use linearity of A
-  simp only [map_add, LinearMap.map_smul]
-  rw [hw, hpk]
+  simp [map_add, LinearMap.map_smul, hpk, hw]
 
 /-- Generic happy-path correctness: if parties compute responses honestly,
     verification succeeds.
@@ -88,7 +88,7 @@ theorem verify_happy_generic
     (S : Scheme)
     (sk_shares : List S.Secret)
     (y_shares : List S.Secret)
-    (c : S.Challenge)
+    (c : S.Scalar)
     (pk w : S.Public)
     (hlen : sk_shares.length = y_shares.length)
     -- Honest computation: each z_i = y_i + c·sk_i
@@ -99,12 +99,11 @@ theorem verify_happy_generic
     -- Nonce commitment is sum of share nonces
     (hw : S.A y_shares.sum = w) :
     S.A z_shares.sum = w + c • pk := by
-  rw [hz]
+  subst hz
   -- Use the list lemma for zipWith sum
-  rw [List.sum_zipWith_add_smul y_shares sk_shares c hlen]
+  have hsum := List.sum_zipWith_add_smul c y_shares sk_shares hlen.symm
   -- Apply linearity of A
-  rw [map_add, LinearMap.map_smul]
-  rw [hw, hpk]
+  simp [hsum, map_add, LinearMap.map_smul, hw, hpk]
 
 /-!
 ## Short Input Hypothesis
@@ -154,9 +153,10 @@ toy ZMod surrogate. We reuse the generic correctness lemma above.
     The algebraic argument is identical to the generic case; the lattice-specific
     concern is ensuring rejection sampling succeeds with good probability. -/
 theorem verify_happy_lattice
+    [NormBounded.NormBounded latticeScheme.Secret]
     (sk_shares : List latticeScheme.Secret)
     (y_shares : List latticeScheme.Secret)
-    (c : latticeScheme.Challenge)
+    (c : latticeScheme.Scalar)
     (pk w : latticeScheme.Public)
     (hlen : sk_shares.length = y_shares.length)
     (z_shares : List latticeScheme.Secret)
@@ -219,12 +219,20 @@ structure DilithiumAcceptanceBound (p : DilithiumParams) where
   attempts_bounded : expected_attempts_upper ≤ 10  -- At most 10 attempts expected
 
 /-- For Dilithium2, acceptance probability ≈ 99.9%, expected attempts ≈ 1.001 -/
-def dilithium2_acceptance_bound (hvalid : Dilithium2Params.isValid) : DilithiumAcceptanceBound Dilithium2Params :=
-  { params_valid := hvalid
+def dilithium2_acceptance_bound : DilithiumAcceptanceBound dilithium2 :=
+  { params_valid := by decide
     acceptance_probability_lower := 999  -- 99.9%
     probability_positive := by decide
     expected_attempts_upper := 2
     attempts_bounded := by decide }
+
+instance latticeSchemeSecretNormBounded (p : LatticeParams := {}) :
+    NormBounded.NormBounded (latticeScheme (p := p)).Secret := by
+  dsimp [latticeScheme]
+  infer_instance
+
+-- Bring the `NormBounded` instance for the lattice secret space into scope explicitly.
+instance : NormBounded.NormBounded latticeScheme.Secret := inferInstance
 
 /-- Honest sampling satisfies the norm bound for lattice scheme secrets.
 
@@ -238,12 +246,10 @@ lemma lattice_normBounded_honest
     (z : latticeScheme.Secret)
     (hcoeff : ∀ i, Int.natAbs (z i) ≤ IceNine.Instances.LatticeBound) :
     NormBounded.NormBounded.norm z ≤ IceNine.Instances.LatticeBound := by
-  -- norm is intVecInfNorm; apply bound on all coefficients
-  unfold NormBounded.NormBounded.norm IceNine.Instances.intVecNormBounded
-    IceNine.Instances.intVecInfNorm
-  apply Finset.sup_le_iff.mpr
-  intro i _
-  exact hcoeff i
+  -- Reduce to the generic coefficient bound lemma for integer vectors.
+  have h := IceNine.Instances.intVecInfLeq_of_coeff_bound
+    (v := z) (B := IceNine.Instances.LatticeBound) hcoeff
+  simpa [IceNine.Instances.intVecInfLeq, IceNine.Instances.norm_eq_intVecInfNorm] using h
 
 /-- Conditional correctness: if all responses pass norm check, verification succeeds.
     This is the form needed for real lattice schemes where norm bounds matter.
@@ -256,9 +262,10 @@ lemma lattice_normBounded_honest
     - z = Σz_i passes norm check (sum of bounded vectors is bounded)
     - A(z) = w + c·pk by linearity -/
 theorem verify_happy_lattice_conditional
+    [NormBounded.NormBounded latticeScheme.Secret]
     (sk_shares : List latticeScheme.Secret)
     (y_shares : List latticeScheme.Secret)
-    (c : latticeScheme.Challenge)
+    (c : latticeScheme.Scalar)
     (pk w : latticeScheme.Public)
     (hlen : sk_shares.length = y_shares.length)
     (z_shares : List latticeScheme.Secret)
@@ -314,7 +321,7 @@ theorem frost_threshold_correctness
     (ht : t ≤ signers.card)
     (sk : Fin n → S.Secret)
     (y : Fin n → S.Secret)
-    (c : S.Challenge)
+    (c : S.Scalar)
     (pk : S.Public)
     (w : S.Public)
     -- The public key is derived from the reconstructed secret
@@ -363,24 +370,25 @@ theorem lagrange_weighted_sum_eq
     (hlen : signers.length = lambdas.length)
     (hlambda_sum : lambdas.sum = 1) :
     (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum = v := by
-  -- zipWith (· * ·) lambdas (replicate n v) = lambdas.map (· * v)
-  have hmap : List.zipWith (· * ·) lambdas (signers.map (fun _ => v)) =
-              lambdas.map (· * v) := by
-    induction lambdas generalizing signers with
-    | nil => simp
-    | cons l ls ih =>
-      cases signers with
-      | nil => simp at hlen
-      | cons s ss =>
-        simp only [List.map_cons, List.zipWith_cons_cons]
-        congr 1
-        apply ih
-        simp at hlen
-        exact hlen
-  rw [hmap]
-  -- lambdas.map (· * v).sum = v * lambdas.sum = v * 1 = v
-  rw [← List.sum_map_mul_right]
-  rw [hlambda_sum, mul_one]
+  classical
+  -- The signer values are constant, so replace with a replicate of matching length.
+  have hconst : signers.map (fun _ => v) = List.replicate lambdas.length v := by
+    have hconst' : signers.map (fun _ => v) = List.replicate signers.length v := by
+      induction signers <;> simp [*]
+    simpa [hlen] using hconst'
+  -- ZipWith with a replicate collapses to a map.
+  have hmap : List.zipWith (· * ·) lambdas (List.replicate lambdas.length v) =
+      lambdas.map (· * v) := by
+    induction lambdas <;> simp [*]
+  calc
+    (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum
+        = (List.zipWith (· * ·) lambdas (List.replicate lambdas.length v)).sum := by
+            simpa [hconst]
+    _ = (lambdas.map (· * v)).sum := by simpa [hmap]
+    _ = lambdas.sum * v := by
+          -- `List.sum_map_mul_right` with f := id, r := v
+          simpa using (List.sum_map_mul_right (l := lambdas) (f := id) (r := v))
+    _ = v := by simp [hlambda_sum]
 
 /-!
 ## Verification Correctness
@@ -393,20 +401,19 @@ Direct proofs using the `verify` and `verifyWithNonce` functions.
     If z was computed honestly as z = y + c·sk, and w = A(y), pk = A(sk),
     then verifyWithNonce returns true. -/
 theorem verifyWithNonce_correct
-    (S : Scheme)
+    (S : Scheme) [DecidableEq S.Public]
     (pk : S.Public)
     (sk : S.Secret)
     (y : S.Secret)
     (c : S.Challenge)
     (Sset : List S.PartyId)
     (commits : List S.Commitment)
+    (w : S.Public)
     (hpk : S.A sk = pk)
-    (hw : S.A y = w) :
+    (hw : S.A y = w)
+    (hsmul : S.A (c • sk) = c • pk) :
     let sig : Signature S := { z := y + c • sk, c := c, Sset := Sset, commits := commits }
     verifyWithNonce S pk sig w = true := by
-  simp only [verifyWithNonce, decide_eq_true_eq]
-  -- Use linearity of A
-  simp only [map_add, LinearMap.map_smul]
-  rw [hw, hpk]
+  simp [verifyWithNonce, decide_eq_true_eq, map_add, hw, hsmul, hpk]
 
 end IceNine.Proofs

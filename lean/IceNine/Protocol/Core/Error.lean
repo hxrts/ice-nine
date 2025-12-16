@@ -279,7 +279,7 @@ instance {PartyId : Type*} [ToString PartyId] : ToString (BindingError PartyId) 
 /-- Display RefreshDKGError -/
 def showRefreshDKGError {PartyId : Type*} [ToString PartyId] : RefreshDKGError PartyId → String
   | .missingCommit p => s!"RefreshDKG Error: missing commitment from party {p}"
-  | .missingShare from to => s!"RefreshDKG Error: missing share from {from} to {to}"
+  | .missingShare sender target => s!"RefreshDKG Error: missing share from {sender} to {target}"
   | .invalidShare p => s!"RefreshDKG Error: invalid share from party {p}"
   | .thresholdMismatch expected got =>
       s!"RefreshDKG Error: threshold mismatch (expected {expected}, got {got})"
@@ -314,7 +314,7 @@ instance {PartyId : Type*} : BlameableError (BindingError PartyId) PartyId where
 instance {PartyId : Type*} : BlameableError (RefreshDKGError PartyId) PartyId where
   blamedParty
     | .missingCommit p => some p
-    | .missingShare from _ => some from  -- blame sender
+    | .missingShare sender _ => some sender  -- blame sender
     | .invalidShare p => some p
     | .thresholdMismatch _ _ => none
 

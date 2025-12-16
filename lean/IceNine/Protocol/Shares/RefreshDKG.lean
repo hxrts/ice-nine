@@ -145,7 +145,7 @@ def evalPolynomial
 /-- Round 2: Generate shares for all other parties.
     Each party evaluates their polynomial at each other party's point. -/
 def refreshRound2
-    (S : Scheme) [Mul S.Scalar] [Add S.Secret]
+    (S : Scheme) [Mul S.Scalar] [Add S.Secret] [DecidableEq S.PartyId]
     (pidToScalar : S.PartyId → S.Scalar)
     (st : RefreshLocalState S)
     (allParties : List S.PartyId)
@@ -176,13 +176,13 @@ def computeOwnShare
     The expected public value is computed by evaluating the commitment
     polynomial at the recipient's point. -/
 noncomputable def verifyRefreshShare
-    (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Public]
+    (S : Scheme) [CommRing S.Scalar] [DecidableEq S.PartyId] [DecidableEq S.Public]
     [AddCommGroup S.Public] [Module S.Scalar S.Public]
     (pidToScalar : S.PartyId → S.Scalar)
     (commits : List (RefreshCommitMsg S))
     (shareMsg : RefreshShareMsg S)
     : Bool :=
-  match commits.find? (·.sender = shareMsg.sender) with
+  match commits.find? (fun c => c.sender == shareMsg.sender) with
   | none => false  -- no commitment from this sender
   | some commitMsg =>
       -- Compute expected public value at recipient's point

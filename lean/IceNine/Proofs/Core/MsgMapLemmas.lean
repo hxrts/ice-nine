@@ -171,16 +171,28 @@ theorem HashMap.fold_noop_eq_init {K V : Type*}
     (init : HashMap K V)
     (hall : ∀ kv ∈ m.toList, init.contains kv.1 = true) :
     m.fold (fun acc k v => if acc.contains k then acc else acc.insert k v) init = init := by
-  rw [HashMap.fold_eq_foldl_toList]
-  induction m.toList with
-  | nil => simp
-  | cons kv tl ih =>
-    simp only [List.foldl_cons]
-    have hkv : init.contains kv.1 = true := hall kv (List.mem_cons_self kv tl)
-    simp only [hkv, ↓reduceIte]
-    apply ih
-    intro x hx
-    exact hall x (List.mem_cons_of_mem _ hx)
+  -- Convert the contains-based hypothesis to membership form.
+  have list_fold :
+      m.toList.foldl (fun acc kv => if kv.1 ∈ acc then acc else acc.insert kv.1 kv.2) init = init := by
+    classical
+    revert init hall
+    induction m.toList with
+    | nil =>
+        intro init _hall; simp
+    | cons kv tl ih =>
+        intro init hall
+        have hkv_contains : init.contains kv.1 = true := hall kv (by simp)
+        have hkv : kv.1 ∈ init := (HashMap.contains_spec init kv.1).1 hkv_contains
+        have hall' : ∀ kv ∈ tl, init.contains kv.1 = true := fun kv hmem => hall kv (by simp [hmem])
+        have hallMem' : ∀ kv ∈ tl, kv.1 ∈ init := fun kv hmem => (HashMap.contains_spec init kv.1).1 (hall' kv hmem)
+        have ih' := ih init hall'
+        -- Convert IH' (which assumes contains) to the membership-based fold via hallMem'
+        have ih_mem : List.foldl (fun acc kv => if kv.1 ∈ acc then acc else acc.insert kv.1 kv.2) init tl = init := by
+          -- IH' already proves the same statement since the fold uses membership; hall' suffices.
+          exact ih'
+        simp [List.foldl_cons, hkv, ih_mem]
+  -- The built-in fold-toList uses the membership predicate, so the result matches `list_fold`.
+  simpa [HashMap.fold_eq_foldl_toList] using list_fold
 
 /-!
 ## MsgMap Membership Lemmas
@@ -300,13 +312,20 @@ theorem MsgMap.size_empty {S : Scheme} {M : Type*}
 
 /-- MsgMap.senders of empty is empty list -/
 theorem MsgMap.senders_empty {S : Scheme} {M : Type*}
-    [BEq S.PartyId] [Hashable S.PartyId] :
+    [BEq S.PartyId] [Hashable S.PartyId] [EquivBEq S.PartyId]
+    [LawfulHashable S.PartyId] [LawfulBEq S.PartyId] :
     (MsgMap.empty : MsgMap S M).senders = [] := by
-  simp [MsgMap.senders, MsgMap.empty]
+  have h : (({} : HashMap S.PartyId M).toList.isEmpty) = true := by
+    simp [HashMap.isEmpty_toList]
+  have hnil : ({} : HashMap S.PartyId M).toList = [] := by
+    apply List.isEmpty_iff.mp
+    simpa using h
+  simp [MsgMap.senders, MsgMap.empty, hnil]
 
 /-- MsgMap.senders.toFinset of empty is empty finset (set-level statement) -/
 theorem MsgMap.senders_toFinset_empty {S : Scheme} {M : Type*}
-    [BEq S.PartyId] [Hashable S.PartyId] [DecidableEq S.PartyId] :
+    [BEq S.PartyId] [Hashable S.PartyId] [EquivBEq S.PartyId] [LawfulHashable S.PartyId]
+    [LawfulBEq S.PartyId] [DecidableEq S.PartyId] :
     (MsgMap.empty : MsgMap S M).senders.toFinset = ∅ := by
   simp [MsgMap.senders_empty]
 
@@ -320,9 +339,9 @@ theorem MsgMap.get?_some_implies_contains {S : Scheme} {M : Type*}
     (m : MsgMap S M) (k : S.PartyId) (v : M)
     (hget : m.get? k = some v) :
     m.contains k = true := by
-  simp only [MsgMap.get?, MsgMap.contains] at hget ⊢
-  rw [HashMap.contains_eq_isSome_getElem?]
-  simp [hget]
+  -- Convert get? = some to membership, then to contains = true
+  have hmem : k ∈ m.map := (HashMap.mem_iff_getElem?_some _ _).2 ⟨v, hget⟩
+  simpa [MsgMap.contains] using (HashMap.contains_spec (m := m.map) k).2 hmem
 
 /-- MsgMap.contains true implies get? is some -/
 theorem MsgMap.contains_implies_get?_some {S : Scheme} {M : Type*}

@@ -63,7 +63,6 @@ inductive LocalSignResult (S : Scheme)
       (bindingNonce : S.Secret)
       (attempts : Nat)
   | failure (err : LocalRejectionError S.PartyId)
-  deriving Repr
 
 /-- Check if result is success -/
 def LocalSignResult.isSuccess {S : Scheme} : LocalSignResult S → Bool
@@ -95,7 +94,7 @@ structure ParallelConfig where
   useSimd : Bool := true
   /-- Maximum batches before giving up (0 = use maxLocalAttempts / batchSize) -/
   maxBatches : Nat := 0
-  deriving Repr
+  deriving Inhabited
 
 /-- Default parallel configuration -/
 def ParallelConfig.default : ParallelConfig :=
@@ -189,9 +188,10 @@ def tryBatch [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     (bindingFactor : S.Scalar)
     (candidates : List (S.Secret × S.Secret))
     : Option (S.Secret × S.Secret × S.Secret × Nat) :=
-  candidates.enum.findSome? fun (idx, (hiding, binding)) =>
-    match tryOnce cfg sk_i challenge hiding binding bindingFactor with
-    | some z => some (z, hiding, binding, idx)
+  let indexed := List.zip (List.range candidates.length) candidates
+  indexed.findSome? fun (idx, (hid, binding)) =>
+    match tryOnce cfg sk_i challenge hid binding bindingFactor with
+    | some z => some (z, hid, binding, idx)
     | none => none
 
 /-- Batch attempt with statistics. -/
@@ -204,9 +204,10 @@ def tryBatchWithStats [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     (candidates : List (S.Secret × S.Secret))
     : Option (S.Secret × S.Secret × S.Secret × Nat) × Nat :=
   -- Count successes for statistics (even though we only need first)
-  let results := candidates.enum.filterMap fun (idx, (hiding, binding)) =>
-    match tryOnce cfg sk_i challenge hiding binding bindingFactor with
-    | some z => some (z, hiding, binding, idx)
+  let indexed := List.zip (List.range candidates.length) candidates
+  let results := indexed.filterMap fun (idx, (hid, binding)) =>
+    match tryOnce cfg sk_i challenge hid binding bindingFactor with
+    | some z => some (z, hid, binding, idx)
     | none => none
   (results.head?, results.length)
 
@@ -246,9 +247,9 @@ def localRejectionLoop (S : Scheme)
     : IO (LocalSignResult S) := do
   let mut attempt : Nat := 0
   while attempt < cfg.maxLocalAttempts do
-    let (hiding, binding) ← sampleNonce
-    match RejectionOp.tryOnce cfg sk_i challenge hiding binding bindingFactor with
-    | some z => return .success z hiding binding (attempt + 1)
+    let (hid, binding) ← sampleNonce
+    match RejectionOp.tryOnce cfg sk_i challenge hid binding bindingFactor with
+    | some z => return .success z hid binding (attempt + 1)
     | none => attempt := attempt + 1
   return .failure (.maxAttemptsExceeded partyId cfg.maxLocalAttempts cfg.localBound)
 
@@ -294,8 +295,8 @@ def localRejectionLoopParallel (S : Scheme)
     let candidates ← sampleBatch parallelCfg.batchSize
     totalAttempts := totalAttempts + candidates.length
     match RejectionOp.tryBatch cfg sk_i challenge bindingFactor candidates with
-    | some (z, hiding, binding, _idx) =>
-        return .success z hiding binding totalAttempts
+    | some (z, hid, binding, _idx) =>
+        return .success z hid binding totalAttempts
     | none => batch := batch + 1
   return .failure (.maxAttemptsExceeded partyId totalAttempts cfg.localBound)
 
@@ -324,8 +325,8 @@ def localRejectionPure (S : Scheme)
   let maxAttempts := min cfg.maxLocalAttempts allCandidates.length
   let candidates := allCandidates.take maxAttempts
   match RejectionOp.tryBatch cfg sk_i challenge bindingFactor candidates with
-  | some (z, hiding, binding, idx) =>
-      .success z hiding binding (idx + 1)
+  | some (z, hid, binding, idx) =>
+      .success z hid binding (idx + 1)
   | none =>
       .failure (.maxAttemptsExceeded partyId maxAttempts cfg.localBound)
 
@@ -336,7 +337,7 @@ def localRejectionPure (S : Scheme)
 /-- Convert LocalSignResult to Except for monadic composition -/
 def LocalSignResult.toExcept {S : Scheme} : LocalSignResult S →
     Except (LocalRejectionError S.PartyId) (S.Secret × S.Secret × S.Secret × Nat)
-  | .success z hiding binding attempts => .ok (z, hiding, binding, attempts)
+  | .success z hid binding attempts => .ok (z, hid, binding, attempts)
   | .failure err => .error err
 
 /-- Get statistics from result -/

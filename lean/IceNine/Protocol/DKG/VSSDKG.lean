@@ -102,14 +102,15 @@ structure VSSLocalState (S : Scheme) [CommRing S.Scalar]
 /-- Initialize VSS state for a party.
     Party samples polynomial with their secret contribution as constant term.
     Uses `PolynomialModule` polynomials (coefficients in `S.Secret`). -/
-noncomputable def vssInit (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+noncomputable def vssInit (S : Scheme)
     (pid : S.PartyId)
     (secretContribution : S.Secret)  -- sk_i: this party's share of the master secret
     (randomCoeffs : List S.Secret)   -- random coefficients for polynomial
     (parties : List (S.PartyId × S.Scalar))  -- all parties with their eval points
     : VSSLocalState S :=
+  -- Pull instances from the scheme record
+  let _ := S.scalarCommRing; let _ := S.secretAdd; let _ := S.secretModule
+  let _ := S.publicAdd; let _ := S.publicModule
   let threshold := randomCoeffs.length + 1
   let poly := mkPolynomial S secretContribution randomCoeffs
   let commit := commitPolynomial S poly threshold
@@ -125,18 +126,12 @@ noncomputable def vssInit (S : Scheme) [CommRing S.Scalar]
     complaints := [] }
 
 /-- Generate commit message for broadcast. -/
-def vssCommitMsg (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (st : VSSLocalState S) : VSSCommitMsg S :=
+def vssCommitMsg (S : Scheme) (st : VSSLocalState S) : VSSCommitMsg S :=
   { sender := st.pid
     polyCommit := st.commitment }
 
 /-- Get share message for a specific recipient. -/
-def vssShareMsgFor (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    [DecidableEq S.PartyId]
+def vssShareMsgFor (S : Scheme) [DecidableEq S.PartyId]
     (st : VSSLocalState S) (recipient : S.PartyId) : Option (VSSShareMsg S) :=
   st.outgoingShares.find? (fun m => m.recipient = recipient)
 

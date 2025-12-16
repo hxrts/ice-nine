@@ -31,15 +31,13 @@ Honest shares always verify: if `s = f(x)` and `C = commit(f)`, then
 -/
 
 theorem vss_correctness
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    (S : Scheme)
     (poly : SecretPoly S) (threshold : Nat)
     (recipient : S.PartyId) (x : S.Scalar) :
-    verifyShare S (commitPolynomial S poly threshold) (generateShare S poly recipient x) := by
+    VSS.verifyShare S (commitPolynomial S poly threshold) (generateShare S poly recipient x) := by
   -- `expectedPublicValue` is evaluation of the committed polynomial; `commitPolynomial` maps
   -- coefficients through `A`, so correctness is exactly `PolynomialModule.eval_map`.
-  simpa [verifyShare, expectedPublicValue, generateShare, commitPolynomial] using
+  simpa [VSS.verifyShare, expectedPublicValue, generateShare, commitPolynomial] using
     (PolynomialModule.eval_map (R := S.Scalar) (R' := S.Scalar)
         (M := S.Secret) (M' := S.Public) (f := S.A) (q := poly) (r := x)).symm
 
@@ -50,17 +48,15 @@ If a share doesn't verify, the dealer is cheating. The verification equation
 provides a publicly checkable proof of misbehavior.
 -/
 
-def VSSInconsistent (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+def VSSInconsistent (S : Scheme)
     (commit : PolyCommitment S) (share : VSSShare S) : Prop :=
-  ¬verifyShare S commit share
+  ¬VSS.verifyShare S commit share
 
 theorem vss_soundness
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    (S : Scheme)
     (commit : PolyCommitment S)
     (share : VSSShare S)
-    (hfail : ¬verifyShare S commit share) :
+    (hfail : ¬VSS.verifyShare S commit share) :
     VSSInconsistent S commit share := hfail
 
 /-!
@@ -71,16 +67,16 @@ secret polynomial.
 -/
 
 theorem vss_binding
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+    (S : Scheme)
     (p1 p2 : SecretPoly S) (t1 t2 : Nat)
     (hA : Function.Injective S.A)
     (heq : commitPolynomial S p1 t1 = commitPolynomial S p2 t2) :
     p1 = p2 := by
   have hpoly : (commitPolynomial S p1 t1).poly = (commitPolynomial S p2 t2).poly :=
     congrArg (fun c => c.poly) heq
-  ext n
+  -- Use finsupp extensionality on coefficients.
+  apply Finsupp.ext
+  intro n
   apply hA
   have hn : (commitPolynomial S p1 t1).poly n = (commitPolynomial S p2 t2).poly n :=
     congrArg (fun q => q n) hpoly
@@ -100,7 +96,7 @@ structure VSSHiding (t : Nat) where
   knownShares : Nat
   below_threshold : knownShares < t
 
-theorem vss_hiding
+def vss_hiding
     (t : Nat)
     (knownShares : Nat)
     (hlt : knownShares < t) :
@@ -114,27 +110,24 @@ A complaint is valid iff the share genuinely fails verification.
 -/
 
 lemma verifyShareBool_iff_verifyShare
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
+    (S : Scheme) [DecidableEq S.Public]
     (comm : PolyCommitment S) (share : VSSShare S) :
-    verifyShareBool S comm share = true ↔ verifyShare S comm share := by
-  simp [verifyShareBool]
+    VSS.verifyShareBool S comm share = true ↔ VSS.verifyShare S comm share := by
+  simp [VSS.verifyShareBool, VSS.verifyShare, expectedPublicValue]
 
 theorem complaint_sound
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
+    (S : Scheme) [DecidableEq S.Public]
     (complaint : VSSComplaint S)
-    (hvalid : verifyComplaint S complaint = true) :
-    ¬verifyShare S complaint.commitment complaint.badShare := by
-  simpa [verifyComplaint, verifyShareBool] using hvalid
+    (hvalid : VSS.verifyComplaint S complaint = true) :
+    ¬VSS.verifyShare S complaint.commitment complaint.badShare := by
+  simpa [VSS.verifyComplaint, VSS.verifyShareBool] using hvalid
 
 theorem complaint_complete
-    (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
+    (S : Scheme) [DecidableEq S.Public]
     (complaint : VSSComplaint S)
-    (hfalse : verifyComplaint S complaint = false) :
-    verifyShare S complaint.commitment complaint.badShare := by
-  simpa [verifyComplaint, verifyShareBool] using hfalse
+    (hfalse : VSS.verifyComplaint S complaint = false) :
+    VSS.verifyShare S complaint.commitment complaint.badShare := by
+  simpa [VSS.verifyComplaint, VSS.verifyShareBool] using hfalse
 
 /-!
 ## Reconstruction Security
@@ -150,7 +143,7 @@ structure ReconstructionCapable (t : Nat) where
   enough_shares : numShares ≥ t
   points_distinct : True
 
-theorem reconstruction_unique
+def reconstruction_unique
     (t : Nat)
     (numShares : Nat)
     (hlen : numShares ≥ t)

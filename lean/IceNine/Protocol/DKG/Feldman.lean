@@ -65,26 +65,25 @@ For Ice Nine, we use A(a_i) where A is the one-way linear map.
 
 /-- Commitment to polynomial coefficients, as a commitment polynomial
     (coefficient-wise application of `A`). -/
-structure PolyCommitment (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
+structure PolyCommitment (S : Scheme) where
   /-- Commitment polynomial with coefficients `[A(a₀), A(a₁), ...]`. -/
   poly : PolynomialModule S.Scalar S.Public
   /-- Threshold (degree bound + 1). -/
   threshold : Nat
 
 /-- Commit to a secret polynomial by mapping coefficients through `A`. -/
-noncomputable def commitPolynomial (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+noncomputable def commitPolynomial (S : Scheme)
     (p : SecretPoly S) (threshold : Nat) : PolyCommitment S :=
-  { poly := PolynomialModule.map (R' := S.Scalar) (f := S.A) p
+  -- Use the canonical algebraic structure carried by the scheme.
+  let _ := S.scalarCommRing
+  let _ := S.secretAdd; let _ := S.secretModule
+  let _ := S.publicAdd; let _ := S.publicModule
+  { poly := (PolynomialModule.map (R:=S.Scalar) (R' := S.Scalar) (f := S.A)) p
     threshold := threshold }
 
 /-- Commit directly from a coefficient list `[a₀, ..., a_{t-1}]`. -/
-noncomputable def commitPolynomialFromCoeffs (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (coeffs : List S.Secret) : PolyCommitment S :=
+noncomputable def commitPolynomialFromCoeffs (S : Scheme) (coeffs : List S.Secret) :
+    PolyCommitment S :=
   commitPolynomial S (polyOfList coeffs) coeffs.length
 
 /-!
@@ -103,20 +102,15 @@ structure VSSShare (S : Scheme) where
   value : S.Secret
 
 /-- Generate share for a party at a given evaluation point. -/
-noncomputable def generateShare (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S) (recipient : S.PartyId) (evalPoint : S.Scalar)
-    : VSSShare S :=
+noncomputable def generateShare (S : Scheme)
+    (p : SecretPoly S) (recipient : S.PartyId) (evalPoint : S.Scalar) : VSSShare S :=
   { recipient := recipient
     evalPoint := evalPoint
     value := PolynomialModule.eval evalPoint p }
 
 /-- Generate shares for all parties. -/
-noncomputable def generateShares (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S)
-    (parties : List (S.PartyId × S.Scalar))  -- (party, eval point) pairs
-    : List (VSSShare S) :=
+noncomputable def generateShares (S : Scheme) (p : SecretPoly S)
+    (parties : List (S.PartyId × S.Scalar)) : List (VSSShare S) :=
   parties.map fun (pid, pt) => generateShare S p pid pt
 
 /-!
@@ -135,21 +129,17 @@ This works because `A` is linear:
 
 /-- Compute expected public value from a commitment and an evaluation point.
     Returns `Σ (x^i) • C_i` by evaluating the commitment polynomial. -/
-noncomputable def expectedPublicValue (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+noncomputable def expectedPublicValue (S : Scheme)
     (comm : PolyCommitment S) (evalPoint : S.Scalar) : S.Public :=
   PolynomialModule.eval evalPoint comm.poly
 
 /-- Verify a share against the polynomial commitment.
     Checks: `A(share.value) = expectedPublicValue(commitment, share.evalPoint)`. -/
-def verifyShare (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (comm : PolyCommitment S) (share : VSSShare S) : Prop :=
+def verifyShare (S : Scheme) (comm : PolyCommitment S) (share : VSSShare S) : Prop :=
   S.A share.value = expectedPublicValue S comm share.evalPoint
 
 /-- Decidable share verification (requires decidable equality on Public). -/
-noncomputable def verifyShareBool (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] [DecidableEq S.Public]
+noncomputable def verifyShareBool (S : Scheme) [DecidableEq S.Public]
     (comm : PolyCommitment S) (share : VSSShare S) : Bool :=
   S.A share.value == expectedPublicValue S comm share.evalPoint
 
@@ -161,8 +151,8 @@ Complete transcript of a VSS dealing, including commitment and all shares.
 
 /-- Evaluation points of shares are distinct.
     This is essential for Lagrange interpolation to work correctly. -/
-def evalPointsDistinct {S : Scheme} [DecidableEq S.Scalar]
-    (shares : List (VSSShare S)) : Prop :=
+def evalPointsDistinct {S : Scheme} [DecidableEq S.Scalar] (shares : List (VSSShare S)) :
+    Prop :=
   (shares.map (·.evalPoint)).Nodup
 
 /-- Decidable check for distinct eval points. -/
@@ -171,8 +161,7 @@ def evalPointsDistinctBool {S : Scheme} [DecidableEq S.Scalar]
   (shares.map (·.evalPoint)).Nodup
 
 /-- Complete VSS dealing transcript. -/
-structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public] where
+structure VSSTranscript (S : Scheme) [DecidableEq S.Scalar] where
   /-- Polynomial commitment (public). -/
   commitment : PolyCommitment S
   /-- Shares distributed to parties (each share sent privately). -/
@@ -181,32 +170,26 @@ structure VSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
   evalPointsNodup : evalPointsDistinct shares
 
 /-- Helper lemma: generateShare preserves evalPoint. -/
-theorem generateShare_evalPoint (S : Scheme) [CommRing S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S) (pid : S.PartyId) (pt : S.Scalar) :
+theorem generateShare_evalPoint (S : Scheme) (p : SecretPoly S)
+    (pid : S.PartyId) (pt : S.Scalar) :
     (generateShare S p pid pt).evalPoint = pt := rfl
 
 /-- Helper lemma: generateShares preserves eval points in order. -/
-theorem generateShares_evalPoints (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    (p : SecretPoly S)
-    (parties : List (S.PartyId × S.Scalar)) :
+theorem generateShares_evalPoints (S : Scheme) [DecidableEq S.Scalar]
+    (p : SecretPoly S) (parties : List (S.PartyId × S.Scalar)) :
     (generateShares S p parties).map (·.evalPoint) = parties.map Prod.snd := by
   induction parties with
   | nil => simp [generateShares]
   | cons hd tl ih =>
     rcases hd with ⟨pid, pt⟩
-    simp [generateShares, ih, generateShare_evalPoint]
+    simp [generateShares, generateShare_evalPoint, ih]
 
 /-- Create VSS transcript from a polynomial and party list.
     Requires that party evaluation points are distinct. -/
-noncomputable def createVSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
+noncomputable def createVSSTranscript (S : Scheme) [DecidableEq S.Scalar]
     (p : SecretPoly S) (threshold : Nat)
-    (parties : List (S.PartyId × S.Scalar))
-    (hnodup : (parties.map Prod.snd).Nodup)
-    : VSSTranscript S :=
+    (parties : List (S.PartyId × S.Scalar)) (hnodup : (parties.map Prod.snd).Nodup) :
+    VSSTranscript S :=
   { commitment := commitPolynomial S p threshold
     shares := generateShares S p parties
     evalPointsNodup := by
@@ -215,12 +198,9 @@ noncomputable def createVSSTranscript (S : Scheme) [CommRing S.Scalar] [Decidabl
       exact hnodup }
 
 /-- Try to create VSS transcript with runtime check for distinct eval points. -/
-noncomputable def tryCreateVSSTranscript (S : Scheme) [CommRing S.Scalar] [DecidableEq S.Scalar]
-    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
-    [AddCommGroup S.Public] [Module S.Scalar S.Public]
-    (p : PolynomialModule S.Scalar S.Secret) (threshold : Nat)
-    (parties : List (S.PartyId × S.Scalar))
-    : Option (VSSTranscript S) :=
+noncomputable def tryCreateVSSTranscript (S : Scheme) [DecidableEq S.Scalar]
+    (p : SecretPoly S) (threshold : Nat) (parties : List (S.PartyId × S.Scalar)) :
+    Option (VSSTranscript S) :=
   if h : (parties.map Prod.snd).Nodup then
     some (createVSSTranscript S p threshold parties h)
   else

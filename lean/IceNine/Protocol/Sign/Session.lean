@@ -197,7 +197,7 @@ structure Done (S : Scheme) where
     during the session are invalidated and cannot be reused.
 
     See `Protocol/Core/Abort.lean` for abort coordination. -/
-structure Aborted (S : Scheme) where
+structure Aborted (S : Scheme) [Repr S.PartyId] where
   /-- Session that was aborted -/
   session : Nat
   /-- Why the session was aborted -/
@@ -207,7 +207,7 @@ structure Aborted (S : Scheme) where
   deriving Repr
 
 /-- Create Aborted state from AbortState. -/
-def Aborted.fromState {S : Scheme} (session : Nat) (state : AbortState S) : Aborted S :=
+def Aborted.fromState {S : Scheme} [Repr S.PartyId] (session : Nat) (state : AbortState S) : Aborted S :=
   { session
     reason := state.reasons.head?.getD (.timeout 0 0)
     voteCount := state.voteCount }
@@ -374,7 +374,7 @@ state, ensuring nonces cannot be reused.
 
     **When to use**: Timeout waiting for other parties' commitments,
     or security violation detected during commitment phase. -/
-def abortFromCommitted (S : Scheme)
+def abortFromCommitted (S : Scheme) [Repr S.PartyId]
     (committed : Committed S)
     (reason : AbortReason S.PartyId)
     (voteCount : Nat := 1)
@@ -388,7 +388,7 @@ def abortFromCommitted (S : Scheme)
 
     **When to use**: Timeout waiting for other parties' reveals,
     trust violation detected, or explicit abort request. -/
-def abortFromRevealed (S : Scheme)
+def abortFromRevealed (S : Scheme) [Repr S.PartyId]
     (revealed : Revealed S)
     (reason : AbortReason S.PartyId)
     (voteCount : Nat := 1)
@@ -584,7 +584,7 @@ def signWithLocalRejection (S : Scheme)
       cfg revealed.keyShare.pid revealed.keyShare.secret
       revealed.challenge revealed.bindingFactor sampleNonce
   match result with
-  | .success z hiding binding attempts =>
+  | .success z hid binding attempts =>
       -- Build signed state with statistics
       let signed : Signed S :=
         { keyShare := revealed.keyShare
@@ -594,7 +594,7 @@ def signWithLocalRejection (S : Scheme)
           challenge := revealed.challenge }
       return .ok { toSigned := signed
                    localAttempts := attempts
-                   hidingNonce := hiding
+                   hidingNonce := hid
                    bindingNonce := binding }
   | .failure err =>
       return .error err
@@ -625,7 +625,7 @@ def signWithLocalRejectionParallel (S : Scheme)
       cfg parallelCfg revealed.keyShare.pid revealed.keyShare.secret
       revealed.challenge revealed.bindingFactor sampleBatch
   match result with
-  | .success z hiding binding attempts =>
+  | .success z hid binding attempts =>
       let signed : Signed S :=
         { keyShare := revealed.keyShare
           partialSig := z
@@ -634,7 +634,7 @@ def signWithLocalRejectionParallel (S : Scheme)
           challenge := revealed.challenge }
       return .ok { toSigned := signed
                    localAttempts := attempts
-                   hidingNonce := hiding
+                   hidingNonce := hid
                    bindingNonce := binding }
   | .failure err =>
       return .error err

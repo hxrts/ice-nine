@@ -22,6 +22,7 @@ namespace IceNine.Proofs.Soundness.LocalRejection
 
 open IceNine.Protocol
 open IceNine.Protocol.NormBounded
+open IceNine.Protocol.ThresholdConfig
 open IceNine.Norms
 
 /-!
@@ -33,9 +34,9 @@ then the aggregate z = Σ z_i satisfies ‖z‖∞ ≤ T · B_local ≤ B_global
 This is why global rejection never happens under honest behavior.
 -/
 
-/-- ℓ∞ norm of an integer vector (max absolute value). -/
+/-- ℓ∞ norm of an integer vector (max absolute value). Alias of `vecInfNorm`. -/
 def intVecInfNorm' (v : List Int) : Nat :=
-  (v.map Int.natAbs).foldl max 0
+  vecInfNorm v
 
 /-- Helper: init ≤ foldl max init l -/
 lemma le_foldl_max (l : List Nat) (init : Nat) :
@@ -55,76 +56,24 @@ lemma foldl_max_mono_init (l : List Nat) (a b : Nat) (hab : a ≤ b) :
   | cons x xs ih =>
     simp only [List.foldl_cons]
     apply ih
-    exact Nat.max_le_max_right x hab
+    -- `max a x ≤ max b x` follows from `a ≤ b`
+    exact max_le_max hab (le_rfl)
 
 /-- Triangle inequality for ℓ∞ norm: ‖x + y‖∞ ≤ ‖x‖∞ + ‖y‖∞ -/
 lemma infNorm_add_le (x y : List Int) (hlen : x.length = y.length) :
     intVecInfNorm' (List.zipWith (· + ·) x y) ≤ intVecInfNorm' x + intVecInfNorm' y := by
-  -- The ℓ∞ norm of a sum is bounded by the sum of norms
-  -- Key insight: max |a_i + b_i| ≤ max |a_i| + max |b_i| because
-  -- for each i: |a_i + b_i| ≤ |a_i| + |b_i| ≤ max |a_j| + max |b_j|
-  unfold intVecInfNorm'
-  induction x generalizing y with
-  | nil =>
-    simp only [List.zipWith_nil_left, List.map_nil, List.foldl_nil]
-    exact Nat.zero_le _
-  | cons a xs ih =>
-    cases y with
-    | nil => simp at hlen
-    | cons b ys =>
-      simp only [List.length_cons, Nat.add_one_inj] at hlen
-      simp only [List.zipWith_cons_cons, List.map_cons, List.foldl_cons]
-      -- Need: max |a+b| (fold xs+ys) ≤ (max |a| (fold xs)) + (max |b| (fold ys))
-      have h_tail := ih ys hlen
-      have h_head : Int.natAbs (a + b) ≤ Int.natAbs a + Int.natAbs b :=
-        Int.natAbs_add_le a b
-      -- Bound the head
-      have h1 : Int.natAbs (a + b) ≤
-          (xs.map Int.natAbs).foldl max (Int.natAbs a) +
-          (ys.map Int.natAbs).foldl max (Int.natAbs b) := by
-        calc Int.natAbs (a + b)
-            ≤ Int.natAbs a + Int.natAbs b := h_head
-          _ ≤ (xs.map Int.natAbs).foldl max (Int.natAbs a) + Int.natAbs b := by
-              apply Nat.add_le_add_right
-              exact le_foldl_max _ _
-          _ ≤ (xs.map Int.natAbs).foldl max (Int.natAbs a) +
-              (ys.map Int.natAbs).foldl max (Int.natAbs b) := by
-              apply Nat.add_le_add_left
-              exact le_foldl_max _ _
-      -- Bound the tail (using IH)
-      have h2 : ((List.zipWith (· + ·) xs ys).map Int.natAbs).foldl max 0 ≤
-          (xs.map Int.natAbs).foldl max (Int.natAbs a) +
-          (ys.map Int.natAbs).foldl max (Int.natAbs b) := by
-        calc ((List.zipWith (· + ·) xs ys).map Int.natAbs).foldl max 0
-            ≤ (xs.map Int.natAbs).foldl max 0 + (ys.map Int.natAbs).foldl max 0 := h_tail
-          _ ≤ (xs.map Int.natAbs).foldl max (Int.natAbs a) +
-              (ys.map Int.natAbs).foldl max 0 := by
-              apply Nat.add_le_add_right
-              exact foldl_max_mono_init _ _ _ (Nat.zero_le _)
-          _ ≤ (xs.map Int.natAbs).foldl max (Int.natAbs a) +
-              (ys.map Int.natAbs).foldl max (Int.natAbs b) := by
-              apply Nat.add_le_add_left
-              exact foldl_max_mono_init _ _ _ (Nat.zero_le _)
-      -- Combine using max_le
-      exact Nat.max_le.mpr ⟨h1, h2⟩
+  -- Reduce to the existing `vecInfNorm_add_le` lemma.
+  simpa [intVecInfNorm'] using vecInfNorm_add_le x y hlen
 
-/-- Sum of T vectors with bounded norms has bounded norm.
-
-    This is the key lemma: if ‖z_i‖∞ ≤ B for all i, then ‖Σz_i‖∞ ≤ T·B.
-
-    Note: This uses a loose bound (sum of bounds). In practice, the actual
-    aggregate norm is often much smaller due to cancellation. -/
+-- Sum of T vectors with bounded norms has bounded norm.
 /-- Helper: norm of zero vector is 0 -/
 lemma intVecInfNorm'_replicate_zero (n : Nat) :
-    intVecInfNorm' (List.replicate n 0) = 0 := by
+    intVecInfNorm' (List.replicate n (0 : Int)) = 0 := by
   unfold intVecInfNorm'
   induction n with
-  | zero => simp
+  | zero => simp [vecInfNorm_nil]
   | succ n ih =>
-    simp only [List.replicate_succ, List.map_cons, Int.natAbs_zero, List.foldl_cons]
-    simp only [Nat.max_eq_right (Nat.zero_le _)]
-    simp only [List.map_replicate, Int.natAbs_zero] at ih ⊢
-    exact ih
+    simp [List.replicate_succ, ih, vecInfNorm_cons]
 
 /-- Helper: length of zipWith preserves minimum length -/
 lemma length_zipWith_add (x y : List Int) :
@@ -139,7 +88,7 @@ lemma length_foldl_zipWith_add (shares : List (List Int)) (init : List Int)
   | nil => simp
   | cons s ss ih =>
     simp only [List.foldl_cons]
-    have hs : s.length = init.length := h_lens s (List.mem_cons_self _ _)
+    have hs : s.length = init.length := h_lens s (by simp)
     have hss : ∀ t ∈ ss, t.length = init.length :=
       fun t ht => h_lens t (List.mem_cons_of_mem _ ht)
     have h_zip_len : (List.zipWith (· + ·) init s).length = init.length := by
@@ -169,8 +118,8 @@ theorem aggregate_norm_bound_acc
   | cons s ss ih =>
     simp only [List.foldl_cons, List.length_cons]
     -- Apply IH with acc' = zipWith acc s and accBound' = accBound + bound
-    have hs_bound : intVecInfNorm' s ≤ bound := h_local s (List.mem_cons_self _ _)
-    have hs_len : s.length = acc.length := h_lens s (List.mem_cons_self _ _)
+    have hs_bound : intVecInfNorm' s ≤ bound := h_local s (by simp)
+    have hs_len : s.length = acc.length := h_lens s (by simp)
     have h_zip_bound : intVecInfNorm' (List.zipWith (· + ·) acc s) ≤ accBound + bound := by
       calc intVecInfNorm' (List.zipWith (· + ·) acc s)
           ≤ intVecInfNorm' acc + intVecInfNorm' s := infNorm_add_le acc s hs_len.symm
@@ -194,7 +143,7 @@ theorem aggregate_norm_bound
     (bound : Nat)
     (h_local : ∀ s ∈ shares, intVecInfNorm' s ≤ bound)
     (h_lens : ∀ s ∈ shares, s.length = (shares.head!).length) :
-    intVecInfNorm' (shares.foldl (List.zipWith (· + ·)) (List.replicate (shares.head!).length 0))
+    intVecInfNorm' (shares.foldl (List.zipWith (· + ·)) (List.replicate (shares.head!).length (0 : Int)))
     ≤ bound * shares.length := by
   cases shares with
   | nil =>
@@ -202,17 +151,23 @@ theorem aggregate_norm_bound
     exact Nat.zero_le _
   | cons s ss =>
     simp only [List.head!_cons, List.length_cons, List.foldl_cons]
-    have h_rep_len : (List.replicate s.length 0).length = s.length := by simp
-    have h_rep_norm : intVecInfNorm' (List.replicate s.length 0) = 0 :=
+    have h_rep_len : (List.replicate s.length (0 : Int)).length = s.length := by simp
+    have h_rep_norm : intVecInfNorm' (List.replicate s.length (0 : Int)) = 0 :=
       intVecInfNorm'_replicate_zero s.length
-    have h_lens' : ∀ t ∈ (s :: ss), t.length = (List.replicate s.length 0).length := by
+    have h_lens' : ∀ t ∈ (s :: ss), t.length = (List.replicate s.length (0 : Int)).length := by
       intro t ht
       simp only [h_rep_len]
       exact h_lens t ht
-    have := aggregate_norm_bound_acc (s :: ss) (List.replicate s.length 0) bound 0
-              (by rw [h_rep_norm]; exact Nat.zero_le _) h_local h_lens'
-    simp only [Nat.zero_add, List.length_cons] at this
-    exact this
+    have h_acc : intVecInfNorm' (List.replicate s.length (0 : Int)) ≤ 0 := by
+      simpa [h_rep_norm]
+    have h := aggregate_norm_bound_acc (s :: ss) (List.replicate s.length (0 : Int)) bound 0
+              h_acc h_local h_lens'
+    -- Simplify the bound: accBound = 0
+    have h' : intVecInfNorm'
+        ((s :: ss).foldl (List.zipWith (· + ·)) (List.replicate s.length (0 : Int)))
+        ≤ bound * (s :: ss).length := by
+      simpa [Nat.zero_add, List.length_cons] using h
+    exact h'
 
 /-- The fundamental theorem: T valid local shares yield valid global signature.
 
@@ -389,34 +344,19 @@ structure LocalRejectionProbability where
     which can be checked: 3^256 has ~122 digits, 2^407 has ~123 digits. -/
 theorem dilithium2_failure_bound_holds :
     (750 : Nat)^256 < 2^128 * 1000^256 := by
-  -- Rewrite: 750^256 < 2^128 * 1000^256
-  -- ⟺ (750/1000)^256 < 2^128 (after dividing, but we work with integers)
-  -- ⟺ 750^256 < 2^128 * 1000^256
-  -- ⟺ (3*250)^256 < 2^128 * (4*250)^256
-  -- ⟺ 3^256 * 250^256 < 2^128 * 4^256 * 250^256
-  -- ⟺ 3^256 < 2^128 * 4^256 = 2^128 * 2^512 = 2^640
-  --
-  -- We prove 3^256 < 2^640 by showing 3^256 < 2^407 (tighter bound)
-  -- This is verifiable: 3^256 ≈ 1.4 × 10^122, 2^407 ≈ 3.3 × 10^122
-  suffices h : (3 : Nat)^256 < 2^407 by
-    have h1 : (750 : Nat) = 3 * 250 := by native_decide
-    have h2 : (1000 : Nat) = 4 * 250 := by native_decide
-    have h3 : (4 : Nat) = 2^2 := by native_decide
-    calc (750 : Nat)^256
-        = (3 * 250)^256 := by rw [h1]
-      _ = 3^256 * 250^256 := by ring
-      _ < 2^407 * 250^256 := by exact Nat.mul_lt_mul_of_pos_right h (Nat.pow_pos (by decide) 256)
-      _ < 2^640 * 250^256 := by
-          apply Nat.mul_lt_mul_of_pos_right
-          · exact Nat.pow_lt_pow_right (by decide : 1 < 2) (by decide : 407 < 640)
-          · exact Nat.pow_pos (by decide) 256
-      _ = 2^128 * 2^512 * 250^256 := by ring
-      _ = 2^128 * (2^2)^256 * 250^256 := by ring
-      _ = 2^128 * 4^256 * 250^256 := by rw [← h3]
-      _ = 2^128 * (4 * 250)^256 := by ring
-      _ = 2^128 * 1000^256 := by rw [← h2]
-  -- Now prove 3^256 < 2^407 using native_decide
-  native_decide
+  -- We can prove this with two simple inequalities:
+  -- 1) 750^256 < 1000^256 because 750 < 1000 and 256 > 0
+  -- 2) 1000^256 ≤ 2^128 * 1000^256 because 1 ≤ 2^128
+  have hbase : (750 : Nat) < 1000 := by decide
+  have hpow : (750 : Nat)^256 < 1000^256 := by decide
+  have hge : 1 ≤ 2^128 := by decide
+  have hmul : 1000^256 ≤ 2^128 * 1000^256 := by
+    calc
+      1000^256 = (1000^256) * 1 := by ring
+      _ ≤ (1000^256) * (2^128) := by
+            exact Nat.mul_le_mul_left _ hge
+      _ = 2^128 * 1000^256 := by nlinarith
+  exact lt_of_lt_of_le hpow hmul
 
 /-- For Dilithium2 with ~25% success rate and 256 attempts -/
 def dilithium2LocalRejectionProb : LocalRejectionProbability where
@@ -437,22 +377,17 @@ Connect local rejection bounds to standard Dilithium parameters.
     - globalBound = γ₁ - β (Dilithium acceptance bound)
     - localBound = globalBound / t (ensures aggregate stays within bound) -/
 def dilithiumToThresholdConfig (p : DilithiumParams) (n t : Nat)
-    (ht : t ≤ n) (ht_pos : t > 0) : ThresholdConfig :=
-  { totalParties := n
-    threshold := t
-    maxSigners := t
-    globalBound := p.zBound
-    localBound := p.zBound / t
-    maxLocalAttempts := 256
-    threshold_le_total := ht
-    maxSigners_ge_threshold := le_refl t
-    local_global_bound := by
-      have h : p.zBound / t * t ≤ p.zBound := Nat.div_mul_le_self p.zBound t
-      exact h
-  }
+    (ht : t ≤ n) (_ht_pos : t > 0) : ThresholdConfig :=
+  let g : Nat := Int.toNat p.zBound
+  ThresholdConfig.create n g (t := t) (maxSigners := t)
+    (h1 := ht)
+    (h2 := by exact le_rfl)
+    (h3 := by
+      -- (g / t) * t ≤ g
+      exact Nat.div_mul_le_self g t)
 
 /-- For Dilithium2 with 3-of-4 threshold -/
-def dilithium2_3of4_config (hvalid : Dilithium2Params.isValid) : ThresholdConfig :=
-  dilithiumToThresholdConfig Dilithium2Params 4 3 (by decide) (by decide)
+def dilithium2_3of4_config : ThresholdConfig :=
+  dilithiumToThresholdConfig dilithium2 4 3 (by decide) (by decide)
 
 end IceNine.Proofs.Soundness.LocalRejection
