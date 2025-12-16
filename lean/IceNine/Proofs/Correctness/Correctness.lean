@@ -73,7 +73,7 @@ theorem verification_equation_correct
     (hw : S.A y = w) :
     S.A (y + c • sk) = w + c • pk := by
   -- Use linearity of A
-  simp [map_add, LinearMap.map_smul, hpk, hw]
+  simp [map_add, hpk, hw]
 
 /-- Generic happy-path correctness: if parties compute responses honestly,
     verification succeeds.
@@ -103,7 +103,7 @@ theorem verify_happy_generic
   -- Use the list lemma for zipWith sum
   have hsum := List.sum_zipWith_add_smul c y_shares sk_shares hlen.symm
   -- Apply linearity of A
-  simp [hsum, map_add, LinearMap.map_smul, hw, hpk]
+  simp [hsum, map_add, hw, hpk]
 
 /-!
 ## Short Input Hypothesis
@@ -187,10 +187,10 @@ def dilithiumNormOK (p : DilithiumParams) (z : List Int) : Prop :=
     This is the key lemma connecting norm bounds to correctness. -/
 lemma dilithium_response_norm_ok (p : DilithiumParams)
     (y sk : List Int) (c : Int)
-    (hy : vecInfNorm y < p.gamma1)
-    (hsk : vecInfNorm sk ≤ p.eta)
-    (hc : Int.natAbs c ≤ p.tau)
-    (hlen : y.length = sk.length)
+    (_hy : vecInfNorm y < p.gamma1)
+    (_hsk : vecInfNorm sk ≤ p.eta)
+    (_hc : Int.natAbs c ≤ p.tau)
+    (_hlen : y.length = sk.length)
     -- Rejection sampling condition: response is in acceptance region
     (haccept : vecInfNorm (List.zipWith (· + ·) y (sk.map (c * ·))) < p.zBound) :
     dilithiumNormOK p (List.zipWith (· + ·) y (sk.map (c * ·))) := by

@@ -45,20 +45,14 @@ This ensures Σ sk_i remains unchanged, preserving the global secret.
     The invariant guarantees global secret is preserved. -/
 structure ZeroSumMaskFn (S : Scheme) (active : Finset S.PartyId) where
   fn       : MaskFn S
-  sum_zero : (active.toList.map (fun pid => fn.mask pid)).sum = 0
+  sum_zero : Finset.sum active (fun pid => fn.mask pid) = 0
 
 /-- Merge preserves zero-sum: (a+b).sum = a.sum + b.sum = 0 + 0 = 0. -/
 instance (S : Scheme) (active : Finset S.PartyId) : Join (ZeroSumMaskFn S active) :=
   ⟨fun a b =>
     { fn := { mask := fun pid => a.fn.mask pid + b.fn.mask pid }
     , sum_zero := by
-        calc
-          (active.toList.map (fun pid => a.fn.mask pid + b.fn.mask pid)).sum
-              = (active.toList.map (fun pid => a.fn.mask pid)).sum +
-                (active.toList.map (fun pid => b.fn.mask pid)).sum := by
-                  simpa [List.sum_map_add]
-          _ = 0 + 0 := by simp [a.sum_zero, b.sum_zero]
-          _ = 0 := by simp }⟩
+        simp [Finset.sum_add_distrib, a.sum_zero, b.sum_zero] }⟩
 
 /-!
 ## Refresh Operation
