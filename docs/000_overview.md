@@ -31,7 +31,7 @@ let cfg := ThresholdConfig.dilithium2 5
 -- cfg.localBound = 32748
 ```
 
-See [Local Rejection Signing](100_configuration.md) for detailed parameter guidance.
+See [Threshold Configuration](100_configuration.md) for detailed parameter guidance.
 
 ### Key Generation
 
@@ -309,4 +309,4 @@ The implementation includes comprehensive security documentation in `Protocol/Co
 4. [Verification](004_verification.md): Signature verification and threshold context
 5. [Extensions](005_extensions.md): Complaints, refresh/repair coordination, rerandomization, type-indexed phases
 6. [Protocol Integration](006_integration.md): External context binding, evidence piggybacking, fast-path signing, self-validating shares
-7. [Local Rejection Signing](100_configuration.md): Configuration for local rejection sampling bounds
+7. [Threshold Configuration](100_configuration.md): ThresholdConfig parameters and tuning

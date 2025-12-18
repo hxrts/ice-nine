@@ -843,14 +843,17 @@ def abortFromRevealed (S : Scheme) (revealed : Revealed S)
     (reason : AbortReason S.PartyId) (voteCount : Nat) : Aborted S
 ```
 
+### Local Rejection Sampling
+
+Ice Nine implements restart-free threshold Dilithium signing with local rejection sampling. Each signer applies rejection sampling locally before sending their partial signature. The bounds are chosen so that any valid combination of partials automatically satisfies global bounds.
+
+The key invariant is that if each of T signers produces z_i with ‖z_i‖∞ ≤ B_local, then the aggregate z = Σz_i satisfies ‖z‖∞ ≤ T · B_local ≤ B_global. This eliminates global rejection as a distributed control-flow path. Given sufficient honest parties at or above threshold, signing does not trigger a distributed restart due to rejection sampling.
+
+With local rejection sampling, norm bounds are handled locally by each signer. Each signer runs rejection sampling independently until producing a valid partial. No global retry coordination is needed. The `signWithLocalRejection` function never returns a norm failure.
+
 ### Local Rejection vs Global Abort
 
-With local rejection sampling, norm bounds are handled **locally** by each signer:
-- Each signer runs rejection sampling independently
-- No global retry coordination needed
-- `signWithLocalRejection` never returns a norm failure
-
-Session aborts are for **global** failures that cannot be resolved locally:
+Session aborts are for global failures that cannot be resolved locally:
 - Timeout waiting for other parties
 - Security violations (trust assumption breached)
 - Explicit cancellation by consensus

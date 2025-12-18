@@ -7,4 +7,4 @@
 - [Verification](004_verification.md)
 - [Extensions](005_extensions.md)
 - [Protocol Integration](006_integration.md)
-- [Local Rejection Signing](100_configuration.md)
+- [Threshold Configuration](100_configuration.md)

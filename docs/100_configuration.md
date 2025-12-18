@@ -1,8 +1,6 @@
-# Local Rejection Signing
+# Threshold Configuration
 
-Ice Nine implements restart-free threshold Dilithium signing with local rejection sampling. Each signer applies rejection sampling locally before sending their partial signature. The bounds are chosen so that any valid combination of partials automatically satisfies global bounds.
-
-The key invariant is that if each of T signers produces z_i with ‖z_i‖∞ ≤ B_local, then the aggregate z = Σz_i satisfies ‖z‖∞ ≤ T · B_local ≤ B_global. This eliminates global rejection as a distributed control-flow path. Given sufficient honest parties at or above threshold, signing does not trigger a distributed restart due to rejection sampling.
+This document describes the `ThresholdConfig` structure and its parameters. For an explanation of how local rejection sampling works, see [Local Rejection Sampling](003_signing.md#local-rejection-sampling) in the signing protocol documentation.
 
 ## ThresholdConfig Structure
 
