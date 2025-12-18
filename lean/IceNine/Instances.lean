@@ -158,8 +158,6 @@ structure HashBinding : Prop where
 /-- Axiomatically assume digest binding; replace with a proven instance when available. -/
 axiom hashBindingAssumption : HashBinding
 
-instance : HashBinding := hashBindingAssumption
-
 /-- Integer vectors modulo q as secrets/publics. -/
 def intMod (_q : Nat) := Int
 
