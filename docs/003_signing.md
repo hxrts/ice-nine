@@ -851,6 +851,30 @@ The key invariant is that if each of T signers produces z_i with ‖z_i‖∞ �
 
 With local rejection sampling, norm bounds are handled locally by each signer. Each signer runs rejection sampling independently until producing a valid partial. No global retry coordination is needed. The `signWithLocalRejection` function never returns a norm failure.
 
+### Design Rationale
+
+Local rejection sampling is designed for BFT consensus integration. In a typical BFT setting with n = 3f+1 validators and threshold t = 2f+1, at most f validators can be Byzantine. The signing protocol must produce signatures despite malicious behavior, without allowing a small coalition to stall progress.
+
+The naive approach to threshold Dilithium would check the global bound after aggregation. If the aggregate z exceeds the bound, all parties must restart with fresh randomness. This creates a liveness vulnerability: a single malicious party could repeatedly cause the ceremony to fail by sending out-of-bounds partials.
+
+Local rejection eliminates this vulnerability through a mathematical guarantee. By the triangle inequality:
+
+$$\|z\|_\infty = \left\|\sum_{i \in S} z_i\right\|_\infty \leq \sum_{i \in S} \|z_i\|_\infty$$
+
+If each partial satisfies ‖z_i‖∞ ≤ B_local and we aggregate at most T partials, then ‖z‖∞ ≤ T · B_local. Setting B_local = B_global / T guarantees that any combination of valid partials produces a valid aggregate. Global overflow becomes mathematically impossible, not just unlikely.
+
+The aggregator enforces per-share bounds and discards invalid partials. With at least 2f+1 honest validators, there always exist t valid partials to aggregate. Malicious parties can only cause their own shares to be rejected. They cannot force a distributed restart.
+
+### Trade-offs
+
+Local rejection changes the scheme parameters compared to single-signer Dilithium.
+
+**More local sampling.** Tighter per-signer bounds (B_local < B_global) increase the expected number of rejection sampling iterations per signer. This is additional CPU cost but does not affect the distributed protocol. The extra work is invisible to other parties.
+
+**Narrower distribution.** The effective distribution on z is more constrained than standard Dilithium. This means the scheme is "Dilithium-like with stricter bounds" rather than a bit-for-bit clone of ML-DSA. Security arguments must account for the modified bounds.
+
+**Exceptional global rejection.** If global rejection ever occurs despite local bounds, it indicates either a negligible probability event or Byzantine behavior (shares that passed local validation but were crafted to overflow when combined). This is treated as a security anomaly, not normal control flow.
+
 ### Local Rejection vs Global Abort
 
 Session aborts are for global failures that cannot be resolved locally:
