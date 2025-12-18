@@ -323,7 +323,7 @@ structure VSSComplaint (S : Scheme) where
   commitment : PolyCommitment S
 ```
 
-Complaints are publicly verifiable—anyone can check that the share does not verify against the commitment.
+Complaints are publicly verifiable. Anyone can check that the share does not verify against the commitment.
 
 ### VSS-DKG Integration
 
@@ -333,7 +333,7 @@ In VSS-DKG, each party acts as a dealer for their own contribution:
 2. Party $P_i$ broadcasts commitment to $f_i$
 3. Party $P_i$ sends share $f_i(j)$ privately to each party $P_j$
 4. Each party verifies received shares against commitments
-5. Invalid shares generate complaints; valid complaints identify faulty dealers
+5. Invalid shares generate complaints. Valid complaints identify faulty dealers.
 6. Aggregate: $sk_j = \sum_i f_i(j)$ and $pk = \sum_i A(f_i(0))$
 
 ```lean

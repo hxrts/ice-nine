@@ -79,6 +79,106 @@ def collectBlame (config : ProtocolConfig) (errors : List E) : BlameResult Party
 | RepairCoord | `ContribCommitValidationError` | Validation | Commit validation outcome |
 | RepairCoord | `ContribRevealValidationError` | Validation | Reveal validation outcome |
 
+## Session Abort Coordination
+
+The `Protocol/Core/Abort.lean` module provides abort coordination for session-level failures that cannot be handled locally. Unlike local rejection sampling which handles norm bounds within a single signer, aborts require distributed consensus to abandon a session.
+
+### When Aborts Are Needed
+
+Session aborts handle failures that affect the entire signing session.
+
+**Liveness failures** occur when parties are offline or unresponsive. These require f+1 votes to confirm the abort. Examples include session timeout with insufficient responses and specific parties detected as unresponsive.
+
+**Security violations** trigger immediate abort without voting. These indicate the protocol cannot safely continue. Examples include trust violations where more than n-t parties are faulty, aggregate signatures exceeding bounds despite local rejection, and DKG/VSS with too many complaints.
+
+**Explicit cancellation** occurs when a party requests abort. This also requires f+1 votes to confirm.
+
+### Abort Reasons
+
+The `AbortReason` type categorizes why a session needs to abort.
+
+```lean
+inductive AbortReason (PartyId : Type*) where
+  -- Liveness failures (require f+1 votes)
+  | timeout (respondents : Nat) (required : Nat)
+  | insufficientParticipants (actual : Nat) (required : Nat)
+  | partyUnresponsive (parties : List PartyId)
+
+  -- Security violations (immediate abort)
+  | trustViolation (faultyCount : Nat) (maxTolerable : Nat)
+  | globalNormExceeded (aggregateNorm : Nat) (bound : Nat)
+  | tooManyComplaints (complaints : Nat) (maxTolerable : Nat)
+
+  -- Explicit request (requires f+1 votes)
+  | requestedBy (requester : PartyId)
+```
+
+The `isImmediate` method returns true for security violations that bypass voting. The `isSecurityViolation` method distinguishes security issues from liveness issues.
+
+### Abort State (CRDT)
+
+Abort state forms a CRDT for distributed coordination.
+
+```lean
+structure AbortState (S : Scheme) where
+  session : Nat
+  votes : Finset S.PartyId
+  reasons : List (AbortReason S.PartyId)
+  immediateTriggered : Bool := false
+```
+
+The CRDT merge unions the vote sets, concatenates reasons with deduplication, and ORs the immediate flag. This allows replicas to merge abort proposals from different parties in any order.
+
+### Abort Threshold
+
+The abort threshold is f+1 where f = n - t is the maximum faulty parties. This ensures at least one honest party agreed to abort.
+
+```lean
+def AbortState.shouldAbort (state : AbortState S) (cfg : ThresholdConfig) : Bool :=
+  state.hasImmediateReason || state.isConfirmedByVotes cfg
+```
+
+A session aborts when either an immediate reason was triggered or f+1 parties voted. The +1 prevents a coalition of f malicious parties from forcing spurious aborts.
+
+### Abort Messages
+
+Parties propose aborts by broadcasting `AbortMsg` messages.
+
+```lean
+structure AbortMsg (S : Scheme) where
+  sender : S.PartyId
+  session : Nat
+  reason : AbortReason S.PartyId
+  evidence : List S.PartyId := []
+```
+
+Convenience constructors create messages for common scenarios. The `AbortMsg.timeout` constructor creates timeout messages. The `AbortMsg.unresponsive` constructor identifies specific unresponsive parties. The `AbortMsg.trustViolation` constructor reports security violations.
+
+### Processing Abort Messages
+
+The `AbortState.processMsg` method updates state when receiving an abort message.
+
+```lean
+def AbortState.processMsg (state : AbortState S) (msg : AbortMsg S) : AbortState S :=
+  if msg.session = state.session then
+    Join.join state (AbortState.fromMsg msg)
+  else
+    state  -- Ignore messages for different sessions
+```
+
+Messages for different sessions are ignored. Messages for the current session are merged into the CRDT state.
+
+### Relationship to Local Rejection
+
+Local rejection and session aborts serve different purposes.
+
+| Mechanism | Scope | Coordination | Example |
+|-----------|-------|--------------|---------|
+| Local rejection | Single party | None | Norm bound exceeded |
+| Session abort | Session-wide | f+1 votes | Timeout, trust violation |
+
+Local rejection handles per-party issues within a signing attempt. Each party independently retries until finding a valid response. Session aborts handle failures that require distributed coordination to resolve.
+
 ## Security Markers
 
 The `Protocol/Core/Security.lean` module provides typeclass markers for implementation security requirements. These markers document FFI implementation obligations.
@@ -630,7 +730,7 @@ def processCommitValidated (S : Scheme) [BEq S.PartyId] [Hashable S.PartyId]
 
 **Design Rationale:**
 - CRDT functions can be used directly for networking without error handling in merge path
-- Validation is explicit and composable—call it when you need it
+- Validation is explicit and composable. Call it when you need it.
 - Follows "make illegal states unrepresentable" at CRDT level, "detect suspicious patterns" separately
 
 **Coordinator Selection:**
@@ -1324,3 +1424,130 @@ def getCommits (S : Scheme) : {p : Phase} → PhaseState S p → List (DkgCommit
   | .shares, .shares data => data.commits
   | .done, .done _ => []
 ```
+
+## Error Recovery Patterns
+
+This section describes common error scenarios and recovery strategies across protocol phases.
+
+### DKG Failures
+
+DKG failures occur when key generation cannot complete successfully.
+
+**Insufficient participants.** If fewer than threshold parties complete the protocol, DKG cannot produce a valid key. Recovery requires restarting DKG with a different participant set or waiting for offline parties.
+
+**Too many complaints.** If more than f parties receive valid complaints, the faulty party count exceeds tolerance. Recovery options include identifying and excluding faulty parties then restarting, or aborting if the faulty count exceeds trust assumptions.
+
+**Commitment mismatch.** When a party's reveal does not match their commitment, they are excluded. If exclusion leaves fewer than threshold honest parties, DKG must restart.
+
+```lean
+-- Check if DKG can continue after exclusions
+def canContinueDkg (totalParties exclusions threshold : Nat) : Bool :=
+  totalParties - exclusions >= threshold
+
+-- Recovery action based on complaint count
+def dkgRecoveryAction (complaints faultTolerance : Nat) : DkgRecoveryAction :=
+  if complaints = 0 then .continue
+  else if complaints <= faultTolerance then .excludeAndContinue
+  else .abort
+```
+
+### Signing Session Failures
+
+Signing sessions can fail for liveness or security reasons.
+
+**Timeout waiting for commitments.** Some parties did not send commitments within the deadline. If at least threshold parties committed, the session can proceed without the missing parties. Otherwise, abort and retry with explicit participant selection.
+
+**Timeout waiting for shares.** Parties committed but did not send shares. Same recovery as commitment timeout. Parties who committed but did not reveal are identified for potential exclusion.
+
+**Norm bound exceeded in aggregation.** With local rejection sampling, individual shares exceeding bounds are rejected rather than triggering session restart. If fewer than threshold valid shares remain after rejection, the session fails.
+
+```lean
+-- Determine next action based on valid share count
+def signingRecoveryAction (validShares threshold : Nat) : SigningRecoveryAction :=
+  if validShares >= threshold then .aggregateValidShares
+  else .retryWithDifferentSigners
+```
+
+### Refresh Protocol Failures
+
+Refresh failures affect share updates without changing the underlying key.
+
+**Coordinator failure.** If the coordinator becomes unresponsive, select a new coordinator using the rotation strategy and restart the refresh round. Partial state is discarded.
+
+**Zero-sum violation.** If masks do not sum to zero, the coordinator computed an incorrect adjustment. This indicates coordinator malfunction. Restart with a different coordinator.
+
+**Insufficient mask commits.** If parties do not commit masks, refresh cannot proceed. Wait for additional commits or abort if the deadline passes.
+
+```lean
+-- Coordinator selection on failure
+def selectNewCoordinator (strategy : CoordinatorStrategy PartyId)
+    (failed : PartyId) (round : Nat) : PartyId :=
+  match strategy with
+  | .fixed pid => pid  -- Single point of failure
+  | .roundRobin _ => computeNextCoordinator (round + 1)
+  | .random seed => computeRandomCoordinator (seed + 1)
+```
+
+### Repair Protocol Failures
+
+Repair failures occur when recovering a lost share.
+
+**Insufficient helpers.** Fewer than threshold parties responded with contributions. Request assistance from additional parties or abort if insufficient parties are available.
+
+**Verification failure.** The repaired share does not match the known public share. This indicates either corrupted contributions or an incorrect public share. Retry with a different helper set.
+
+**Commitment mismatch during reveal.** A helper's contribution reveal does not match their commitment. Exclude that helper and request a replacement if available.
+
+```lean
+-- Check if repair can complete
+def canCompleteRepair (receivedHelpers threshold : Nat) : Bool :=
+  receivedHelpers >= threshold
+
+-- Retry strategy for repair
+def repairRetryStrategy (helpers : List PartyId) (failed : List PartyId)
+    (available : List PartyId) : Option (List PartyId) :=
+  let remaining := helpers.filter (fun h => h ∉ failed)
+  let needed := threshold - remaining.length
+  if needed <= available.length then
+    some (remaining ++ available.take needed)
+  else
+    none
+```
+
+### Abort Coordination
+
+When recovery is not possible, sessions must abort cleanly.
+
+**Liveness aborts** require f+1 votes before taking effect. This prevents a minority from disrupting the protocol. Collect abort proposals and check against the abort threshold.
+
+**Security aborts** take effect immediately without voting. When a trust violation or other security issue is detected, any party can trigger immediate abort.
+
+**Post-abort state** should be cleaned up. Consumed nonces are invalidated. Session state is marked as aborted. New sessions require fresh nonces.
+
+```lean
+-- Determine abort handling
+def handleAbort (reason : AbortReason PartyId) (votes : Nat)
+    (cfg : ThresholdConfig) : AbortHandling :=
+  if reason.isImmediate then .abortNow
+  else if votes >= cfg.abortThreshold then .abortNow
+  else .collectMoreVotes
+
+-- Post-abort cleanup
+def cleanupAbortedSession (session : Nat) (st : NonceState S) : NonceState S :=
+  -- Mark session as used to prevent nonce reuse
+  { st with usedSessions := Insert.insert session st.usedSessions }
+```
+
+### General Recovery Principles
+
+Follow these principles when implementing error recovery.
+
+**Fail fast for security violations.** Security issues like trust violations or nonce reuse should trigger immediate abort without waiting for consensus.
+
+**Retry with exclusion for misbehaving parties.** When specific parties cause failures, exclude them from retry attempts rather than retrying with the same set.
+
+**Preserve nonce safety across retries.** Never reuse a nonce even if the session failed. Generate fresh nonces for each signing attempt.
+
+**Log blame for auditing.** Use `BlameableError` and `collectBlame` to track which parties caused failures. This information supports manual review and automated exclusion policies.
+
+**Prefer local recovery over distributed coordination.** Local rejection sampling handles norm bounds locally. Only escalate to session abort for failures that require distributed consensus.

@@ -4,30 +4,139 @@ Ice Nine is a threshold signature scheme in the lattice setting. It follows the 
 
 The design supports both $n$-of-$n$ and $t$-of-$n$ threshold configurations. In the $n$-of-$n$ case all parties must participate. In the $t$-of-$n$ case any subset of $t$ or more parties can sign. Lagrange interpolation coefficients adjust the partial shares in the threshold case.
 
+## Getting Started
+
+This section provides a practical overview of the protocol flow from key generation through signing.
+
+### Protocol Flow
+
+A typical deployment follows these steps.
+
+1. **Configuration**: Create a `ThresholdConfig` with party count, threshold, and security parameters.
+2. **Key Generation**: Run DKG to establish shared key material. Each party receives a secret share.
+3. **Signing Sessions**: For each message, run the two-round signing protocol to produce a threshold signature.
+4. **Verification**: Any party can verify signatures using the public key.
+
+### Configuration
+
+Start by creating a threshold configuration.
+
+```lean
+-- Create configuration for 5 parties with Dilithium2 security
+let cfg := ThresholdConfig.dilithium2 5
+
+-- The default threshold is 2/3+1 = 4 for 5 parties
+-- cfg.threshold = 4
+-- cfg.globalBound = 130994
+-- cfg.localBound = 32748
+```
+
+See [Local Rejection Signing](100_configuration.md) for detailed parameter guidance.
+
+### Key Generation
+
+Run distributed key generation to establish shared keys.
+
+```lean
+-- Each party generates their DKG contribution
+let (commitMsg, secretState) := dkgCommit S partyId randomness
+
+-- Broadcast commit messages, then reveal
+let revealMsg := dkgReveal S secretState
+
+-- After receiving all reveals, compute key shares
+let keyShare := dkgFinalize S partyId allCommits allReveals
+```
+
+The DKG protocol uses commit-reveal to prevent rogue-key attacks. Each party receives a `KeyShare` containing their secret share and the global public key. See [Key Generation](002_keygen.md) for DKG modes and VSS.
+
+### Signing
+
+Signing proceeds in two rounds with session types enforcing correct usage.
+
+```lean
+-- Round 1: Commit to nonces
+let nonce := FreshNonce.sample S  -- Sample fresh nonce
+let ready := initSession S keyShare message session nonce
+let (committed, commitMsg) := commit S ready
+-- Broadcast commitMsg
+
+-- After receiving all commits, reveal
+let (revealed, revealMsg) := reveal S committed challenge bindingFactor aggregateW
+-- Broadcast revealMsg
+
+-- Round 2: Produce signature share
+let (signed, shareMsg) ← signWithLocalRejection S revealed cfg sampleNonce
+-- Broadcast shareMsg
+
+-- Aggregator combines shares
+let signature := aggregateValidated S cfg protocolCfg challenge commits shares pkShares factors
+```
+
+The `FreshNonce` type ensures nonces are used exactly once. The `signWithLocalRejection` function handles norm bounds locally without distributed retries. See [Two-Round Threshold Signing](003_signing.md) for the complete protocol.
+
+### Verification
+
+Verify signatures against the public key.
+
+```lean
+let valid := verify S signature publicKey message
+```
+
+Verification checks the algebraic relation A(z) = w + c·pk and the norm bound. See [Verification](004_verification.md) for details.
+
+### Error Handling
+
+Protocol operations return structured errors for recovery.
+
+```lean
+match result with
+| .ok signature => -- Success
+| .error e =>
+    -- Check if error identifies a misbehaving party
+    match BlameableError.blamedParty e with
+    | some party => excludeParty party
+    | none => handleOperationalError e
+```
+
+See [Extensions](005_extensions.md) for error recovery patterns across protocol phases.
+
+### Extension Operations
+
+After initial setup, use extension protocols for operational needs.
+
+**Share Refresh** updates shares without changing the key. Run periodically for proactive security.
+
+**Share Repair** recovers a lost share using contributions from other parties.
+
+**Rerandomization** masks shares and nonces for unlinkability between sessions.
+
+See [Extensions](005_extensions.md) for these protocols.
+
 ## CRDT-Based State Management
 
 The implementation uses a semilattice/CRDT architecture for protocol state. Each protocol phase (commit, reveal, shares, done) carries state that forms a join-semilattice. The join operation (⊔) merges states from different replicas or out-of-order message arrivals.
 
-**Phase-indexed state.** Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/State/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
+Protocol progress is modeled as transitions between phases: commit → reveal → shares → done. Each phase carries accumulated data. States within a phase merge via componentwise join. The type-indexed implementation (`Protocol/State/PhaseIndexed.lean`) makes invalid phase transitions compile-time errors.
 
-**Conflict-free message maps.** Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender un-expressable in the type system. Each party can contribute at most one message per phase.
+Messages are stored in `MsgMap` structures keyed by sender ID. This makes conflicting messages from the same sender un-expressable in the type system. Each party can contribute at most one message per phase.
 
-**Separated CRDT and validation.** The coordination protocols (RefreshCoord, RepairCoord) cleanly separate concerns:
-- **CRDT layer** (`process*`): Pure merge semantics—idempotent, commutative, always succeeds. Use for replication/networking.
-- **Validation layer** (`detect*`, `validate*`): Conflict detection without modifying state. Use for auditing/security.
-- **Combined** (`process*Validated`): Merge + validation in one call, returning `(newState, Option error)`.
+The coordination protocols (RefreshCoord, RepairCoord) cleanly separate concerns into three layers:
+- CRDT layer (`process*`): Pure merge semantics that are idempotent, commutative, and always succeed. Use for replication and networking.
+- Validation layer (`detect*`, `validate*`): Conflict detection without modifying state. Use for auditing and security.
+- Combined (`process*Validated`): Merge and validation in one call, returning `(newState, Option error)`.
 
-**Monotonic handlers.** Step functions that advance state are monotone with respect to the semilattice order. This ensures that merging divergent traces preserves safety properties. If $a \leq b$ then $\mathsf{step}(a) \leq \mathsf{step}(b)$.
+Step functions that advance state are monotone with respect to the semilattice order. This ensures that merging divergent traces preserves safety properties. If $a \leq b$ then $\mathsf{step}(a) \leq \mathsf{step}(b)$.
 
-**Composite state.** Protocol state combines with auxiliary CRDT data for refresh masks, repair bundles, and rerandomization masks. The product of semilattices is itself a semilattice.
+Protocol state combines with auxiliary CRDT data for refresh masks, repair bundles, and rerandomization masks. The product of semilattices is itself a semilattice.
 
 ## Session Types
 
 The implementation uses session types to enforce disciplined handling of secret material, making certain classes of errors impossible to express.
 
-**Session-typed signing.** The signing protocol (`Protocol/Sign/Session.lean`) uses linear session types where each state transition consumes the previous state. Nonces are wrapped in `FreshNonce` structures that can only be consumed once—nonce reuse is a compile-time error, not a runtime check.
+The signing protocol (`Protocol/Sign/Session.lean`) uses linear session types where each state transition consumes the previous state. Nonces are wrapped in `FreshNonce` structures that can only be consumed once. Nonce reuse is a compile-time error, not a runtime check.
 
-**Threshold context.** Signature extraction requires a `ThresholdCtx` that pairs the active signer set with a proof that $|S| \geq t$. This prevents signatures from being produced without sufficient participation.
+Signature extraction requires a `ThresholdCtx` that pairs the active signer set with a proof that $|S| \geq t$. This prevents signatures from being produced without sufficient participation.
 
 ## Specification Components
 
@@ -55,6 +164,9 @@ The implementation is organized into focused modules within subdirectories:
 - `Core/Error.lean` - BlameableError typeclass, error utilities
 - `Core/Lagrange.lean` - Unified Lagrange coefficient API
 - `Core/Serialize.lean` - Serialization API for network transport
+- `Core/ThresholdConfig.lean` - Threshold configuration and local rejection bounds
+- `Core/NormBounded.lean` - Norm bound predicates and verification
+- `Core/Abort.lean` - Session-level abort coordination for liveness failures
 
 **Protocol/Sign/** - Signing protocol:
 - `Sign/Types.lean` - Session tracking, signing messages, error types
@@ -62,6 +174,9 @@ The implementation is organized into focused modules within subdirectories:
 - `Sign/Threshold.lean` - Coefficient strategies, threshold context
 - `Sign/Session.lean` - Session-typed API preventing nonce reuse
 - `Sign/ThresholdMerge.lean` - Threshold-aware state merge operations
+- `Sign/LocalRejection.lean` - Local rejection sampling for norm bounds
+- `Sign/ValidatedAggregation.lean` - Validated signature aggregation
+- `Sign/NonceLifecycle.lean` - Nonce lifecycle tracking and safety
 - `Sign/Sign.lean` - Re-exports for backward compatibility
 
 **Protocol/DKG/** - Distributed key generation:
@@ -99,21 +214,26 @@ The implementation is organized into focused modules within subdirectories:
 - `Proofs/Core/Assumptions.lean` - Cryptographic assumptions, axiom index, Dilithium parameters
 - `Proofs/Core/ListLemmas.lean` - Reusable lemmas for list operations and sums
 - `Proofs/Core/HighBits.lean` - HighBits specification for Dilithium error absorption
+- `Proofs/Core/NormProperties.lean` - Norm bound properties and lemmas
+- `Proofs/Core/MsgMapLemmas.lean` - MsgMap CRDT lemmas
 
 *Proofs/Correctness/* - Happy-path proofs:
 - `Proofs/Correctness/Correctness.lean` - Verification theorems
 - `Proofs/Correctness/DKG.lean` - DKG correctness proofs
 - `Proofs/Correctness/Sign.lean` - Signing correctness proofs
 - `Proofs/Correctness/Lagrange.lean` - Lagrange interpolation correctness
+- `Proofs/Correctness/ThresholdConfig.lean` - Threshold configuration correctness
 
 *Proofs/Soundness/* - Security proofs:
 - `Proofs/Soundness/Soundness.lean` - Special soundness, nonce reuse attack, SIS reduction
 - `Proofs/Soundness/VSS.lean` - VSS security properties
 - `Proofs/Soundness/Robustness.lean` - Protocol robustness properties
+- `Proofs/Soundness/LocalRejection.lean` - Local rejection sampling soundness
 
 *Proofs/Extensions/* - Extension protocol proofs:
 - `Proofs/Extensions/Phase.lean` - Phase handler monotonicity (CRDT safety)
 - `Proofs/Extensions/Coordination.lean` - Refresh/repair coordination security
+- `Proofs/Extensions/RefreshCoord.lean` - Refresh coordination proofs
 - `Proofs/Extensions/Repair.lean` - Share repair correctness
 - `Proofs/Extensions/RefreshRepair.lean` - Refresh invariants, rerandomization
 
@@ -173,7 +293,7 @@ The session-typed signing protocol makes nonce reuse a compile-time error. Each 
 
 The implementation includes comprehensive security documentation in `Protocol/Core/Security.lean`:
 
-**Randomness Requirements:** All secret values (shares, nonces, commitment openings) must be sampled from a CSPRNG. Nonce reuse is catastrophic—the session-typed API makes it a compile-time error.
+**Randomness Requirements:** All secret values (shares, nonces, commitment openings) must be sampled from a CSPRNG. Nonce reuse is catastrophic. The session-typed API makes it a compile-time error.
 
 **Side-Channel Considerations:** The specification flags timing-vulnerable functions (Lagrange computation, norm checks). Production implementations must use constant-time primitives. The `ConstantTimeEq` typeclass (in `Security.lean`) marks types requiring constant-time equality comparison.
 
@@ -183,9 +303,10 @@ The implementation includes comprehensive security documentation in `Protocol/Co
 
 ## Docs Index
 
-1. [Algebraic Setting](01_algebra.md): Algebraic primitives, module structure, lattice instantiations, and semilattice definitions
-2. [Key Generation](02_keygen.md): Dealer and distributed key generation with CRDT state, VSS, party exclusion
-3. [Signing Protocol](03_signing.md): Two-round signing protocol with session types, rejection sampling
-4. [Verification](04_verification.md): Signature verification and threshold context
-5. [Extensions](05_extensions.md): Complaints, refresh/repair coordination, rerandomization, type-indexed phases
-6. [Protocol Integration](06_integration.md): External context binding, evidence piggybacking, fast-path signing, self-validating shares
+1. [Algebraic Setting](001_algebra.md): Algebraic primitives, module structure, lattice instantiations, and semilattice definitions
+2. [Key Generation](002_keygen.md): Dealer and distributed key generation with CRDT state, VSS, party exclusion
+3. [Signing Protocol](003_signing.md): Two-round signing protocol with session types, rejection sampling
+4. [Verification](004_verification.md): Signature verification and threshold context
+5. [Extensions](005_extensions.md): Complaints, refresh/repair coordination, rerandomization, type-indexed phases
+6. [Protocol Integration](006_integration.md): External context binding, evidence piggybacking, fast-path signing, self-validating shares
+7. [Local Rejection Signing](100_configuration.md): Configuration for local rejection sampling bounds

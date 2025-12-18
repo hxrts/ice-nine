@@ -198,7 +198,7 @@ After all commitments are received parties reveal their nonces and compute the s
 
 Each party $P_i$ broadcasts only the opening $\rho_i$ for its hiding commitment.
 The public nonces (`hidingVal`, `bindingVal`) were already sent in Round 1 inside `SignCommitMsg`.
-Trackers (`SessionTracker`, `NonceRegistry`) are threaded through; no additional updates occur in this phase.
+Trackers (`SessionTracker`, `NonceRegistry`) are threaded through. No additional updates occur in this phase.
 
 ### Verification
 
@@ -496,7 +496,7 @@ def validateSigning
   : Except (SignError S.PartyId) (Signature S)
 ```
 
-Callers must compute `bindingFactors` (e.g., via `computeBindingFactors`) and supply them; otherwise validation will not type-check.
+Callers must compute `bindingFactors` (e.g., via `computeBindingFactors`) and supply them. Otherwise validation will not type-check.
 
 ### Error Types
 
@@ -865,7 +865,7 @@ The session type system provides these guarantees:
 
 3. **Local rejection**: With `signWithLocalRejection`, norm bounds are satisfied during signing via local rejection sampling. No global retry loop is needed.
 
-4. **Compile-time enforcement**: These aren't runtime checks—the type system prevents writing code that would reuse a nonce.
+4. **Compile-time enforcement**: These are not runtime checks. The type system prevents writing code that would reuse a nonce.
 
 5. **Abort safety**: Aborted sessions cannot continue. Once a session transitions to `Aborted`, any consumed nonces are invalidated.
 
@@ -912,7 +912,7 @@ def signFast (S : Scheme)
     : Option (SignShareMsg S)
 ```
 
-This function produces a signature share immediately using a precomputed nonce. It SHOULD return `none` if the norm check fails, requiring a fresh nonce. **Implementation note:** the current Lean code stubs out the norm check and always returns `some`; production code must call `S.normOK` here and propagate failure.
+This function produces a signature share immediately using a precomputed nonce. It SHOULD return `none` if the norm check fails, requiring a fresh nonce. The current Lean code stubs out the norm check and always returns `some`. Production code must call `S.normOK` here and propagate failure.
 
 ### Security Assumptions
 
@@ -934,8 +934,175 @@ See [Protocol Integration](06_integration.md) for detailed usage patterns with e
 
 **Challenge entropy.** The hash function must produce challenges with sufficient entropy. In the random oracle model this is guaranteed.
 
-**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Local rejection sampling ensures each partial signature is independent of the secret—no global retry coordination needed.
+**Norm bounds.** The norm check prevents statistical leakage of the secret through the response distribution. Local rejection sampling ensures each partial signature is independent of the secret. No global retry coordination is needed.
 
 **Abort coordination.** Session-level aborts (for liveness failures or security violations) use CRDT state with an $f+1$ threshold, ensuring at least one honest party agreed to abort.
 
 **Totality.** The validation function always returns either a valid signature or a structured error.
+
+## Nonce Lifecycle
+
+The `Protocol/Sign/NonceLifecycle.lean` module provides unified effect abstractions for nonce management. It consolidates session tracking, nonce registry, and pool management into a single composable interface with explicit error handling.
+
+### Nonce Safety Invariants
+
+The module enforces four safety invariants.
+
+**Session uniqueness** ensures each session ID is used at most once per party. Reusing a session ID could lead to nonce reuse.
+
+**Commitment uniqueness** ensures each nonce commitment appears in at most one session. If the same commitment appears twice, a nonce was reused.
+
+**Consumption tracking** ensures nonces are consumed exactly once. The `FreshNonce` type enforces this at compile time. The runtime registry provides defense-in-depth.
+
+**Expiry enforcement** ensures precomputed nonces expire and cannot be used past their maximum age. This prevents stale nonces from being used after key rotation.
+
+### NonceState Structure
+
+The `NonceState` structure consolidates all nonce-related tracking.
+
+```lean
+structure NonceState (S : Scheme) where
+  partyId : S.PartyId
+  usedSessions : Finset Nat
+  commitBySession : Std.HashMap (S.PartyId × Nat) S.Commitment
+  sessionsByCommit : Std.HashMap (S.PartyId × S.Commitment) (List Nat)
+  poolAvailable : List (PrecomputedNonce S)
+  poolConsumed : Nat
+```
+
+The `usedSessions` field tracks all sessions where commit has occurred. The `commitBySession` map provides forward lookup from session to commitment. The `sessionsByCommit` map provides reverse lookup for reuse detection.
+
+### NonceError Type
+
+Nonce operations return typed errors for precise error handling.
+
+```lean
+inductive NonceError (PartyId : Type*)
+  | sessionAlreadyUsed (session : Nat) (party : Option PartyId)
+  | commitmentReuse (session1 session2 : Nat) (party : PartyId)
+  | nonceExpired (generatedAt currentTime maxAge : Nat)
+  | poolEmpty
+  | poolExhausted (consumed : Nat)
+  | invalidSession (reason : String)
+  | nonceNotFound (session : Nat)
+```
+
+The `commitmentReuse` error is a security violation. The `BlameableError` instance identifies the party responsible. Other errors are operational without blame attribution.
+
+### Pure Operations
+
+The `NonceOp` namespace provides pure operations on `NonceState`.
+
+```lean
+-- Check session freshness
+def checkFresh (session : Nat) (st : NonceState S) : NonceResult S Unit
+
+-- Mark session as used
+def markUsed (session : Nat) (st : NonceState S) : NonceResult S Unit
+
+-- Record a commitment
+def recordCommitment (session : Nat) (commit : S.Commitment) (st : NonceState S)
+    : NonceResult S Unit
+
+-- Check for reuse and throw if detected
+def assertNoReuse (commit : S.Commitment) (st : NonceState S) : NonceResult S Unit
+
+-- Full commit operation: check fresh, mark used, record, check reuse
+def commitSession (session : Nat) (commit : S.Commitment) (st : NonceState S)
+    : NonceResult S Unit
+```
+
+The `commitSession` operation combines all checks into a single atomic operation. It ensures session freshness, marks the session as used, records the commitment, and checks for reuse.
+
+### Monadic Interface
+
+The `NonceM` monad provides composition for chaining operations.
+
+```lean
+abbrev NonceM (S : Scheme) :=
+  StateT (NonceState S) (Except (NonceError S.PartyId))
+
+-- Run and get final state
+def NonceM.run (m : NonceM S α) (st : NonceState S)
+    : Except (NonceError S.PartyId) (α × NonceState S)
+```
+
+The monadic interface threads state automatically and short-circuits on errors.
+
+### Session Type Integration
+
+The module bridges runtime tracking with compile-time session types.
+
+```lean
+-- Create ReadyToCommit using NonceState for tracking
+def initSessionWithState (S : Scheme) (keyShare : KeyShare S) (message : S.Message)
+    (session : Nat) (nonce : FreshNonce S) (st : NonceState S) : ReadyToCommit S
+
+-- Commit transition that updates NonceState
+def commitWithState (S : Scheme) (ready : ReadyToCommit S) (st : NonceState S)
+    : Except (NonceError S.PartyId) (Committed S × SignCommitMsg S × NonceState S)
+```
+
+The `commitWithState` function consumes the `FreshNonce` inside `ReadyToCommit`. Session types prevent reuse at compile time. The `NonceState` provides runtime detection as defense-in-depth.
+
+## Validated Aggregation
+
+The `Protocol/Sign/ValidatedAggregation.lean` module provides per-share validation during signature aggregation. This enables local rejection sampling by validating each partial signature before aggregation and collecting blame for invalid shares.
+
+### Validation Process
+
+Validated aggregation performs three checks on each share.
+
+**Norm bound check** verifies ‖z_i‖∞ ≤ B_local where B_local is the local rejection bound from `ThresholdConfig`. Shares exceeding the bound are rejected.
+
+**Algebraic check** verifies A(z_i) = w_eff + c·pk_i where w_eff is the effective nonce commitment incorporating the binding factor. This detects malformed shares.
+
+**Commitment presence** verifies the share has a corresponding commitment from round 1. Missing commitments indicate protocol violations.
+
+### ShareValidationError
+
+Validation errors identify the responsible party.
+
+```lean
+inductive ShareValidationError (PartyId : Type*)
+  | normExceeded (party : PartyId) (actual : Nat) (bound : Nat)
+  | algebraicInvalid (party : PartyId) (reason : String)
+  | missingCommitment (party : PartyId)
+  | missingBindingFactor (party : PartyId)
+```
+
+All error variants implement `BlameableError` for blame attribution.
+
+### AggregationResult
+
+The aggregation result contains the signature (if successful), blame information, and statistics.
+
+```lean
+structure AggregationResult (S : Scheme) where
+  signature : Option (Signature S)
+  includedParties : List S.PartyId
+  blame : BlameResult S.PartyId
+  success : Bool
+  totalReceived : Nat
+  validCount : Nat
+```
+
+The `blame` field contains collected errors according to `ProtocolConfig`. The `includedParties` list identifies which shares were aggregated.
+
+### aggregateValidated Function
+
+The primary aggregation function validates shares and aggregates valid ones.
+
+```lean
+def aggregateValidated (S : Scheme) (cfg : ThresholdConfig)
+    (protocolCfg : ProtocolConfig) (challenge : S.Challenge)
+    (commitments : List (SignCommitMsg S)) (shares : List (SignShareMsg S))
+    (pkShares : S.PartyId → S.Public) (bindingFactors : BindingFactors S)
+    : AggregationResult S
+```
+
+The function validates all shares, partitions them into valid and invalid, collects blame according to `protocolCfg`, and aggregates the first threshold valid shares.
+
+### Guarantee
+
+If at least threshold parties produce valid shares, the aggregate signature is guaranteed to satisfy the global norm bound. This follows from the local bound relationship: T · B_local ≤ B_global.

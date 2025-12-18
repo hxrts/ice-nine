@@ -256,6 +256,50 @@ theorem dilithiumL2_gamma1_ok : dilithiumL2.gamma1 > dilithiumL2.beta
 theorem dilithiumL2_gamma2_ok : dilithiumL2.gamma2 > dilithiumL2.beta
 ```
 
+### Security Parameter Guidance
+
+When selecting parameters for threshold deployment, consider how threshold configuration affects security margins.
+
+**Threshold and Local Bounds.** The local rejection bound is B_local = B_global / T where T is the number of signers. More signers means each signer must produce smaller partials. This affects rejection rates but not core security assumptions.
+
+**Security Level Selection.** Choose the security level based on your threat model, not performance concerns.
+
+| Use Case | Recommended Level | Rationale |
+|----------|-------------------|-----------|
+| General purpose | Dilithium2 (128-bit) | Sufficient for most applications |
+| High-value assets | Dilithium3 (192-bit) | Conservative security margin |
+| Long-term secrets | Dilithium5 (256-bit) | Maximum security against future attacks |
+
+The 128-bit level provides security comparable to AES-128. The 192-bit and 256-bit levels provide additional margins against potential improvements in lattice algorithms.
+
+**Threshold and Fault Tolerance.** The default 2/3+1 threshold balances security and liveness.
+
+| Threshold | Fault Tolerance | Trade-off |
+|-----------|-----------------|-----------|
+| n-of-n | Zero faults tolerated | Maximum security, fragile |
+| 2/3+1 | Up to 1/3 faulty | Good balance (BFT standard) |
+| 1/2+1 | Up to 1/2 faulty | More fault tolerant, weaker security |
+
+Lower thresholds improve liveness but reduce the cost of compromise. An adversary needs fewer corrupted parties to forge signatures.
+
+**Signer Count Limits.** The local bound B_local decreases as T increases. Very large signer counts reduce B_local to the point where rejection rates become impractical.
+
+| Signers (T) | B_local (Dilithium2) | Practical? |
+|-------------|----------------------|------------|
+| 3-10 | 13099-43664 | Yes |
+| 20 | 6549 | Marginal |
+| 50+ | <2620 | Not recommended |
+
+For deployments with more than 20 signers, consider using Dilithium3 or Dilithium5 for larger global bounds.
+
+**Parameter Validation.** Always validate parameter configurations using `ThresholdConfig.validate`. The validation checks:
+- Threshold does not exceed party count
+- maxSigners is at least threshold
+- Local bound is positive after division
+- Global bound is sufficient for the configuration
+
+Configurations from untrusted sources should be validated before use even if they were created through `ThresholdConfig.create`.
+
 ## Concrete Scheme Instantiations
 
 The implementation provides a lattice-friendly scheme in `Instances.lean`:
@@ -305,7 +349,7 @@ The join induces a partial order: $a \leq b$ iff $a \sqcup b = b$.
 
 ### Message Map Semilattice
 
-Protocol messages are stored in `MsgMap` structures—hash maps keyed by sender ID. This design makes conflicting messages from the same sender **un-expressable** at the type level.
+Protocol messages are stored in `MsgMap` structures, which are hash maps keyed by sender ID. This design makes conflicting messages from the same sender un-expressable at the type level.
 
 ```lean
 structure MsgMap (S : Scheme) (M : Type*) [BEq S.PartyId] [Hashable S.PartyId] where
@@ -418,7 +462,7 @@ structure NonceBox (α : Type*) where
 def NonceBox.fresh (nonce : α) : NonceBox α := ⟨nonce⟩
 ```
 
-The `private` constructors prevent arbitrary creation of wrapped values. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances. This lightweight discipline signals intent—code that accesses the `val` field must explicitly acknowledge it is handling secret material.
+The `private` constructors prevent arbitrary creation of wrapped values. Use `SecretBox.wrap` and `NonceBox.fresh` to create instances. This lightweight discipline signals intent. Code that accesses the `val` field must explicitly acknowledge it is handling secret material.
 
 Both types have `Zeroizable` and `ConstantTimeEq` marker instances to indicate security requirements for production implementations.
 
