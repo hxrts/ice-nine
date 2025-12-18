@@ -42,14 +42,12 @@ Communication costs increase. Partial signatures and commitments are vectors or 
 
 ## Why This Works
 
-The conceptual story is straightforward. FROST works because Schnorr is linear in the secret and nonce. Dilithium signatures are also linear constructions over a module with managed noise.
-
-Thresholdizing Dilithium respects this linearity. The secret key equals the sum of shares. The signing randomness equals the sum of shares. The final response equals the sum of partial responses. Everything happens in the same algebraic space as the single-signer scheme.
+The concept is straightforward. FROST works because Schnorr is linear in the secret and nonce. Dilithium signatures are also linear constructions over a module with managed noise. Thresholdizing Dilithium respects this linearity. The secret key equals the sum of shares. The signing randomness equals the sum of shares. The final response equals the sum of partial responses. Everything happens in the same algebraic space as the single-signer scheme.
 
 The verifier sees an ordinary Dilithium signature. The distributed key and randomness are invisible. Verification uses the standard algorithm with no awareness of the threshold structure.
 
 ## Practical Considerations
 
-Threshold Dilithium signatures may not be practical for all use cases. Dilithium signatures are substantially larger than ECDSA or Schnorr signatures. A Dilithium2 signature is approximately 2.4 KB compared to 64 bytes for ECDSA. Threshold variants do not increase this size, but applications sensitive to signature size should evaluate whether the overhead is acceptable.
+Threshold Dilithium signatures may not be practical for many use cases. Dilithium signatures are substantially larger than ECDSA or Schnorr signatures. A Dilithium2 signature is on the order of 2.5 KB compared to ~64 bytes for ECDSA. Threshold variants do not increase this size, but applications sensitive to signature size should evaluate whether the overhead is acceptable.
 
-The scheme is best suited for contexts where post-quantum security is required and signature size is not the primary constraint. Examples include signing blockchain checkpoints, certificate issuance, or other scenarios where signatures are verified many times but transmitted infrequently.
+The scheme is therefore best suited for contexts where post-quantum security is required and signature size is not the primary constraint.
