@@ -105,7 +105,7 @@ summary:
 
     # Collect all files, organized by directory
     declare -A dirs
-    declare -a root_files
+    root_files=()
 
     while IFS= read -r f; do
         rel="${f#$docs/}"
@@ -129,7 +129,7 @@ summary:
     done < <(find "$docs" -type f -name '*.md' -not -name 'SUMMARY.md' -not -path "$build_dir/*" | LC_ALL=C sort)
 
     # Write root-level files first
-    for f in "${root_files[@]}"; do
+    for f in "${root_files[@]+"${root_files[@]}"}"; do
         rel="${f#$docs/}"
         title="$(get_title "$f")"
         echo "- [$title]($rel)" >> "$out"
@@ -138,7 +138,7 @@ summary:
     # Write chapters (directories) with their files
     for dir in $(printf '%s\n' "${!dirs[@]}" | LC_ALL=C sort); do
         # Add blank line before chapter
-        [ ${#root_files[@]} -gt 0 ] && echo "" >> "$out"
+        [ "${#root_files[@]}" -gt 0 ] && echo "" >> "$out"
 
         # Add chapter heading
         chapter_name="$(get_chapter_name "$dir")"
