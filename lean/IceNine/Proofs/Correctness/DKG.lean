@@ -71,7 +71,7 @@ lemma forM_zip_ok_forall2
   induction commits generalizing reveals with
   | nil =>
     cases reveals with
-    | nil => simpa using h
+    | nil => exact List.Forall₂.nil
     | cons _ _ => cases hlen
   | cons c cs ih =>
     cases reveals with
@@ -143,12 +143,18 @@ lemma dkgAggregateChecked_sound
   · by_cases hdup : (reveals.map (·.sender)).Nodup
     · cases hcp : checkPairs S commits reveals with
       | ok _ =>
-        simp [hlen, hdup, hcp] at h
-        exact h.symm
+          -- success path: pk was bound from the final `pure`
+          simp [hlen, hdup, hcp] at h
+          exact h.symm
       | error _ =>
-        simp [hlen, hdup, hcp] at h
-    · simp [hlen, hdup] at h
-  · simp [dkgAggregateChecked, hlen] at h
+          -- impossible: ok result cannot arise from error
+          simp [hlen, hdup, hcp] at h
+    · -- duplicate parties case: computation throws, cannot be ok
+      simp [hlen, hdup] at h
+      cases h
+  · -- length mismatch: computation throws, cannot be ok
+    simp [hlen] at h
+    cases h
 
 /-- Ok result → dkgValid predicate holds.
     Uses checkPairs_ok_forall2 to establish the validity predicate. -/
@@ -165,13 +171,15 @@ lemma dkgAggregateChecked_ok_valid
   · by_cases hdup : (reveals.map (·.sender)).Nodup
     · cases hcp : checkPairs S commits reveals with
       | ok _ =>
-        have hcp' : checkPairs S commits reveals = Except.ok () := hcp
-        have hv : dkgValid S commits reveals := checkPairs_ok_forall2 (S := S) commits reveals hcp'
-        simpa [dkgValid] using hv
+          have hv : dkgValid S commits reveals :=
+            checkPairs_ok_forall2 (S := S) commits reveals (by simpa using hcp)
+          simpa [dkgValid] using hv
       | error _ =>
-        simp [hlen, hdup, hcp] at h
+          simp [hlen, hdup, hcp] at h
     · simp [hlen, hdup] at h
-  · simp [dkgAggregateChecked, hlen] at h
+      cases h
+  · simp [hlen] at h
+    cases h
 
 /-!
 ## Complaint-Based Aggregation
@@ -190,11 +198,15 @@ lemma dkgAggregateWithComplaints_correct
   (h : dkgAggregateWithComplaints S commits reveals = Except.ok pk) :
   pk = (reveals.map (·.pk_i)).sum := by
   simp only [dkgAggregateWithComplaints] at h
-  split_ifs at h with hlen hempty
-  · -- Length matched and no complaints: pk is explicitly set to sum
-    simp only [Except.ok.injEq] at h
-    exact h.symm
-  all_goals cases h
+  by_cases hlen : commits.length = reveals.length
+  · simp [hlen] at h
+    by_cases hcs : dkgCheckComplaints S commits reveals = []
+    · simp [hcs] at h
+      have hs : (reveals.map (·.pk_i)).sum = pk := by
+        simpa [Except.ok.injEq] using h
+      exact hs.symm
+    · simp [hcs] at h
+  · simp [hlen] at h
 
 /-!
 ## Dealer Properties
@@ -229,8 +241,6 @@ lemma dealerKeygen_wellFormed
   {tr : DealerTranscript S}
   (h : dealerKeygen S pids secrets opens = some tr) :
   ∀ sh ∈ tr.shares, DealerShare.wellFormed S sh := by
-  -- Shares are constructed with commitPk := S.commit pk_i op
-  -- Proof relies on nested zip membership
   classical
   unfold dealerKeygen at h
   by_cases hlen : pids.length = secrets.length ∧ secrets.length = opens.length
@@ -245,22 +255,22 @@ lemma dealerKeygen_wellFormed
           let com  := S.commit pk_i op
           { pid := pid, sk_i := sk, pk_i := pk_i, opening := op, commitPk := com }
       have hwf_zip :
-          ∀ (ps : List S.PartyId) (ss : List S.Secret) (os : List S.Opening),
+         ∀ (ps : List S.PartyId) (ss : List S.Secret) (os : List S.Opening),
             ∀ sh, sh ∈ (ps.zip (ss.zip os)).map mkShare → DealerShare.wellFormed S sh := by
          intro ps ss os
          induction ps generalizing ss os with
          | nil =>
            intro sh hmem
-           simp [List.zip, List.map] at hmem
+           simp [List.zip] at hmem
          | cons pid ps ih =>
            intro sh hmem
            cases ss with
            | nil =>
-             simp [List.zip, List.map] at hmem
+             simp [List.zip] at hmem
            | cons sk ss' =>
              cases os with
              | nil =>
-               simp [List.zip, List.map] at hmem
+               simp [List.zip] at hmem
              | cons op os' =>
                simp only [List.zip_cons_cons, List.map_cons, List.mem_cons] at hmem
                cases hmem with
@@ -272,7 +282,9 @@ lemma dealerKeygen_wellFormed
       have : sh ∈ (pids.zip (secrets.zip opens)).map mkShare := by
         simpa [mkShare] using hmem
       exact hwf_zip pids secrets opens sh this
-  · exact False.elim (by simpa [hlen] using h)
+  · have hfalse : False := by
+      simp [hlen] at h
+    cases hfalse
 
 /-- Binding: same commitment → same public key (for well-formed shares).
     Uses scheme's commitBinding property. -/

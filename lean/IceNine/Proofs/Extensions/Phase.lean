@@ -19,6 +19,10 @@ import Std.Data.HashMap.Lemmas
 
 set_option autoImplicit false
 
+-- Lean 4.26 removes Bool.not_eq_true; provide a tiny local replacement.
+private lemma bool_not_eq_true (b : Bool) : (!b = true) ↔ b = false := by
+  cases b <;> decide
+
 namespace IceNine.Proofs.Extensions.Phase
 
 open IceNine.Protocol
@@ -65,17 +69,15 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
         simpa using (List.mem_toFinset.mp hk)
       rcases (List.mem_map.1 hk') with ⟨kv, hkv, hkfst⟩
       rcases kv with ⟨k', v⟩
-      have hk' : k' = k := by
-        simpa using hkfst
+      have hk' : k' = k := hkfst
       -- `k' = k`, so the corresponding `(k, v)` is in the map's `toList`.
       have hmem : (k, v) ∈ m.map.toList := by
-        simpa [hk'] using hkv
+        rw [← hk']; exact hkv
       have hget : m.map[k]? = some v := by
-        simpa using
-          (Std.HashMap.mem_toList_iff_getElem?_eq_some (m := m.map) (k := k) (v := v)).1 hmem
+        simp [(Std.HashMap.mem_toList_iff_getElem?_eq_some (m := m.map) (k := k) (v := v)).1 hmem]
       have : m.map.contains k = (m.map[k]?.isSome) :=
         Std.HashMap.contains_eq_isSome_getElem? (m := m.map) (a := k)
-      simpa [this, hget]
+      simp [this, hget]
     · intro hk
       -- From `contains`, get a witness value via `get?`, then show the key appears in `senders`.
       have hisSome : m.map[k]?.isSome = true := by
@@ -84,12 +86,13 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
         exact hk
       rcases (Option.isSome_iff_exists.1 hisSome) with ⟨v, hv⟩
       have hmem : (k, v) ∈ m.map.toList := by
-        simpa using (Std.HashMap.mem_toList_iff_getElem?_eq_some (m := m.map) (k := k) (v := v)).2 hv
+        simp [(Std.HashMap.mem_toList_iff_getElem?_eq_some (m := m.map) (k := k) (v := v)).2 hv]
       have hkSenders : k ∈ m.senders := by
         -- `k = Prod.fst (k, v)`.
         have : Prod.fst (k, v) ∈ m.map.toList.map Prod.fst :=
           List.mem_map_of_mem (f := Prod.fst) hmem
-        simpa [MsgMap.senders] using this
+        simp only [MsgMap.senders]
+        exact this
       exact List.mem_toFinset.2 hkSenders
 
   -- Helper: `merge` preserves exactly the union of key sets, characterized via `contains`.
@@ -98,15 +101,15 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
     -- Unfold `merge` and rewrite `HashMap.fold` as a `foldl` over `toList`.
     classical
     let step : Std.HashMap S.PartyId M → S.PartyId → M → Std.HashMap S.PartyId M :=
-      fun acc pid msg => if pid ∈ acc then acc else acc.insert pid msg
+      fun acc pid msg => if acc.contains pid then acc else acc.insert pid msg
     have hfold :
         b.map.fold step a.map =
           b.map.toList.foldl (fun acc kv => step acc kv.1 kv.2) a.map := by
-      simpa using (Std.HashMap.fold_eq_foldl_toList (m := b.map) (f := step) (init := a.map))
+      simp [(Std.HashMap.fold_eq_foldl_toList (m := b.map) (f := step) (init := a.map))]
     -- Reduce to the `toList.foldl` form.
     have : (b.map.fold step a.map).contains k =
         (b.map.toList.foldl (fun acc kv => step acc kv.1 kv.2) a.map).contains k := by
-      simpa [hfold]
+      simp [hfold]
     -- Now show the `contains` result is `a.contains k || b.contains k`.
     -- Split on whether `b` contains `k`.
     by_cases hb : b.map.contains k = true
@@ -119,7 +122,7 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
       -- Pick the first occurrence of a key `== k`.
       cases hfp : b.map.toList.find? (fun kv => kv.1 == k) with
       | none =>
-          cases hfind_ne (by simpa [hfp])
+          cases hfind_ne (by simp [hfp])
       | some p =>
           -- Decompose `toList` as prefix ++ p :: suffix, with prefix not matching.
           have hpDecomp :
@@ -131,11 +134,8 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
             rcases h0 with ⟨hp, as, bs, hEq, has⟩
             refine ⟨by simpa using hp, as, bs, hEq, ?_⟩
             intro a ha
-            have : !(a.1 == k) = true := by
-              -- `has` provides `!(p a)` as a Bool, used as Prop.
-              simpa using has a ha
-            -- Convert `!x = true` to `x = false`.
-            cases h : (a.1 == k) <;> simp [h] at this <;> simp [h]
+            -- `has a ha` says `!(a.1 == k)` is true, hence `(a.1 == k) = false`.
+            exact Eq.mp (Bool.not_eq_true' (a.1 == k)) (has a ha)
           rcases hpDecomp with ⟨hp, as, bs, hEq, has⟩
           -- Show folding over the prefix does not change `contains k`.
           let stepKV : Std.HashMap S.PartyId M → (S.PartyId × M) → Std.HashMap S.PartyId M :=
@@ -194,7 +194,7 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
                 simp only [List.foldl_cons]
                 exact ih (stepKV init x) (step_preserves_true init hk x)
           -- Now combine the pieces.
-          have : (b.map.toList.foldl stepKV a.map).contains k = true := by
+          have hFoldTrue : (b.map.toList.foldl stepKV a.map).contains k = true := by
             -- Rewrite `toList` using the decomposition.
             rw [hEq]
             -- Fold over prefix, then `p`, then suffix.
@@ -207,28 +207,32 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
           -- Conclude the desired equality.
           have : (b.map.toList.foldl stepKV a.map).contains k =
               (a.map.contains k || b.map.contains k) := by
-            -- RHS is `true` because `b.contains k = true`.
-            simpa [this, hb]
+            -- LHS = true (via hFoldTrue), RHS = true (because b.contains k = true)
+            rw [hFoldTrue]
+            simp [hb]
           -- Return to the original `fold` form.
           -- First, rewrite `(a ⊔ b).map` as `b.map.fold ... a.map`.
-          simpa [MsgMap.merge, Join.join, step, hfold] using this
+          -- step and the merge lambda are definitionally equal
+          calc (a ⊔ b).map.contains k
+              = (b.map.fold step a.map).contains k := rfl
+            _ = (b.map.toList.foldl (fun acc kv => step acc kv.1 kv.2) a.map).contains k := by rw [hfold]
+            _ = (a.map.contains k || b.map.contains k) := this
     · -- `b` does not contain `k`, so merge preserves `a.contains k`.
       have hbFalse : b.map.contains k = false := by
-        cases h : b.map.contains k
-        · rfl
-        · exact absurd h hb
+        cases h : b.map.contains k with
+        | true =>
+            cases hb (by simp [h])
+        | false =>
+            simp
       have hfind :
           b.map.toList.find? (fun kv => kv.1 == k) = none := by
         exact (Std.HashMap.find?_toList_eq_none_iff_contains_eq_false (m := b.map) (k := k)).2 hbFalse
       have hall : ∀ x ∈ b.map.toList, (x.1 == k) = false := by
-        -- `find? = none` means the predicate is false for all elements.
-        have hnone : ∀ x ∈ b.map.toList, ¬ ((x.1 == k) = true) := by
-          simpa [List.find?_eq_none] using hfind
+        -- `find? = none` means predicate is false for all elements.
+        have hnone : ∀ x ∈ b.map.toList, ¬ ((x.1 == k) = true) := List.find?_eq_none.mp hfind
         intro x hx
-        by_cases h' : (x.1 == k) = true
-        · exact absurd h' (hnone x hx)
-        · simp only [Bool.not_eq_true] at h'
-          exact h'
+        have hnot := hnone x hx
+        exact Eq.mp (Bool.not_eq_true (x.1 == k)) hnot
       let stepKV : Std.HashMap S.PartyId M → (S.PartyId × M) → Std.HashMap S.PartyId M :=
         fun acc kv => step acc kv.1 kv.2
       have preserves (l : List (S.PartyId × M)) (hNo : ∀ a ∈ l, (a.1 == k) = false)
@@ -255,8 +259,12 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
       -- RHS reduces to `a.contains k`.
       have : (b.map.toList.foldl stepKV a.map).contains k =
           (a.map.contains k || b.map.contains k) := by
-        simpa [hFinal, hbFalse]
-      simpa [MsgMap.merge, Join.join, step, hfold] using this
+        simp [hFinal, hbFalse]
+      -- Return to the original `fold` form using calc to handle definitional equality
+      calc (a ⊔ b).map.contains k
+          = (b.map.fold step a.map).contains k := rfl
+        _ = (b.map.toList.foldl (fun acc kv => step acc kv.1 kv.2) a.map).contains k := by rw [hfold]
+        _ = (a.map.contains k || b.map.contains k) := this
 
   ext k
   -- Reduce both sides to `contains` and use the `contains_merge` characterization.
@@ -271,32 +279,31 @@ theorem MsgMap.senders_merge (S : Scheme) {M : Type*}
   · intro hk
     have hkC : (a ⊔ b).map.contains k = true := (hL.mp hk)
     have hkOr : (a.map.contains k || b.map.contains k) = true := by
-      simpa [contains_merge (a := a) (b := b) (k := k)] using hkC
-    have hkDisj : a.map.contains k = true ∨ b.map.contains k = true := by
-      simpa using (Bool.or_eq_true_iff).1 hkOr
-    rcases hkDisj with hkA | hkB
-    · exact (Finset.mem_union.2 <| Or.inl (hA.2 hkA))
-    · exact (Finset.mem_union.2 <| Or.inr (hB.2 hkB))
+      rw [contains_merge] at hkC
+      exact hkC
+    -- Convert boolean OR to logical OR via case analysis
+    cases ha : a.map.contains k with
+    | true => exact Finset.mem_union.2 (Or.inl (hA.2 ha))
+    | false =>
+      cases hb : b.map.contains k with
+      | true => exact Finset.mem_union.2 (Or.inr (hB.2 hb))
+      | false => simp [ha, hb] at hkOr
   · intro hk
-    have hkDisj : k ∈ a.senders.toFinset ∨ k ∈ b.senders.toFinset := by
-      simpa [Finset.mem_union] using hk
-    -- We handle the disjunction explicitly.
+    have hkDisj : k ∈ a.senders.toFinset ∨ k ∈ b.senders.toFinset :=
+      Finset.mem_union.mp hk
     cases hkDisj with
     | inl ha =>
-        have : a.map.contains k = true := hA.1 ha
-        have hkOr : (a.map.contains k || b.map.contains k) = true := by
-          simpa [this]
-        have : (a ⊔ b).map.contains k = true := by
-          simpa [contains_merge (a := a) (b := b) (k := k)] using hkOr
-        exact hL.2 this
+        have hContainsA : a.map.contains k = true := hA.1 ha
+        have hContainsMerge : (a ⊔ b).map.contains k = true := by
+          rw [contains_merge]
+          simp only [hContainsA, Bool.true_or]
+        exact hL.2 hContainsMerge
     | inr hb =>
-        have : b.map.contains k = true := hB.1 hb
-        have hkOr : (a.map.contains k || b.map.contains k) = true := by
-          -- `||` with RHS true is true.
-          cases ha' : a.map.contains k <;> simp [ha', this]
-        have : (a ⊔ b).map.contains k = true := by
-          simpa [contains_merge (a := a) (b := b) (k := k)] using hkOr
-        exact hL.2 this
+        have hContainsB : b.map.contains k = true := hB.1 hb
+        have hContainsMerge : (a ⊔ b).map.contains k = true := by
+          rw [contains_merge]
+          simp only [hContainsB, Bool.or_true]
+        exact hL.2 hContainsMerge
 
 /-- MsgMap merge preserves the union of sender sets (as Finset).
 
@@ -319,10 +326,10 @@ theorem MsgMap.merge_senders_comm {S : Scheme} {M : Type*}
     (a ⊔ b).senders.toFinset
         = a.senders.toFinset ∪ b.senders.toFinset := MsgMap.senders_merge (S := S) (a := a) (b := b)
     _ = b.senders.toFinset ∪ a.senders.toFinset := by
-        simpa [Finset.union_comm]
+        simp [Finset.union_comm]
     _ = (b ⊔ a).senders.toFinset := by
         symm
-        simpa using (MsgMap.senders_merge (S := S) (a := b) (b := a))
+        simp [(MsgMap.senders_merge (S := S) (a := b) (b := a))]
 
 /-- Helper: folding over a list where all keys are already in accumulator is identity. -/
 private lemma foldl_step_noop {K V : Type*}

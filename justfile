@@ -213,7 +213,7 @@ deploy-sync: _ssh-reset
 # Download Mathlib cache on remote server
 deploy-cache: _ssh-reset
     @echo "Downloading Mathlib cache on $DEPLOY_SERVER..."
-    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command lake exe cache get"
+    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --accept-flake-config --command lake exe cache get"
     @echo "✓ Mathlib cache downloaded on server"
 
 # Build Lean on remote server (downloads cache first)
@@ -236,7 +236,7 @@ deploy-lean: _ssh-reset
     ssh $DEPLOY_SERVER "
         echo \$\$ > $LOCKFILE
         trap 'rm -f $LOCKFILE' EXIT
-        cd $DEPLOY_PATH && nix develop --command bash -c 'lake exe cache get && lake build'
+        cd $DEPLOY_PATH && nix develop --accept-flake-config --command bash -c 'lake exe cache get && lake build'
     "
     echo "✓ Lean built on server"
 
@@ -270,13 +270,13 @@ deploy-kill: _ssh-reset
 # Build Rust on remote server
 deploy-build: _ssh-reset
     @echo "Building Rust on $DEPLOY_SERVER..."
-    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command cargo build --release"
+    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --accept-flake-config --command cargo build --release"
     @echo "✓ Rust built on server"
 
 # Run tests on remote server
 deploy-test: _ssh-reset
     @echo "Testing on $DEPLOY_SERVER..."
-    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --command cargo test"
+    ssh $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --accept-flake-config --command cargo test"
 
 # Full deployment: sync + cache + build all
 deploy: deploy-sync deploy-lean deploy-build
@@ -284,7 +284,7 @@ deploy: deploy-sync deploy-lean deploy-build
 
 # SSH into server at project directory
 ssh: _ssh-reset
-    ssh -t $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop"
+    ssh -t $DEPLOY_SERVER "cd $DEPLOY_PATH && nix develop --accept-flake-config"
 
 # Check server status
 deploy-status: _ssh-reset

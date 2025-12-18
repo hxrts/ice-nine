@@ -38,7 +38,7 @@ Properties relating to the refresh protocol coordinator.
     This is a standard cryptographic assumption for commitment schemes. -/
 structure CommitmentBinding (S : Scheme) where
   /-- A valid opening determines the committed value uniquely -/
-  unique_opening : ∀ (c : S.Commitment) (v1 v2 : S.Secret) (o1 o2 : S.Opening),
+  unique_opening : ∀ (_c : S.Commitment) (v1 v2 : S.Secret) (_o1 _o2 : S.Opening),
     -- If both openings verify, the values must be equal
     -- (actual verification predicate would be scheme-specific)
     True → v1 = v2

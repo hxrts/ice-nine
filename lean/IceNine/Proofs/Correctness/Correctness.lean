@@ -385,8 +385,8 @@ theorem lagrange_weighted_sum_eq
   calc
     (List.zipWith (· * ·) lambdas (signers.map (fun _ => v))).sum
         = (List.zipWith (· * ·) lambdas (List.replicate lambdas.length v)).sum := by
-            simpa [hconst]
-    _ = (lambdas.map (· * v)).sum := by simpa [zipWith_mul_replicate (l := lambdas) v]
+            simp [hconst]
+    _ = (lambdas.map (· * v)).sum := by simp [zipWith_mul_replicate (l := lambdas) v]
     _ = lambdas.sum * v := by
           -- `List.sum_map_mul_right` with f := id, r := v
           simpa using (List.sum_map_mul_right (l := lambdas) (f := id) (r := v))
@@ -411,11 +411,11 @@ theorem verifyWithNonce_correct
     (Sset : List S.PartyId)
     (commits : List S.Commitment)
     (w : S.Public)
-  (hpk : S.A sk = pk)
+  (_hpk : S.A sk = pk)
   (hw : S.A y = w)
   (hsmul : S.A (c • sk) = c • pk) :
   let sig : Signature S := { z := y + c • sk, c := c, Sset := Sset, commits := commits }
   verifyWithNonce S pk sig w = true := by
-  simp [verifyWithNonce, map_add, hw, hsmul, hpk]
+  simp [verifyWithNonce, map_add, hw, hsmul]
 
 end IceNine.Proofs
