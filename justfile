@@ -136,9 +136,14 @@ summary:
     done
 
     # Write chapters (directories) with their files
+    first_chapter=true
     for dir in $(printf '%s\n' "${!dirs[@]}" | LC_ALL=C sort); do
-        # Add blank line before chapter
-        [ "${#root_files[@]}" -gt 0 ] && echo "" >> "$out"
+        # Add blank line before chapter (except first if no root files)
+        if [ "$first_chapter" = true ]; then
+            first_chapter=false
+        else
+            echo "" >> "$out"
+        fi
 
         # Add chapter heading
         chapter_name="$(get_chapter_name "$dir")"
