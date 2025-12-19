@@ -44,6 +44,12 @@ import IceNine.Protocol.Core.Error
 import IceNine.Norms
 import IceNine.Instances
 import IceNine.Samples
+-- Proofs/Probability
+import IceNine.Proofs.Probability.CenteredBounded
+import IceNine.Proofs.Probability.IntervalShift
+import IceNine.Proofs.Probability.Lattice
+import IceNine.Proofs.Probability.Lemmas
+import IceNine.Proofs.Probability.RepeatUntil
 -- Proofs/Core
 import IceNine.Proofs.Core.Assumptions
 import IceNine.Proofs.Core.ListLemmas

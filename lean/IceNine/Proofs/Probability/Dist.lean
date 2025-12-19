@@ -37,6 +37,10 @@ variable {α : Type u} {β : Type v}
 instance : Coe (Dist α) (PMF α) :=
   ⟨Dist.toPMF⟩
 
+/-- Point-mass distribution. -/
+def pure (a : α) : Dist α :=
+  ⟨PMF.pure a⟩
+
 /-- The uniform distribution on a finite, nonempty type. -/
 def uniform (α : Type u) [Fintype α] [Nonempty α] : Dist α := by
   classical

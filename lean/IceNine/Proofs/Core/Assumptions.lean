@@ -39,6 +39,7 @@ import IceNine.Instances
 import IceNine.Proofs.Probability.Commitment
 import IceNine.Proofs.Probability.Indistinguishability
 import IceNine.Proofs.Probability.Rejection
+import IceNine.Proofs.Probability.RepeatUntil
 import Mathlib
 
 set_option autoImplicit false
@@ -208,23 +209,64 @@ independent of s. Rejection sampling achieves this by:
 /- A “distribution family” over `α`, indexed by a security parameter `κ`,
 is now modeled by `Probability.DistFamily`. -/
 
-/-- Placeholder: honest local rejection sampling accepts with probability ≥ 1/κ.
+/-- Acceptance-rate bound for local rejection sampling.
 
-We record it as a bound on expected iterations (≈ κ). -/
-axiom AcceptanceRateBound (S : Scheme) (expectedIterations : Nat) : Prop
+We model “expected iterations ≈ κ” as an explicit bound on **rejection**
+probability for the *candidate* response distribution.
+
+This is designed to connect directly to `Probability.Dist.repeatOption`, whose
+failure probability is exactly `(Pr[reject])^n`. -/
+def AcceptanceRateBound (S : Scheme)
+    [NormBounded S.Secret]
+    (cfg : ThresholdConfig)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (expectedIterations : Nat) : Prop :=
+  expectedIterations > 0 ∧
+    ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
+      Dist.prob
+          (candidateResponseDist S nonceDist bindingFactor c s κ)
+          (acceptSet S cfg)ᶜ
+        ≤ ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal)
+
+/-- Failure probability of a truncated “try up to `n` times” rejection loop, bounded using
+`AcceptanceRateBound`. -/
+theorem AcceptanceRateBound.failureProb_repeatOption_none_le
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (h : AcceptanceRateBound S cfg nonceDist expectedIterations)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ n : Nat) :
+    Dist.prob
+        (Dist.repeatOption
+          (candidateResponseDist S nonceDist bindingFactor c s κ)
+          (acceptSet S cfg) n)
+        {none}
+      ≤ (((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal)) ^ n := by
+  have hrej :
+      Dist.prob
+          (candidateResponseDist S nonceDist bindingFactor c s κ)
+          (acceptSet S cfg)ᶜ
+        ≤ ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal) :=
+    h.2 bindingFactor c s κ
+  simpa [Dist.prob_repeatOption_none] using (ENNReal.pow_le_pow_left hrej (n := n))
 
 /-- Acceptance probability bound for rejection sampling.
     Guarantees signing terminates in expected O(κ) attempts.
 
     For Dilithium parameters, acceptance probability is approximately 1/4,
     so κ ≈ 4 expected iterations. -/
-structure AcceptanceProbability (S : Scheme) where
-  /-- Upper bound on expected number of rejection sampling iterations -/
+structure AcceptanceProbability (S : Scheme) [NormBounded S.Secret] where
+  /-- Public threshold configuration (drives the local acceptance predicate). -/
+  cfg : ThresholdConfig
+  /-- Distribution of fresh nonce pairs `(y_hiding, y_binding)`. -/
+  nonceDist : DistFamily (S.Secret × S.Secret)
+  /-- Upper bound on expected number of rejection sampling iterations. -/
   expectedIterations : Nat
-  /-- Bound is valid (acceptance prob ≥ 1/κ) -/
+  /-- Bound is valid (expectedIterations > 0). -/
   bound_valid : expectedIterations > 0
-  /-- Axiom: honest parties with short secrets accept with this probability -/
-  acceptance_rate : AcceptanceRateBound S expectedIterations
+  /-- Rejection probability bound for honest parties with short secrets. -/
+  acceptance_rate : AcceptanceRateBound S cfg nonceDist expectedIterations
 
 /-- Response independence axiom for rejection sampling.
     This is *the* key security property: accepted responses reveal nothing about s.
@@ -256,8 +298,14 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
           (fun κ => accept_nonempty bindingFactor c s₂ κ))
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
-def dilithiumAcceptance (S : Scheme) (h : AcceptanceRateBound S 4) : AcceptanceProbability S :=
-  { expectedIterations := 4
+def dilithiumAcceptance (S : Scheme) [NormBounded S.Secret]
+    (cfg : ThresholdConfig)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (h : AcceptanceRateBound S cfg nonceDist 4) :
+    AcceptanceProbability S :=
+  { cfg := cfg
+    nonceDist := nonceDist
+    expectedIterations := 4
     bound_valid := by decide
     acceptance_rate := h }
 
