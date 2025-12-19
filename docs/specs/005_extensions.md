@@ -573,6 +573,38 @@ When a party files a complaint the protocol may proceed in different ways.
 
 A complaint is verifiable when it includes evidence. For a commitment opening failure the evidence is the commitment, the revealed pair, and a proof that they do not match. Other parties can independently verify the complaint.
 
+## Handling Byzantine Signers
+
+In threshold signing, Byzantine signers may attempt to disrupt the protocol by sending invalid partial signatures. The protocol handles such behavior through per-share validation, allowing honest parties to detect and exclude misbehavior without halting progress.
+
+### Per-Share Validation
+
+The aggregator treats each partial signature as an independent object. For each partial $\sigma_i$ from signer $i$, the aggregator performs three validation checks.
+
+Structural validity checks that the partial is well-formed and consistent with commitments. The partial must have correct dimension, correct modulus, and match the commitment structure.
+
+Norm bound checking verifies $\|z_i\|_\infty \leq B_{\text{local}}$. This ensures each partial satisfies the local bound that, when combined with other valid partials, produces a globally valid signature.
+
+Algebraic validity verifies the partial against the signer's public share $\mathsf{pk}_i$. This is analogous to FROST's per-share verification relation. The partial must satisfy a relation like $A(z_i) = w_{\text{eff}} + c \cdot \mathsf{pk}_i$ where $w_{\text{eff}}$ is derived from the commitment.
+
+### Invalid Share Handling
+
+If any check fails, the aggregator discards that partial share. The aggregator does not attempt to include that share in the aggregate. Instead, it records evidence of misbehavior. This evidence can support later exclusion decisions or penalties in consensus protocols.
+
+The aggregator then waits for valid shares from other signers, continuing until it has collected $t$ valid partials (where $t \geq 2f + 1$ under the BFT assumption).
+
+### Byzantine Resilience Guarantee
+
+Because there are at least $2f + 1$ honest validators, there exist at least $t$ honest signers whose partials will be valid. The aggregator can always collect $t$ valid partials and complete the signature despite up to $f$ malicious validators.
+
+This ensures that no single participant, nor any coalition of size $\leq f$, can prevent the threshold signature from being formed. Malicious signers cannot force global rejection or restart. They can only delay the process by not participating or by sending invalid shares that are simply rejected.
+
+### Misbehavior Detection
+
+Per-share validation enables attribution. Each invalid partial can be tied to a specific signer via its ID. This makes misbehavior identifiable and attributable even though the final signature itself remains a standard Dilithium signature under the group key.
+
+The protocol transcript contains all per-signer checks, allowing external auditors to verify which parties sent invalid shares. This supports automated exclusion policies or manual review in consensus systems.
+
 ## Share Refresh
 
 Share refresh updates the shares without changing the public key. This procedure provides proactive security. Even if an adversary compromises old shares the refreshed shares are independent.

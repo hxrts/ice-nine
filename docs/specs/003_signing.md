@@ -1133,3 +1133,15 @@ The function validates all shares, partitions them into valid and invalid, colle
 ### Guarantee
 
 If at least threshold parties produce valid shares, the aggregate signature is guaranteed to satisfy the global norm bound. This follows from the local bound relationship: T · B_local ≤ B_global.
+
+### Byzantine Robustness
+
+The aggregator validates each partial independently and discards invalid ones. Validation checks three conditions.
+
+Structural validity ensures the partial has correct dimensions and format. Norm bound checking verifies ‖z_i‖∞ ≤ B_local where B_local is the local rejection bound. Algebraic validity checks that A(z_i) = w_eff + c·pk_i where w_eff incorporates the binding factor.
+
+Parties that send out-of-bound or algebraically invalid partials have their shares rejected. The aggregator does not attempt to include them in the signature. This allows misbehaving parties to be identified and excluded.
+
+Given n = 3f+1 validators with at most f Byzantine, there always exist at least t = 2f+1 honest validators. These honest validators will produce valid partials. The aggregator collects valid partials until reaching the threshold, then produces a valid signature.
+
+A malicious party can slow the signing ceremony by sending invalid partials, but cannot prevent a valid signature from being produced. The combination of per-share validation and honest majority ensures liveness despite Byzantine participants.

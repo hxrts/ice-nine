@@ -69,6 +69,32 @@ The map $A$ connects private shares to their public counterparts. If $s_i$ is a 
 
 Linearity ensures that aggregation in $\mathcal{S}$ corresponds to aggregation in $\mathcal{P}$. The sum of public shares equals the image of the sum of secret shares. This property underlies the threshold aggregation.
 
+## Linearity in Lattice Signatures
+
+Dilithium and other lattice-based signature schemes inherit a fundamental linearity property from their algebraic structure. This linearity is precisely what enables threshold signing.
+
+### Why Dilithium is Linear
+
+In Dilithium signing, the response is computed as $z = y + c \cdot s_1$ where $y$ is random and $s_1$ is the secret key. This sum respects linearity in both variables. Unlike schemes where the signature is output as a function of intermediate hash values, Dilithium's response is a direct linear combination.
+
+The same linearity holds in threshold settings. If $s_1 = \sum_i s_{1,i}$ (secret shares) and each signer produces $z_i = y_i + c \cdot s_{1,i}$, then the sum $z = \sum_i z_i = \sum_i y_i + c \cdot \sum_i s_{1,i} = y + c \cdot s_1$ produces the same response as a single signer with full secret.
+
+This is the core insight of FROST applied to the lattice setting. The threshold scheme is not a different scheme; it is the base scheme distributed and recombined through linearity.
+
+### Norm Bounds via Triangle Inequality
+
+In single-signer Dilithium, the response must satisfy a global norm bound. In threshold signing, each signer produces a partial $z_i$, and these are summed to produce the global response $z = \sum_i z_i$.
+
+By the triangle inequality, $\|z\|_\infty = \|\sum_i z_i\|_\infty \leq \sum_i \|z_i\|_\infty$.
+
+If we ensure that each partial satisfies a local bound $\|z_i\|_\infty \leq B_{\text{local}}$, and we aggregate at most $T$ partials, then the global response is guaranteed to satisfy
+
+$$\|z\|_\infty \leq T \cdot B_{\text{local}}.$$
+
+By setting $B_{\text{local}} = \lfloor B_{\text{global}} / T \rfloor$, we obtain a hard guarantee that any combination of $T$ or fewer valid partials automatically satisfies the global Dilithium bound. This is a mathematical certainty, not a probabilistic property.
+
+Each signer enforces the local bound via internal rejection sampling. The aggregator enforces it by checking each partial before inclusion. Once the aggregator has collected $T$ valid partials (all satisfying $\|z_i\|_\infty \leq B_{\text{local}}$), it is mathematically guaranteed that their sum satisfies the global bound. No further norm checking is needed; no distributed coordination or restart is required.
+
 ### Design Choice: No Explicit Error Term
 
 In Dilithium, the public key includes an error term: $t = As_1 + s_2$ where $s_2$ is small. This makes $t$ indistinguishable from random under MLWE. During verification, Dilithium uses a `HighBits()` function to absorb the error term $c \cdot s_2$.

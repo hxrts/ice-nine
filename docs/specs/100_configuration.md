@@ -52,6 +52,21 @@ The default threshold uses the 2/3+1 rule for Byzantine fault tolerance.
 
 The formula is `t = 2n/3 + 1` (integer division). This ensures honest majority for BFT protocols.
 
+## Byzantine Fault Tolerance Context
+
+The default threshold implements the standard BFT assumption. With $n = 3f + 1$ validators, where at most $f$ are Byzantine, a threshold of $t = 2f + 1$ ensures an honest quorum.
+
+The relationship works as follows. If $n = 3f + 1$ total validators and at most $f$ are faulty, then at least $2f + 1$ are honest. Any threshold $t \geq 2f + 1$ guarantees that any $t$-sized subset must contain at least one honest validator. Conversely, any $f$-sized coalition of malicious validators controls at most $f < t$ validators, so they cannot prevent an honest quorum from forming.
+
+This provides the guarantee needed for threshold signing: no coalition of size $\leq f$ can prevent signature production. With local rejection sampling, malicious signers cannot force global rejection. An aggregator can always collect $t$ valid partials from honest signers. The signing protocol never stalls due to rejection; it either succeeds or fails only through the usual BFT modes (too many offline/malicious, faulty leader).
+
+In practice, deployments often use small values of $f$:
+- 3-of-3 (n=3, f=0): All parties must participate, zero fault tolerance
+- 3-of-4 (n=4, f=1): Tolerates one faulty party
+- 4-of-7 (n=7, f=2): Tolerates two faulty parties
+
+For most consensus systems, the BFT assumption ($2f + 1$ honest out of $n = 3f + 1$) is compatible with the consensus protocol's own fault model. The threshold signing subprotocol inherits the same assumptions, making it compatible with the consensus layer.
+
 ## Dilithium Security Levels
 
 Ice Nine supports the three NIST-standardized Dilithium parameter sets.

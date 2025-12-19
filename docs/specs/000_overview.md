@@ -130,6 +130,20 @@ Step functions that advance state are monotone with respect to the semilattice o
 
 Protocol state combines with auxiliary CRDT data for refresh masks, repair bundles, and rerandomization masks. The product of semilattices is itself a semilattice.
 
+## Why This Works: Linearity as a Common Thread
+
+The core insight of the Ice Nine protocol is that Dilithium, like Schnorr, is fundamentally linear. This linearity enables threshold signing and makes the protocol work.
+
+In single-signer Dilithium, the signature response is computed as $z = y + c \cdot s_1$ where $y$ is a random ephemeral value and $s_1$ is the secret key. This is a direct linear combination in both variables. A threshold variant distributes the secret as $s_1 = \sum_i s_{1,i}$ (additive shares) and the randomness as $y = \sum_i y_i$ (signer contributions). Each signer produces $z_i = y_i + c \cdot s_{1,i}$.
+
+When these partials are summed, we get $z = \sum_i z_i = \sum_i (y_i + c \cdot s_{1,i}) = \sum_i y_i + c \cdot \sum_i s_{1,i} = y + c \cdot s_1$. The aggregated response is identical to what a single signer would produce with the full secret and full randomness.
+
+This is the core mechanism of FROST applied to the lattice setting. The threshold scheme is not a different scheme; it is the base scheme distributed and recombined through linearity. The final signature is indistinguishable from a single-signer signature under the group key.
+
+Linearity also enables the norm bound guarantee. By the triangle inequality, if each partial satisfies $\|z_i\|_\infty \leq B_{\text{local}}$, then the sum automatically satisfies $\|z\|_\infty \leq T \cdot B_{\text{local}}$ where $T$ is the number of aggregated partials. By choosing $B_{\text{local}} = \lfloor B_{\text{global}} / T \rfloor$, the global bound is guaranteed for any combination of valid partials. This is a mathematical certainty, not probabilistic.
+
+The linearity property is what makes the entire protocol work: threshold signing that produces standard signatures, BFT-compatible design with per-signer validation, and deterministic norm bound guarantees via the triangle inequality.
+
 ## Session Types
 
 The implementation uses session types to enforce disciplined handling of secret material, making certain classes of errors impossible to express.
