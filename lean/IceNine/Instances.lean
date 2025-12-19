@@ -155,8 +155,6 @@ structure HashBinding : Prop where
     ∀ {P N} [ToString P] [ToString N] (x1 x2 : P) (o1 o2 : N),
       hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) → x1 = x2
 
-/-- Axiomatically assume digest binding; replace with a proven instance when available. -/
-axiom hashBindingAssumption : HashBinding
 
 /-- Integer vectors modulo q as secrets/publics. -/
 def intMod (_q : Nat) := Int
@@ -176,7 +174,7 @@ def latticeCommit {P N} [ToString P] [ToString N] (w : P) (nonce : N) :
   LatticeCommitment P N :=
   ⟨hashBytes (encodePair w nonce)⟩
 
-def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssumption) : Scheme :=
+def latticeScheme (p : LatticeParams := {}) (hb : HashBinding) : Scheme :=
 { PartyId   := Nat
   , Message   := ByteArray
   , Secret    := Fin p.n → Int
@@ -199,11 +197,10 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
       -- h : latticeCommit x1 o1 = latticeCommit x2 o2
       -- Unfold to get hash equality, then apply binding assumption
       unfold latticeCommit at h
-      have hb : hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) := by
+      have hhash : hashBytes (encodePair x1 o1) = hashBytes (encodePair x2 o2) := by
         simp only [LatticeCommitment.mk.injEq] at h
         exact h
-      -- Hash binding is assumed to hold by hashBindingAssumption
-      exact hashBindingAssumption.binding x1 x2 o1 o2 hb
+      exact hb.binding x1 x2 o1 o2 hhash
   , hashToScalar := fun domain data =>
       let h := hashBytes (domain ++ data)
       hashToChallenge h
@@ -218,7 +215,7 @@ def latticeScheme (p : LatticeParams := {}) (_ : HashBinding := hashBindingAssum
 -- Type aliases for the lattice scheme
 -- These are convenience definitions for use with the default LatticeParams
 -- Note: defaultLatticeScheme removed due to universe level metavariables;
--- use `latticeScheme (p := {}) hashBindingAssumption` directly when needed
+-- use `latticeScheme (p := {}) hb` directly when needed, providing a HashBinding proof
 def LatticePartyId   : Type := Nat
 def LatticeMessage   : Type := ByteArray
 def LatticeSecret    : Type := Fin ({} : LatticeParams).n → Int

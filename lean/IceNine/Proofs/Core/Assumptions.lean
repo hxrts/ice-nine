@@ -410,7 +410,7 @@ structure Assumptions (S : Scheme) where
   /-- Commitment scheme is collision resistant (implies binding). -/
   commitCR          : Prop := commitmentCR S
   /-- Binding for the hash-based commitment (collision resistance of digest). -/
-  hashBinding       : IceNine.Instances.HashBinding := IceNine.Instances.hashBindingAssumption
+  hashBinding       : IceNine.Instances.HashBinding
   /-- Commitment hiding (requires ROM; NOT formally proven). -/
   commitHiding      : HidingAssumption S
   /-- Norm bounds prevent leakage in lattice setting. -/
@@ -439,6 +439,7 @@ def mkLatticeAssumptions
   (lvl : PQSecurityLevel)
   (hashRO : Prop)
   (commitCR : Prop)
+  (hashBinding : IceNine.Instances.HashBinding)
   (commitHiding : HidingAssumption S)
   (normLeakageBound : Prop)
   (corruptionBound : Nat)
@@ -447,7 +448,7 @@ def mkLatticeAssumptions
   : LatticeAssumptions S :=
 { hashRO := hashRO
   commitCR := commitCR
-  hashBinding := IceNine.Instances.hashBindingAssumption
+  hashBinding := hashBinding
   commitHiding := commitHiding
   normLeakageBound := normLeakageBound
   corruptionBound := corruptionBound
@@ -460,17 +461,19 @@ def mkLatticeAssumptions
 
 /-- Default lattice assumptions for our concrete latticeScheme at Level 1. -/
 def latticeAssumptionsL1
+  (hashBinding : IceNine.Instances.HashBinding)
   (hashRO : Prop)
   (commitCR : Prop)
-  (commitHiding : HidingAssumption IceNine.Instances.latticeScheme)
+  (commitHiding : HidingAssumption (IceNine.Instances.latticeScheme (hb := hashBinding)))
   (normLeakageBound : Prop)
   (corruptionBound : Nat)
   (sis_hard : SISHard (sisParamsOfLevel PQSecurityLevel.L1))
   (mlwe_hard : MLWEHard (mlweParamsOfLevel PQSecurityLevel.L1)) :
-  LatticeAssumptions IceNine.Instances.latticeScheme :=
-  mkLatticeAssumptions (S := IceNine.Instances.latticeScheme) PQSecurityLevel.L1
+  LatticeAssumptions (IceNine.Instances.latticeScheme (hb := hashBinding)) :=
+  mkLatticeAssumptions (S := IceNine.Instances.latticeScheme (hb := hashBinding)) PQSecurityLevel.L1
     hashRO
     commitCR
+    hashBinding
     commitHiding
     normLeakageBound
     corruptionBound

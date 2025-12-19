@@ -136,6 +136,14 @@ def ResponsesValid (S : Scheme) [NormBounded.NormBounded S.Secret]
     (responses : List (SignShareMsg S)) (bound : Nat) : Prop :=
   ∀ z ∈ responses, NormBounded.NormBounded.norm z.z_i ≤ bound
 
+section Lattice
+
+-- We parameterize the concrete lattice instantiation by a `HashBinding` proof,
+-- rather than relying on a global axiom.
+variable (hb : HashBinding)
+
+local notation "LS" => IceNine.Instances.latticeScheme (hb := hb)
+
 /-!
 ## Instantiation: lattice scheme
 
@@ -153,18 +161,18 @@ toy ZMod surrogate. We reuse the generic correctness lemma above.
     The algebraic argument is identical to the generic case; the lattice-specific
     concern is ensuring rejection sampling succeeds with good probability. -/
 theorem verify_happy_lattice
-    [NormBounded.NormBounded latticeScheme.Secret]
-    (sk_shares : List latticeScheme.Secret)
-    (y_shares : List latticeScheme.Secret)
-    (c : latticeScheme.Scalar)
-    (pk w : latticeScheme.Public)
+    [NormBounded.NormBounded (LS).Secret]
+    (sk_shares : List (LS).Secret)
+    (y_shares : List (LS).Secret)
+    (c : (LS).Scalar)
+    (pk w : (LS).Public)
     (hlen : sk_shares.length = y_shares.length)
-    (z_shares : List latticeScheme.Secret)
+    (z_shares : List (LS).Secret)
     (hz : z_shares = List.zipWith (fun y sk => y + c • sk) y_shares sk_shares)
-    (hpk : latticeScheme.A sk_shares.sum = pk)
-    (hw : latticeScheme.A y_shares.sum = w) :
-    latticeScheme.A z_shares.sum = w + c • pk :=
-  verify_happy_generic latticeScheme sk_shares y_shares c pk w hlen z_shares hz hpk hw
+    (hpk : (LS).A sk_shares.sum = pk)
+    (hw : (LS).A y_shares.sum = w) :
+    (LS).A z_shares.sum = w + c • pk :=
+  verify_happy_generic LS sk_shares y_shares c pk w hlen z_shares hz hpk hw
 
 /-!
 ## Dilithium Norm Bounds Integration
@@ -227,12 +235,12 @@ def dilithium2_acceptance_bound : DilithiumAcceptanceBound dilithium2 :=
     attempts_bounded := by decide }
 
 instance latticeSchemeSecretNormBounded (p : LatticeParams := {}) :
-    NormBounded.NormBounded (latticeScheme (p := p)).Secret := by
-  dsimp [latticeScheme]
+    NormBounded.NormBounded (IceNine.Instances.latticeScheme (p := p) (hb := hb)).Secret := by
+  dsimp [IceNine.Instances.latticeScheme]
   infer_instance
 
 -- Bring the `NormBounded` instance for the lattice secret space into scope explicitly.
-instance : NormBounded.NormBounded latticeScheme.Secret := inferInstance
+instance : NormBounded.NormBounded (LS).Secret := inferInstance
 
 /-- Honest sampling satisfies the norm bound for lattice scheme secrets.
 
@@ -243,7 +251,7 @@ instance : NormBounded.NormBounded latticeScheme.Secret := inferInstance
     `ThresholdConfig.localBound` as the bound to ensure local rejection sampling
     succeeds with high probability. -/
 lemma lattice_normBounded_honest
-    (z : latticeScheme.Secret)
+    (z : (LS).Secret)
     (hcoeff : ∀ i, Int.natAbs (z i) ≤ IceNine.Instances.LatticeBound) :
     NormBounded.NormBounded.norm z ≤ IceNine.Instances.LatticeBound := by
   -- Reduce to the generic coefficient bound lemma for integer vectors.
@@ -262,21 +270,23 @@ lemma lattice_normBounded_honest
     - z = Σz_i passes norm check (sum of bounded vectors is bounded)
     - A(z) = w + c·pk by linearity -/
 theorem verify_happy_lattice_conditional
-    [NormBounded.NormBounded latticeScheme.Secret]
-    (sk_shares : List latticeScheme.Secret)
-    (y_shares : List latticeScheme.Secret)
-    (c : latticeScheme.Scalar)
-    (pk w : latticeScheme.Public)
+    [NormBounded.NormBounded (LS).Secret]
+    (sk_shares : List (LS).Secret)
+    (y_shares : List (LS).Secret)
+    (c : (LS).Scalar)
+    (pk w : (LS).Public)
     (hlen : sk_shares.length = y_shares.length)
-    (z_shares : List latticeScheme.Secret)
+    (z_shares : List (LS).Secret)
     (hz : z_shares = List.zipWith (fun y sk => y + c • sk) y_shares sk_shares)
-    (hpk : latticeScheme.A sk_shares.sum = pk)
-    (hw : latticeScheme.A y_shares.sum = w)
+    (hpk : (LS).A sk_shares.sum = pk)
+    (hw : (LS).A y_shares.sum = w)
     -- Additional: all responses pass norm check (ensures rejection sampling succeeded)
     (bound : Nat)
     (_hnorm : ∀ z ∈ z_shares, NormBounded.NormBounded.norm z ≤ bound) :
-    latticeScheme.A z_shares.sum = w + c • pk :=
-  verify_happy_lattice sk_shares y_shares c pk w hlen z_shares hz hpk hw
+    (LS).A z_shares.sum = w + c • pk :=
+  verify_happy_lattice hb sk_shares y_shares c pk w hlen z_shares hz hpk hw
+
+end Lattice
 
 /-!
 ## FROST-Aligned Threshold Correctness
