@@ -36,6 +36,9 @@ import IceNine.Protocol.Core.Core
 import IceNine.Protocol.Sign.Types
 import IceNine.Protocol.DKG.Core
 import IceNine.Instances
+import IceNine.Proofs.Probability.Commitment
+import IceNine.Proofs.Probability.Indistinguishability
+import IceNine.Proofs.Probability.Rejection
 import Mathlib
 
 set_option autoImplicit false
@@ -43,7 +46,10 @@ set_option autoImplicit false
 namespace IceNine.Proofs
 
 open IceNine.Protocol
+open IceNine.Protocol.NormBounded
+open IceNine.Protocol.ThresholdConfig
 open IceNine.Instances
+open IceNine.Proofs.Probability
 
 /-!
 ## Short Integer Solution (SIS) Problem
@@ -183,8 +189,12 @@ def mlweParamsOfLevel : PQSecurityLevel → MLWEParams
 ## Rejection Sampling Model
 
 The signing protocol uses rejection sampling to ensure responses don't leak
-information about the secret key. We axiomatize the key properties since
-probabilistic reasoning is not well-supported in Lean.
+information about the secret key.
+
+In this file we:
+- define the *distributions* induced by the pure protocol code (via `PMF`)
+- keep the *security properties* (hiding / response-independence) as explicit
+  assumptions to be proved later under concrete crypto assumptions.
 
 **Background**: In Dilithium-style signatures, the response z = y + c·s must be
 independent of s. Rejection sampling achieves this by:
@@ -195,15 +205,8 @@ independent of s. Rejection sampling achieves this by:
 **Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009.
 -/
 
-/-- A “distribution” over `α`, indexed by a security parameter `κ`.
-
-This is a lightweight placeholder until we introduce probabilistic semantics. -/
-abbrev Dist (α : Type*) := Nat → α
-
-/-- Abstract computational indistinguishability relation between distributions.
-
-This is intentionally left uninterpreted until we formalize probability and adversaries. -/
-axiom Indistinguishable {α : Type*} (D₁ D₂ : Dist α) : Prop
+/- A “distribution family” over `α`, indexed by a security parameter `κ`,
+is now modeled by `Probability.DistFamily`. -/
 
 /-- Placeholder: honest local rejection sampling accepts with probability ≥ 1/κ.
 
@@ -233,13 +236,24 @@ structure AcceptanceProbability (S : Scheme) where
     **NOT PROVABLE IN LEAN**: This requires probabilistic reasoning about
     distributions. We axiomatize it as the key security property that rejection
     sampling provides. -/
-axiom acceptedResponseDist (S : Scheme) : S.Secret → S.Challenge → Dist S.Secret
-
-structure ResponseIndependence (S : Scheme) : Prop where
-  /-- Accepted responses are independent of the secret key -/
+structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
+  /-- Public threshold configuration (drives the local acceptance predicate). -/
+  cfg : ThresholdConfig
+  /-- Distribution of fresh nonce pairs `(y_hiding, y_binding)`. -/
+  nonceDist : DistFamily (S.Secret × S.Secret)
+  /-- Acceptance must have nonzero probability mass (needed to condition). -/
+  accept_nonempty :
+    ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
+      ∃ z ∈ acceptSet S cfg,
+        z ∈ (candidateResponseDist S nonceDist bindingFactor c s κ).toPMF.support
+  /-- Accepted responses are independent of the secret key (statistical, first). -/
   independence :
-    ∀ (c : S.Challenge) (s₁ s₂ : S.Secret),
-      Indistinguishable (acceptedResponseDist S s₁ c) (acceptedResponseDist S s₂ c)
+    ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret),
+      Indistinguishable
+        (acceptedResponseDist S cfg nonceDist bindingFactor c s₁
+          (fun κ => accept_nonempty bindingFactor c s₁ κ))
+        (acceptedResponseDist S cfg nonceDist bindingFactor c s₂
+          (fun κ => accept_nonempty bindingFactor c s₂ κ))
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
 def dilithiumAcceptance (S : Scheme) (h : AcceptanceRateBound S 4) : AcceptanceProbability S :=
@@ -326,14 +340,13 @@ this assumption in their security theorems.
 
     **NOT FORMALIZED**: We cannot prove hiding in Lean without probabilistic
     reasoning. This is an explicit axiom that must be assumed. -/
-axiom openingDist (S : Scheme) : Dist S.Opening
-
-structure HidingAssumption (S : Scheme) : Prop where
-  /-- Commitments reveal nothing about the committed value (ROM assumption) -/
+structure HidingAssumption (S : Scheme) where
+  /-- Distribution of random openings. -/
+  openingDist : DistFamily S.Opening
+  /-- Commitments reveal nothing about the committed value (ROM / crypto assumption). -/
   isHiding :
     ∀ x₁ x₂ : S.Public,
-      Indistinguishable (fun κ => S.commit x₁ (openingDist S κ))
-        (fun κ => S.commit x₂ (openingDist S κ))
+      Indistinguishable (commitDist S openingDist x₁) (commitDist S openingDist x₂)
 
 /-!
 ## Assumption Bundle

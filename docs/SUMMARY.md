@@ -14,3 +14,4 @@
 - [Extensions](specs/005_extensions.md)
 - [Protocol Integration](specs/006_integration.md)
 - [Threshold Configuration](specs/100_configuration.md)
+- [References](specs/999_references.md)
