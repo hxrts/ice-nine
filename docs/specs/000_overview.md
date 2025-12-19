@@ -191,7 +191,6 @@ The implementation is organized into focused modules within subdirectories:
 - `Sign/LocalRejection.lean` - Local rejection sampling for norm bounds
 - `Sign/ValidatedAggregation.lean` - Validated signature aggregation
 - `Sign/NonceLifecycle.lean` - Nonce lifecycle tracking and safety
-- `Sign/Sign.lean` - Re-exports for backward compatibility
 
 **Protocol/DKG/** - Distributed key generation:
 - `DKG/Core.lean` - Basic DKG protocol
@@ -230,6 +229,12 @@ The implementation is organized into focused modules within subdirectories:
 - `Proofs/Core/HighBits.lean` - HighBits specification for Dilithium error absorption
 - `Proofs/Core/NormProperties.lean` - Norm bound properties and lemmas
 - `Proofs/Core/MsgMapLemmas.lean` - MsgMap CRDT lemmas
+
+*Proofs/Probability/* - Probabilistic analysis:
+- `Proofs/Probability/Dist.lean` - Distribution properties and analysis
+- `Proofs/Probability/Indistinguishability.lean` - Computational indistinguishability
+- `Proofs/Probability/Rejection.lean` - Rejection sampling analysis
+- `Proofs/Probability/Commitment.lean` - Commitment scheme probability properties
 
 *Proofs/Correctness/* - Happy-path proofs:
 - `Proofs/Correctness/Correctness.lean` - Verification theorems
