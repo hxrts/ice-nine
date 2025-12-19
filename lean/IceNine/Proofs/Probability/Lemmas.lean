@@ -64,6 +64,19 @@ theorem prob_bind (d : Dist α) (f : α → Dist β) (s : Set β) :
           refine tsum_congr fun a => ?_
           simp [prob_eq_toOuterMeasure]
 
+open scoped Classical in
+/-- Probability of an event under the uniform distribution on a nonempty finset.
+
+This is the basic “counting measure” identity:
+`Pr[x ∈ U] = |s ∩ U| / |s|` when `x` is uniform on `s`. -/
+theorem prob_uniformFinset (s : Finset α) (hs : s.Nonempty) (U : Set α) :
+    Dist.prob (Dist.uniformFinset s hs) U =
+      ((s.filter fun a => a ∈ U).card : ENNReal) / (s.card : ENNReal) := by
+  classical
+  -- Bridge through `toOuterMeasure` and use the closed form from mathlib.
+  rw [prob_eq_toOuterMeasure]
+  simp [Dist.uniformFinset]
+
 end Dist
 
 namespace StatClose

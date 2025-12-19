@@ -12,6 +12,7 @@ models rejection sampling.
 -/
 
 import Mathlib.Probability.ProbabilityMassFunction.Constructions
+import Mathlib.Probability.Distributions.Uniform
 
 set_option autoImplicit false
 
@@ -37,6 +38,15 @@ variable {α : Type u} {β : Type v}
 instance : Coe (Dist α) (PMF α) :=
   ⟨Dist.toPMF⟩
 
+@[ext]
+theorem ext (d₁ d₂ : Dist α) (h : ∀ a, d₁.toPMF a = d₂.toPMF a) : d₁ = d₂ := by
+  cases d₁ with
+  | mk p =>
+    cases d₂ with
+    | mk q =>
+      have : p = q := PMF.ext h
+      simp [this]
+
 /-- Point-mass distribution. -/
 def pure (a : α) : Dist α :=
   ⟨PMF.pure a⟩
@@ -50,6 +60,11 @@ def uniform (α : Type u) [Fintype α] [Nonempty α] : Dist α := by
   simpa [div_eq_mul_inv, hcard, ENNReal.natCast_ne_top (Fintype.card α)] using
     (ENNReal.mul_inv_cancel (a := (Fintype.card α : ENNReal)) hcard
       (ENNReal.natCast_ne_top (Fintype.card α)))
+
+/-- The uniform distribution supported on a nonempty finset. -/
+def uniformFinset (s : Finset α) (hs : s.Nonempty) : Dist α := by
+  classical
+  exact ⟨PMF.uniformOfFinset s hs⟩
 
 /-- Support of a distribution. -/
 def support (d : Dist α) : Set α :=
