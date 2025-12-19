@@ -708,6 +708,52 @@ theorem statClose_vec_shift (n B : Nat) (δ : Fin n → Int) :
             simp [a, base]
   simpa [hε] using hclose'
 
+/-- Statistical closeness between two different coordinatewise shifts of the centered-bounded vector sampler.
+
+This is a corollary of `statClose_vec_shift`: shifting by `δ₂` instead of `δ₁` is the same as
+shifting by `δ₂ - δ₁` after applying the first shift.
+-/
+theorem statClose_vec_shift_two (n B : Nat) (δ₁ δ₂ : Fin n → Int) :
+    StatClose
+      (Dist.map (fun x : Fin n → Int => fun i => x i + δ₁ i) (vec n B))
+      (Dist.map (fun x : Fin n → Int => fun i => x i + δ₂ i) (vec n B))
+      (((Finset.univ.sum fun i : Fin n => Int.natAbs (δ₂ i - δ₁ i) : Nat) : ENNReal) /
+        (2 * B + 1 : ENNReal)) := by
+  classical
+  let δ : Fin n → Int := fun i => δ₂ i - δ₁ i
+  -- Base shift bound.
+  have h :
+      StatClose (vec n B)
+        (Dist.map (fun x : Fin n → Int => fun i => x i + δ i) (vec n B))
+        (((Finset.univ.sum fun i : Fin n => Int.natAbs (δ i) : Nat) : ENNReal) /
+          (2 * B + 1 : ENNReal)) := by
+    simpa [δ] using statClose_vec_shift (n := n) (B := B) δ
+  -- Apply the first shift to both sides (data processing).
+  have hmap :
+      StatClose
+        (Dist.map (fun x : Fin n → Int => fun i => x i + δ₁ i) (vec n B))
+        (Dist.map (fun x : Fin n → Int => fun i => x i + δ₁ i)
+          (Dist.map (fun x : Fin n → Int => fun i => x i + δ i) (vec n B)))
+        (((Finset.univ.sum fun i : Fin n => Int.natAbs (δ i) : Nat) : ENNReal) /
+          (2 * B + 1 : ENNReal)) :=
+    StatClose.map (p := vec n B) (q := Dist.map (fun x : Fin n → Int => fun i => x i + δ i) (vec n B))
+      (ε := (((Finset.univ.sum fun i : Fin n => Int.natAbs (δ i) : Nat) : ENNReal) / (2 * B + 1 : ENNReal)))
+      h (fun x : Fin n → Int => fun i => x i + δ₁ i)
+  -- Simplify the composed map into a single shift by `δ₂`.
+  have hcomp :
+      Dist.map (fun x : Fin n → Int => fun i => x i + δ₁ i)
+          (Dist.map (fun x : Fin n → Int => fun i => x i + δ i) (vec n B))
+        = Dist.map (fun x : Fin n → Int => fun i => x i + δ₂ i) (vec n B) := by
+    cases vec n B with
+    | mk p =>
+      -- Reduce to a pointwise identity of the shift functions.
+      simp [Dist.map, PMF.map_comp]
+      congr
+      funext a i
+      simp [Function.comp, δ, add_assoc, sub_add_cancel]
+  -- Conclude.
+  simpa [hcomp, δ] using hmap
+
 end CenteredBounded
 
 end

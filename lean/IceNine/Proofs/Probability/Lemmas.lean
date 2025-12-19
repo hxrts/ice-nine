@@ -64,6 +64,44 @@ theorem prob_bind (d : Dist α) (f : α → Dist β) (s : Set β) :
           refine tsum_congr fun a => ?_
           simp [prob_eq_toOuterMeasure]
 
+theorem prob_filter (d : Dist α) (A U : Set α)
+    (hA : ∃ a ∈ A, a ∈ d.toPMF.support) :
+    Dist.prob (Dist.filter d A hA) U =
+      Dist.prob d (U ∩ A) / Dist.prob d A := by
+  classical
+  -- Expand `PMF.filter` and simplify indicator-on-indicator into an intersection.
+  let p : PMF α := d.toPMF
+  let c : ENNReal := (∑' a', (A.indicator p) a')⁻¹
+  have hind :
+      U.indicator (fun a => A.indicator p a * c) = fun a => (U ∩ A).indicator p a * c := by
+    funext a
+    by_cases haU : a ∈ U <;> by_cases haA : a ∈ A <;>
+      simp [Set.indicator, haU, haA, Set.mem_inter_iff]
+  calc
+    Dist.prob (Dist.filter d A hA) U = ∑' a, U.indicator (p.filter A hA) a := by
+      simp [Dist.filter, Dist.prob, p]
+    _ = ∑' a, U.indicator (fun a => A.indicator p a * c) a := by
+      refine tsum_congr fun a => ?_
+      by_cases haU : a ∈ U
+      · simp [Set.indicator, haU, PMF.filter_apply, c]
+      · simp [Set.indicator, haU]
+    _ = ∑' a, ((U ∩ A).indicator p a) * c := by
+      simp [hind]
+    _ = (∑' a, (U ∩ A).indicator p a) * c := by
+      simp [ENNReal.tsum_mul_right]
+    _ = Dist.prob d (U ∩ A) / Dist.prob d A := by
+      simp [Dist.prob, p, c, div_eq_mul_inv]
+
+
+
+theorem prob_ne_top (d : Dist α) (s : Set α) : Dist.prob d s ≠ ⊤ := by
+  classical
+  simpa [Dist.prob] using (d.toPMF.tsum_coe_indicator_ne_top s)
+
+theorem prob_mono (d : Dist α) {s t : Set α} (h : s ⊆ t) :
+    Dist.prob d s ≤ Dist.prob d t := by
+  simpa [prob_eq_toOuterMeasure] using (d.toPMF.toOuterMeasure.mono h)
+
 open scoped Classical in
 /-- Probability of an event under the uniform distribution on a nonempty finset.
 
@@ -84,6 +122,213 @@ namespace StatClose
 universe u v
 
 variable {α : Type u} {β : Type v}
+
+
+private theorem div_le_div_add_div_tsub {b c d : ENNReal}
+    (hc : c ≤ d) (hb0 : b ≠ 0) (hbt : b ≠ ⊤) (hd0 : d ≠ 0) (hdt : d ≠ ⊤) :
+    c / b ≤ c / d + (d - b) / b := by
+  -- Cross-multiply by `b`.
+  have : c ≤ (c / d + (d - b) / b) * b := by
+    -- Expand the RHS.
+    simp [add_mul, ENNReal.div_mul_cancel hb0 hbt]
+    -- Goal is now `c ≤ c / d * b + (d - b)`.
+    -- Rewrite `c` as `(c / d) * d`.
+    set t : ENNReal := c / d
+    have hcdiv : c = t * d := by
+      -- `c / d * d = c`.
+      have : c / d * d = c := by
+        simpa using (ENNReal.div_mul_cancel (a := d) (b := c) hd0 hdt)
+      simpa [t, mul_assoc] using this.symm
+    have ht : t ≤ 1 := by
+      -- `c / d ≤ 1 ↔ c ≤ d`.
+      have : c / d ≤ 1 := (ENNReal.div_le_iff hd0 hdt).2 (by simpa [one_mul] using hc)
+      simpa [t] using this
+    have hd_le : d ≤ b + (d - b) := by
+      -- `d ≤ d - b + b`.
+      have := (le_tsub_add (a := b) (b := d))
+      simpa [add_comm, add_left_comm, add_assoc] using this
+    -- Multiply by `t`.
+    have hmul : t * d ≤ t * (b + (d - b)) := by
+      exact mul_le_mul_right hd_le t
+    -- Expand.
+    have hmul' : t * d ≤ t * b + t * (d - b) := by
+      simpa [mul_add, add_comm, add_left_comm, add_assoc] using hmul
+    -- Bound `t * (d - b)`.
+    have htsub : t * (d - b) ≤ d - b := by
+      simpa [one_mul] using (mul_le_mul_left ht (d - b))
+    have : t * d ≤ t * b + (d - b) := by
+      calc
+        t * d ≤ t * b + t * (d - b) := hmul'
+        _ ≤ t * b + (d - b) := by
+          exact add_le_add_right htsub (t * b)
+    -- Put back `c`.
+    simpa [hcdiv] using this
+  exact (ENNReal.div_le_iff hb0 hbt).2 this
+
+theorem filter {p q : Dist α} {ε α0 : ENNReal} (h : StatClose p q ε)
+    (A : Set α)
+    (hpA : ∃ a ∈ A, a ∈ p.toPMF.support)
+    (hqA : ∃ a ∈ A, a ∈ q.toPMF.support)
+    (hαp : α0 ≤ Dist.prob p A)
+    (hαq : α0 ≤ Dist.prob q A)
+    (hα0 : α0 ≠ 0) :
+    StatClose (Dist.filter p A hpA) (Dist.filter q A hqA) (2 * ε / α0) := by
+  intro U
+  -- Rewrite conditioned probabilities.
+  simp [Dist.prob_filter]
+  -- Shorthand.
+  set pU : ENNReal := Dist.prob p (U ∩ A)
+  set qU : ENNReal := Dist.prob q (U ∩ A)
+  set pA : ENNReal := Dist.prob p A
+  set qA : ENNReal := Dist.prob q A
+  have hpA0 : pA ≠ 0 := by
+    intro hpA0
+    have : α0 ≤ 0 := by simpa [pA, hpA0] using hαp
+    exact hα0 (by simpa [le_zero_iff] using this)
+  have hqA0 : qA ≠ 0 := by
+    intro hqA0
+    have : α0 ≤ 0 := by simpa [qA, hqA0] using hαq
+    exact hα0 (by simpa [le_zero_iff] using this)
+  have hpAtop : pA ≠ ⊤ := by
+    simpa [pA, Dist.prob] using (p.toPMF.tsum_coe_indicator_ne_top A)
+  have hqAtop : qA ≠ ⊤ := by
+    simpa [qA, Dist.prob] using (q.toPMF.tsum_coe_indicator_ne_top A)
+  have hpU_le : pU ≤ ε + qU := by
+    have hmax : max (pU - qU) (qU - pU) ≤ ε := by
+      simpa [pU, qU, absSubENNReal] using h (U ∩ A)
+    have : pU - qU ≤ ε := le_trans (le_max_left _ _) hmax
+    exact (tsub_le_iff_right).1 this
+  have hqU_le : qU ≤ ε + pU := by
+    have hmax : max (pU - qU) (qU - pU) ≤ ε := by
+      simpa [pU, qU, absSubENNReal] using h (U ∩ A)
+    have : qU - pU ≤ ε := le_trans (le_max_right _ _) hmax
+    exact (tsub_le_iff_right).1 this
+  have hpA_le : pA ≤ ε + qA := by
+    have hmax : max (pA - qA) (qA - pA) ≤ ε := by
+      simpa [pA, qA, absSubENNReal] using h A
+    have : pA - qA ≤ ε := le_trans (le_max_left _ _) hmax
+    exact (tsub_le_iff_right).1 this
+  have hqA_le : qA ≤ ε + pA := by
+    have hmax : max (pA - qA) (qA - pA) ≤ ε := by
+      simpa [pA, qA, absSubENNReal] using h A
+    have : qA - pA ≤ ε := le_trans (le_max_right _ _) hmax
+    exact (tsub_le_iff_right).1 this
+  have hqU_le_qA : qU ≤ qA := by
+    -- monotonicity of `prob`
+    have : (U ∩ A) ⊆ A := by intro x hx; exact hx.2
+    simpa [qU, qA] using (Dist.prob_mono (d := q) this)
+  have hpU_le_pA : pU ≤ pA := by
+    have : (U ∩ A) ⊆ A := by intro x hx; exact hx.2
+    simpa [pU, pA] using (Dist.prob_mono (d := p) this)
+  -- Main bound for `p|A` vs `q|A`.
+  have hleft : pU / pA - qU / qA ≤ 2 * ε / α0 := by
+    -- First, bound `pU / pA` by `qU / qA` plus `2ε/pA`.
+    have hpU_div : pU / pA ≤ (ε + qU) / pA := by
+      exact ENNReal.div_le_div_right hpU_le (pA)
+    -- Rewrite `(ε + qU) / pA`.
+    have : (ε + qU) / pA = ε / pA + qU / pA := by
+      simp [ENNReal.add_div]
+    -- Compare `qU / pA` with `qU / qA`.
+    have hqU_div : qU / pA ≤ qU / qA + (qA - pA) / pA :=
+      div_le_div_add_div_tsub (b := pA) (c := qU) (d := qA) hqU_le_qA hpA0 hpAtop hqA0 hqAtop
+    have hqA_tsub : (qA - pA) / pA ≤ ε / pA := by
+      have : qA - pA ≤ ε := by
+        have hmax : max (pA - qA) (qA - pA) ≤ ε := by
+          simpa [pA, qA, absSubENNReal] using h A
+        exact le_trans (le_max_right _ _) hmax
+      exact ENNReal.div_le_div_right this pA
+    -- Combine.
+    have : pU / pA ≤ qU / qA + (ε / pA + ε / pA) := by
+      -- from pU ≤ ε + qU
+      have hpU_div' : pU / pA ≤ ε / pA + qU / pA := by
+        -- use hpU_le and add_div
+        calc
+          pU / pA ≤ (ε + qU) / pA := ENNReal.div_le_div_right hpU_le pA
+          _ = ε / pA + qU / pA := by simp [ENNReal.add_div]
+      have : ε / pA + qU / pA ≤ ε / pA + (qU / qA + (qA - pA) / pA) := by
+        exact add_le_add_right hqU_div (ε / pA)
+      have : ε / pA + qU / pA ≤ ε / pA + (qU / qA + ε / pA) := by
+        calc
+          ε / pA + qU / pA ≤ ε / pA + (qU / qA + (qA - pA) / pA) := this
+          _ ≤ ε / pA + (qU / qA + ε / pA) := by
+              have hinner : qU / qA + (qA - pA) / pA ≤ qU / qA + ε / pA := by
+                exact add_le_add_right hqA_tsub (qU / qA)
+              exact add_le_add_right hinner (ε / pA)
+      -- rearrange
+      calc
+        pU / pA ≤ ε / pA + qU / pA := hpU_div'
+        _ ≤ ε / pA + (qU / qA + ε / pA) := this
+        _ = qU / qA + (ε / pA + ε / pA) := by
+              simp [add_assoc, add_comm]
+    -- Convert to a `tsub` bound.
+    have : pU / pA - qU / qA ≤ (ε / pA + ε / pA) := by
+      exact (tsub_le_iff_right).2 (by simpa [add_comm, add_left_comm, add_assoc] using this)
+    -- Now bound `ε/pA` by `ε/α0`.
+    have hinv : pA⁻¹ ≤ α0⁻¹ := by
+      -- inv is order-reversing
+      exact (ENNReal.inv_le_inv).2 hαp
+    have hεdiv : ε / pA ≤ ε / α0 := by
+      -- ε * pA⁻¹ ≤ ε * α0⁻¹
+      simpa [div_eq_mul_inv] using mul_le_mul_right hinv ε
+    have hsum : ε / pA + ε / pA ≤ ε / α0 + ε / α0 := by
+      exact add_le_add hεdiv hεdiv
+    -- finish
+    have : pU / pA - qU / qA ≤ ε / α0 + ε / α0 := le_trans this hsum
+    have htwo : ε / α0 + ε / α0 = 2 * ε / α0 := by
+      simp [two_mul, ENNReal.add_div]
+    simpa [htwo] using this
+  -- Symmetric bound.
+  have hright : qU / qA - pU / pA ≤ 2 * ε / α0 := by
+    -- repeat with p/q swapped
+    have hpU_div : qU / qA ≤ (ε + pU) / qA := by
+      exact ENNReal.div_le_div_right hqU_le qA
+    have hpU_div' : qU / qA ≤ ε / qA + pU / qA := by
+      calc
+        qU / qA ≤ (ε + pU) / qA := ENNReal.div_le_div_right hqU_le qA
+        _ = ε / qA + pU / qA := by simp [ENNReal.add_div]
+    have hpU_div2 : pU / qA ≤ pU / pA + (pA - qA) / qA :=
+      div_le_div_add_div_tsub (b := qA) (c := pU) (d := pA) hpU_le_pA hqA0 hqAtop hpA0 hpAtop
+    have hpA_tsub : (pA - qA) / qA ≤ ε / qA := by
+      have : pA - qA ≤ ε := by
+        have hmax : max (pA - qA) (qA - pA) ≤ ε := by
+          simpa [pA, qA, absSubENNReal] using h A
+        exact le_trans (le_max_left _ _) hmax
+      exact ENNReal.div_le_div_right this qA
+    have : qU / qA ≤ pU / pA + (ε / qA + ε / qA) := by
+      have : ε / qA + pU / qA ≤ ε / qA + (pU / pA + (pA - qA) / qA) := by
+        exact add_le_add_right hpU_div2 (ε / qA)
+      have : ε / qA + pU / qA ≤ ε / qA + (pU / pA + ε / qA) := by
+        calc
+          ε / qA + pU / qA ≤ ε / qA + (pU / pA + (pA - qA) / qA) := this
+          _ ≤ ε / qA + (pU / pA + ε / qA) := by
+              have hinner : pU / pA + (pA - qA) / qA ≤ pU / pA + ε / qA := by
+                exact add_le_add_right hpA_tsub (pU / pA)
+              exact add_le_add_right hinner (ε / qA)
+      calc
+        qU / qA ≤ ε / qA + pU / qA := hpU_div'
+        _ ≤ ε / qA + (pU / pA + ε / qA) := this
+        _ = pU / pA + (ε / qA + ε / qA) := by
+          -- reassociate and commute
+          calc
+            ε / qA + (pU / pA + ε / qA)
+                = ε / qA + pU / pA + ε / qA := by simp [add_assoc]
+            _ = pU / pA + ε / qA + ε / qA := by
+                  simp [add_comm, add_left_comm]
+            _ = pU / pA + (ε / qA + ε / qA) := by simp [add_assoc]
+    have : qU / qA - pU / pA ≤ ε / qA + ε / qA :=
+      (tsub_le_iff_right).2 (by simpa [add_comm, add_left_comm, add_assoc] using this)
+    have hinv : qA⁻¹ ≤ α0⁻¹ := (ENNReal.inv_le_inv).2 hαq
+    have hεdiv : ε / qA ≤ ε / α0 := by
+      simpa [div_eq_mul_inv] using mul_le_mul_right hinv ε
+    have hsum : ε / qA + ε / qA ≤ ε / α0 + ε / α0 := add_le_add hεdiv hεdiv
+    have : qU / qA - pU / pA ≤ ε / α0 + ε / α0 := le_trans this hsum
+    have htwo : ε / α0 + ε / α0 = 2 * ε / α0 := by
+      simp [two_mul, ENNReal.add_div]
+    simpa [htwo] using this
+  -- Wrap into `absSubENNReal`.
+  -- `absSubENNReal` is a `max` of the two one-sided bounds.
+  simpa [absSubENNReal, max_le_iff] using (show max (pU / pA - qU / qA) (qU / qA - pU / pA) ≤ 2 * ε / α0 from
+    (max_le_iff).2 ⟨hleft, hright⟩)
 
 /-- Data processing for statistical closeness: pushforward along a function preserves bounds. -/
 theorem map {p q : Dist α} {ε : ENNReal} (h : StatClose p q ε) (f : α → β) :

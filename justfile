@@ -164,8 +164,9 @@ summary:
 # Build documentation book (regenerates SUMMARY.md first)
 book: summary
     mdbook-mermaid install . > /dev/null 2>&1 || true
+    echo '.chapter-item a strong { display: none; }' > custom.css
     mdbook build
-    rm -f mermaid.min.js mermaid-init.js
+    rm -f mermaid.min.js mermaid-init.js custom.css
 
 # Serve documentation locally with live reload
 serve-book: summary
@@ -180,11 +181,13 @@ serve-book: summary
     fi
 
     mdbook-mermaid install . > /dev/null 2>&1 || true
+    echo '.chapter-item a strong { display: none; }' > custom.css
     mdbook serve --open
 
 # Clean built documentation
 clean-book:
     rm -rf docs/book
+    rm -f mermaid.min.js mermaid-init.js custom.css
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Deployment (requires DEPLOY_SERVER and DEPLOY_PATH in .env)

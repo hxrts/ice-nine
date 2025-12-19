@@ -10,6 +10,7 @@ build-dir = "docs/book"
 [output.html]
 preferred-theme = "rust"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["custom.css"]
 
 [output.html.search]
 enable = true
