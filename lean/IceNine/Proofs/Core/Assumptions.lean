@@ -91,9 +91,7 @@ structure SISSolution (p : SISParams) (inst : SISInstance p) where
     (Finset.univ.sum fun j => inst.A i j * (z j : ZMod p.q)) = 0
 
 /-- SIS hardness assumption: no efficient algorithm finds solutions -/
-def SISHard (_p : SISParams) : Prop :=
-  -- Axiomatized: for random A, finding SISSolution is computationally infeasible
-  True
+axiom SISHard (p : SISParams) : Prop
 
 /-- NIST PQC (Dilithium2-ish) SIS parameters, Level 1 (~128-bit)
     NOTE: The m_large constraint is not satisfied by standard Dilithium parameters.
@@ -146,9 +144,7 @@ structure MLWESecret (p : MLWEParams) where
   e_short : ∀ i j, Int.natAbs (e i j) ≤ p.eta
 
 /-- MLWE hardness: distinguishing (A, As+e) from (A, u) is hard -/
-def MLWEHard (_p : MLWEParams) : Prop :=
-  -- Axiomatized: (A, As+e) computationally indistinguishable from (A, uniform)
-  True
+axiom MLWEHard (p : MLWEParams) : Prop
 
 /-- Ring-LWE is MLWE with k=1 (single polynomial) -/
 def RLWEParams (n q eta : Nat) : MLWEParams :=
@@ -199,6 +195,21 @@ independent of s. Rejection sampling achieves this by:
 **Reference**: Lyubashevsky, "Fiat-Shamir with Aborts", ASIACRYPT 2009.
 -/
 
+/-- A “distribution” over `α`, indexed by a security parameter `κ`.
+
+This is a lightweight placeholder until we introduce probabilistic semantics. -/
+abbrev Dist (α : Type*) := Nat → α
+
+/-- Abstract computational indistinguishability relation between distributions.
+
+This is intentionally left uninterpreted until we formalize probability and adversaries. -/
+axiom Indistinguishable {α : Type*} (D₁ D₂ : Dist α) : Prop
+
+/-- Placeholder: honest local rejection sampling accepts with probability ≥ 1/κ.
+
+We record it as a bound on expected iterations (≈ κ). -/
+axiom AcceptanceRateBound (S : Scheme) (expectedIterations : Nat) : Prop
+
 /-- Acceptance probability bound for rejection sampling.
     Guarantees signing terminates in expected O(κ) attempts.
 
@@ -210,10 +221,10 @@ structure AcceptanceProbability (S : Scheme) where
   /-- Bound is valid (acceptance prob ≥ 1/κ) -/
   bound_valid : expectedIterations > 0
   /-- Axiom: honest parties with short secrets accept with this probability -/
-  acceptance_rate : True  -- Axiomatized; depends on γ₁, β, secret distribution
+  acceptance_rate : AcceptanceRateBound S expectedIterations
 
 /-- Response independence axiom for rejection sampling.
-    This is THE key security property: accepted responses reveal nothing about s.
+    This is *the* key security property: accepted responses reveal nothing about s.
 
     Formally: For any two secrets s₁, s₂ with ||sᵢ||∞ ≤ η, the distributions
     {z : z = y + c·s₁, ||z||∞ < γ₁ - β} and {z : z = y + c·s₂, ||z||∞ < γ₁ - β}
@@ -222,15 +233,19 @@ structure AcceptanceProbability (S : Scheme) where
     **NOT PROVABLE IN LEAN**: This requires probabilistic reasoning about
     distributions. We axiomatize it as the key security property that rejection
     sampling provides. -/
+axiom acceptedResponseDist (S : Scheme) : S.Secret → S.Challenge → Dist S.Secret
+
 structure ResponseIndependence (S : Scheme) : Prop where
   /-- Accepted responses are independent of the secret key -/
-  independence : True  -- Axiomatized; this is what rejection sampling achieves
+  independence :
+    ∀ (c : S.Challenge) (s₁ s₂ : S.Secret),
+      Indistinguishable (acceptedResponseDist S s₁ c) (acceptedResponseDist S s₂ c)
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
-def dilithiumAcceptance (S : Scheme) : AcceptanceProbability S :=
+def dilithiumAcceptance (S : Scheme) (h : AcceptanceRateBound S 4) : AcceptanceProbability S :=
   { expectedIterations := 4
     bound_valid := by decide
-    acceptance_rate := True.intro }
+    acceptance_rate := h }
 
 /-!
 ## Security Reduction Structure
@@ -282,7 +297,7 @@ hash instantiations (SHA3, SHAKE, etc.).
     from Collision-Free Hashing", CRYPTO 1996. -/
 structure CollisionResistant {α β : Type*} (H : α → β) : Prop where
   /-- No efficient algorithm can find x₁ ≠ x₂ with H(x₁) = H(x₂) -/
-  no_collisions : True  -- Axiomatized; in practice, instantiate with concrete hash assumption
+  no_collisions : ∀ x₁ x₂, H x₁ = H x₂ → x₁ = x₂
 
 /-- Collision resistance for the scheme's commitment function.
     This is sufficient for binding: CR → Binding. -/
@@ -293,7 +308,7 @@ def commitmentCR (S : Scheme) : Prop :=
 /-!
 ## Hiding Assumption
 
-Hash-based commitments are NOT perfectly hiding. They provide computational hiding
+Hash-based commitments are not perfectly hiding. They provide computational hiding
 under the Random Oracle Model (ROM). We explicitly axiomatize this assumption
 since it cannot be proven from first principles.
 
@@ -311,9 +326,14 @@ this assumption in their security theorems.
 
     **NOT FORMALIZED**: We cannot prove hiding in Lean without probabilistic
     reasoning. This is an explicit axiom that must be assumed. -/
+axiom openingDist (S : Scheme) : Dist S.Opening
+
 structure HidingAssumption (S : Scheme) : Prop where
   /-- Commitments reveal nothing about the committed value (ROM assumption) -/
-  isHiding : True  -- Axiomatized; requires ROM or DDH depending on instantiation
+  isHiding :
+    ∀ x₁ x₂ : S.Public,
+      Indistinguishable (fun κ => S.commit x₁ (openingDist S κ))
+        (fun κ => S.commit x₂ (openingDist S κ))
 
 /-!
 ## Assumption Bundle
@@ -331,7 +351,7 @@ structure Assumptions (S : Scheme) where
   /-- Binding for the hash-based commitment (collision resistance of digest). -/
   hashBinding       : IceNine.Instances.HashBinding := IceNine.Instances.hashBindingAssumption
   /-- Commitment hiding (requires ROM; NOT formally proven). -/
-  commitHiding      : HidingAssumption S := ⟨True.intro⟩
+  commitHiding      : HidingAssumption S
   /-- Norm bounds prevent leakage in lattice setting. -/
   normLeakageBound  : Prop
   /-- Max corrupted parties (must be < threshold for security). -/
@@ -358,6 +378,7 @@ def mkLatticeAssumptions
   (lvl : PQSecurityLevel)
   (hashRO : Prop)
   (commitCR : Prop)
+  (commitHiding : HidingAssumption S)
   (normLeakageBound : Prop)
   (corruptionBound : Nat)
   (sis_hard : SISHard (sisParamsOfLevel lvl))
@@ -366,6 +387,7 @@ def mkLatticeAssumptions
 { hashRO := hashRO
   commitCR := commitCR
   hashBinding := IceNine.Instances.hashBindingAssumption
+  commitHiding := commitHiding
   normLeakageBound := normLeakageBound
   corruptionBound := corruptionBound
   sisParams := some (sisParamsOfLevel lvl)
@@ -376,13 +398,23 @@ def mkLatticeAssumptions
   mlwe_hard := mlwe_hard }
 
 /-- Default lattice assumptions for our concrete latticeScheme at Level 1. -/
-def latticeAssumptionsL1 : LatticeAssumptions IceNine.Instances.latticeScheme :=
+def latticeAssumptionsL1
+  (hashRO : Prop)
+  (commitCR : Prop)
+  (commitHiding : HidingAssumption IceNine.Instances.latticeScheme)
+  (normLeakageBound : Prop)
+  (corruptionBound : Nat)
+  (sis_hard : SISHard (sisParamsOfLevel PQSecurityLevel.L1))
+  (mlwe_hard : MLWEHard (mlweParamsOfLevel PQSecurityLevel.L1)) :
+  LatticeAssumptions IceNine.Instances.latticeScheme :=
   mkLatticeAssumptions (S := IceNine.Instances.latticeScheme) PQSecurityLevel.L1
-    True   -- hashRO
-    True   -- commitCR (digest collision resistance)
-    True   -- normLeakageBound
-    0
-    (by trivial) (by trivial)
+    hashRO
+    commitCR
+    commitHiding
+    normLeakageBound
+    corruptionBound
+    sis_hard
+    mlwe_hard
 
 /-!
 ## Security Theorems
@@ -413,7 +445,7 @@ def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
 
 /-- Liveness: honest parties either complete signing or detect abort.
     No silent failures - either succeed or return error. -/
-def livenessOrAbort (_S : Scheme) (_A : Assumptions _S) : Prop := True
+axiom livenessOrAbort (S : Scheme) (A : Assumptions S) : Prop
 
 /-!
 ## Parameter Validation
