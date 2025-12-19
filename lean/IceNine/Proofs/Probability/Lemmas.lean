@@ -339,6 +339,44 @@ theorem map {p q : Dist α} {ε : ENNReal} (h : StatClose p q ε) (f : α → β
 
 end StatClose
 
+namespace Indistinguishable
+
+universe u
+
+variable {α : Type u}
+
+/-- Conditioning preserves indistinguishability up to a `1/Pr[A]` blowup, assuming a uniform
+lower bound `α0` on acceptance probability in both worlds. -/
+theorem filter_const (D₁ D₂ : DistFamily α) (A : Set α) (α0 : ENNReal)
+    (h : Indistinguishable D₁ D₂)
+    (hA₁ : ∀ κ, ∃ a ∈ A, a ∈ (D₁ κ).toPMF.support)
+    (hA₂ : ∀ κ, ∃ a ∈ A, a ∈ (D₂ κ).toPMF.support)
+    (hα0 : α0 ≠ 0)
+    (hprob₁ : ∀ κ, α0 ≤ Dist.prob (D₁ κ) A)
+    (hprob₂ : ∀ κ, α0 ≤ Dist.prob (D₂ κ) A) :
+    Indistinguishable (fun κ => Dist.filter (D₁ κ) A (hA₁ κ))
+      (fun κ => Dist.filter (D₂ κ) A (hA₂ κ)) := by
+  rcases h with ⟨ε, hεneg, hεclose⟩
+  refine ⟨fun κ => 2 * ε κ / α0, ?_, ?_⟩
+  · -- Negligible scaling by a finite constant.
+    have hcinv : α0⁻¹ ≠ ⊤ := (ENNReal.inv_ne_top).2 hα0
+    have hc : (2 / α0) ≠ ⊤ := by
+      have h2 : (2 : ENNReal) ≠ ⊤ := ENNReal.natCast_ne_top 2
+      simpa [div_eq_mul_inv] using ENNReal.mul_ne_top h2 hcinv
+    have hmul : Negligible (fun κ => ε κ * (2 / α0)) :=
+      Negligible.mul_const hεneg (2 / α0) hc
+    -- Rewrite `ε κ * (2/α0)` into `2 * ε κ / α0`.
+    unfold Negligible at hmul ⊢
+    refine Asymptotics.SuperpolynomialDecay.congr hmul ?_
+    intro κ
+    simp [div_eq_mul_inv, mul_left_comm, mul_comm]
+  · intro κ
+    -- Pointwise: conditioning amplifies statistical distance by at most `2/α0`.
+    exact StatClose.filter (h := hεclose κ) (A := A) (hpA := hA₁ κ) (hqA := hA₂ κ)
+      (hαp := hprob₁ κ) (hαq := hprob₂ κ) (hα0 := hα0)
+
+end Indistinguishable
+
 end
 
 end IceNine.Proofs.Probability
