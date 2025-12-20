@@ -102,6 +102,29 @@ theorem prob_mono (d : Dist α) {s t : Set α} (h : s ⊆ t) :
     Dist.prob d s ≤ Dist.prob d t := by
   simpa [prob_eq_toOuterMeasure] using (d.toPMF.toOuterMeasure.mono h)
 
+
+theorem exists_mem_support_of_prob_ne_zero (d : Dist α) (A : Set α)
+    (hA : Dist.prob d A ≠ 0) :
+    ∃ a ∈ A, a ∈ d.toPMF.support := by
+  classical
+  by_contra h
+  have hzero : Dist.prob d A = 0 := by
+    -- `ENNReal.tsum_eq_zero` characterizes when an `ENNReal` tsum vanishes.
+    unfold Dist.prob
+    refine (ENNReal.tsum_eq_zero).2 ?_
+    intro a
+    by_cases ha : a ∈ A
+    · have hnot : a ∉ d.toPMF.support := by
+        intro hs
+        apply h
+        exact ⟨a, ha, hs⟩
+      have hp0 : d.toPMF a = 0 := by
+        -- `a ∉ support` means the mass at `a` is zero.
+        simpa [PMF.support] using hnot
+      simp [Set.indicator, ha, hp0]
+    · simp [Set.indicator, ha]
+  exact hA hzero
+
 open scoped Classical in
 /-- Probability of an event under the uniform distribution on a nonempty finset.
 
@@ -344,6 +367,15 @@ namespace Indistinguishable
 universe u
 
 variable {α : Type u}
+
+/-- Data processing for indistinguishability: pushforward along a function preserves bounds. -/
+theorem map {β : Type*} (D₁ D₂ : DistFamily α) (f : α → β)
+    (h : Indistinguishable D₁ D₂) :
+    Indistinguishable (fun κ => Dist.map f (D₁ κ)) (fun κ => Dist.map f (D₂ κ)) := by
+  rcases h with ⟨ε, hεneg, hεclose⟩
+  refine ⟨ε, hεneg, ?_⟩
+  intro κ
+  exact StatClose.map (h := hεclose κ) f
 
 /-- Conditioning preserves indistinguishability up to a `1/Pr[A]` blowup, assuming a uniform
 lower bound `α0` on acceptance probability in both worlds. -/
