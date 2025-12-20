@@ -268,16 +268,15 @@ structure AcceptanceProbability (S : Scheme) [NormBounded S.Secret] where
   /-- Rejection probability bound for honest parties with short secrets. -/
   acceptance_rate : AcceptanceRateBound S cfg nonceDist expectedIterations
 
-/-- Response independence axiom for rejection sampling.
-    This is *the* key security property: accepted responses reveal nothing about s.
+/-- Response independence assumptions for rejection sampling.
 
-    Formally: For any two secrets s₁, s₂ with ||sᵢ||∞ ≤ η, the distributions
-    {z : z = y + c·s₁, ||z||∞ < γ₁ - β} and {z : z = y + c·s₂, ||z||∞ < γ₁ - β}
-    are statistically close.
+The protocol’s accepted response distribution is the candidate response
+conditioned on the local acceptance predicate (`acceptSet`).
 
-    **NOT PROVABLE IN LEAN**: This requires probabilistic reasoning about
-    distributions. We axiomatize it as the key security property that rejection
-    sampling provides. -/
+We keep the hard part (candidate responses are statistically close across
+secrets) as an explicit assumption (`candidate_indist`), and derive the usual
+accepted-response independence claim via a general conditioning lemma, assuming
+a uniform nonzero lower bound on acceptance probability (`accept_lb`). -/
 structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
   /-- Public threshold configuration (drives the local acceptance predicate). -/
   cfg : ThresholdConfig
@@ -288,14 +287,43 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
       ∃ z ∈ acceptSet S cfg,
         z ∈ (candidateResponseDist S nonceDist bindingFactor c s κ).toPMF.support
-  /-- Accepted responses are independent of the secret key (statistical, first). -/
-  independence :
+  /-- A uniform lower bound on acceptance probability. -/
+  accept_lb : ENNReal
+  /-- The lower bound is nonzero. -/
+  accept_lb_ne_zero : accept_lb ≠ 0
+  /-- Acceptance probability is bounded below by `accept_lb`. -/
+  accept_prob_ge :
+    ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
+      accept_lb ≤
+        Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S cfg)
+  /-- Candidate responses are indistinguishable across secret keys (statistical, first). -/
+  candidate_indist :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret),
       Indistinguishable
-        (acceptedResponseDist S cfg nonceDist bindingFactor c s₁
-          (fun κ => accept_nonempty bindingFactor c s₁ κ))
-        (acceptedResponseDist S cfg nonceDist bindingFactor c s₂
-          (fun κ => accept_nonempty bindingFactor c s₂ κ))
+        (candidateResponseDist S nonceDist bindingFactor c s₁)
+        (candidateResponseDist S nonceDist bindingFactor c s₂)
+
+theorem ResponseIndependence.independence
+    {S : Scheme} [NormBounded S.Secret]
+    (h : ResponseIndependence S)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret) :
+    Indistinguishable
+      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁
+        (fun κ => h.accept_nonempty bindingFactor c s₁ κ))
+      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂
+        (fun κ => h.accept_nonempty bindingFactor c s₂ κ)) := by
+  simpa [acceptedResponseDist] using
+    (Indistinguishable.filter_const
+      (D₁ := candidateResponseDist S h.nonceDist bindingFactor c s₁)
+      (D₂ := candidateResponseDist S h.nonceDist bindingFactor c s₂)
+      (A := acceptSet S h.cfg)
+      (α0 := h.accept_lb)
+      (h := h.candidate_indist bindingFactor c s₁ s₂)
+      (hA₁ := fun κ => h.accept_nonempty bindingFactor c s₁ κ)
+      (hA₂ := fun κ => h.accept_nonempty bindingFactor c s₂ κ)
+      (hα0 := h.accept_lb_ne_zero)
+      (hprob₁ := fun κ => h.accept_prob_ge bindingFactor c s₁ κ)
+      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ))
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
 def dilithiumAcceptance (S : Scheme) [NormBounded S.Secret]
