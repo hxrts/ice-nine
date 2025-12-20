@@ -81,31 +81,6 @@ theorem acceptBoxSet_subset_acceptSet
   simp [NormOp.checkLocal, NormOp.check, NormCheckResult.isOk, hnorm]
 
 
-/-- Rewrite lattice candidate responses (with `nonceDistSwapProd`) as a `bind` over the binding nonce.
-
-This exposes the hiding nonce as a simple additive shift, which is convenient for acceptance bounds.
--/
-theorem candidateResponseDist_eq_bind
-    (p : LatticeParams) (hb : HashBinding)
-    (Bh : Nat)
-    (bindingNonceDist : DistFamily (Fin p.n → Int))
-    (bindingFactor : Int) (c : Int) (sk : Fin p.n → Int) (κ : Nat) :
-    candidateResponseDist (S := latticeScheme (p := p) hb)
-        (nonceDistSwapProd p (fun _ => Bh) bindingNonceDist) bindingFactor c sk κ
-      =
-      Dist.bind (bindingNonceDist κ) (fun yb =>
-        Dist.map
-          (fun yh =>
-            IceNine.Protocol.LocalRejection.RejectionOp.computeZ
-              (S := latticeScheme (p := p) hb)
-              sk c yh yb bindingFactor)
-          (hidingNonceDist p (fun _ => Bh) κ)) := by
-  ext z
-  -- Reduce to a pointwise identity inside the `tsum` defining `PMF.map`.
-  simp [candidateResponseDist, nonceDistSwapProd, hidingNonceDist, Dist.prod, Dist.bind, Dist.map,
-    PMF.map_comp, PMF.map_bind, Function.comp, Prod.swap,
-    IceNine.Protocol.LocalRejection.RejectionOp.computeZ, IceNine.Instances.latticeScheme]
-
 
 /-- Exact acceptance probability for the centered-box event, under a uniform margin condition.
 
@@ -132,7 +107,7 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
   classical
   -- Expand the candidate distribution as a `bind` over the binding nonce.
   have hbind :=
-    candidateResponseDist_eq_bind (p := p) (hb := hb) (Bh := Bh)
+    candidateResponseDist_eq_bind (p := p) (hb := hb) (B := fun _ => Bh)
       (bindingNonceDist := fun _ => CenteredBounded.vec p.n Bb)
       (bindingFactor := bindingFactor) (c := c) (sk := sk) (κ := κ)
   -- Abbreviations.
@@ -275,3 +250,51 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
           simp [ENNReal.tsum_mul_right, (CenteredBounded.vec p.n Bb).toPMF.tsum_coe]
     _ = ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
           ((CenteredBounded.box p.n Bh).card : ENNReal) := rfl
+
+
+/-- Lower bound on acceptance probability for the full `acceptSet`, via the centered-box event. -/
+theorem prob_candidateResponseDist_acceptSet_ge_centeredBounded
+    (p : LatticeParams) (hb : HashBinding)
+    (cfg : ThresholdConfig)
+    (Bh Bb skBound : Nat)
+    (bindingFactor c : Int)
+    (sk : Fin p.n → Int)
+    (κ : Nat)
+    (hB : cfg.localBound ≤ Bh)
+    (hsk : ∀ i, Int.natAbs (sk i) ≤ skBound)
+    (hshift : Int.natAbs bindingFactor * Bb + Int.natAbs c * skBound ≤ Bh - cfg.localBound) :
+    ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
+        ((CenteredBounded.box p.n Bh).card : ENNReal)
+      ≤
+      Dist.prob
+        (candidateResponseDist (S := latticeScheme (p := p) hb)
+          (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+          bindingFactor c sk κ)
+        (acceptSet (S := latticeScheme (p := p) hb) cfg) := by
+  let d : Dist (Fin p.n → Int) :=
+    candidateResponseDist (S := latticeScheme (p := p) hb)
+      (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+      bindingFactor c sk κ
+
+  have hbox :
+      Dist.prob d (acceptBoxSet p cfg.localBound) =
+        ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
+          ((CenteredBounded.box p.n Bh).card : ENNReal) := by
+    simpa [d] using
+      (prob_candidateResponseDist_acceptBoxSet_centeredBounded
+        (p := p) (hb := hb) (cfg := cfg)
+        (Bh := Bh) (Bb := Bb) (skBound := skBound)
+        (bindingFactor := bindingFactor) (c := c) (sk := sk) (κ := κ)
+        hB hsk hshift)
+
+  have hmono : Dist.prob d (acceptBoxSet p cfg.localBound) ≤
+      Dist.prob d (acceptSet (S := latticeScheme (p := p) hb) cfg) :=
+    Dist.prob_mono (d := d)
+      (acceptBoxSet_subset_acceptSet (p := p) (hb := hb) (cfg := cfg))
+
+  calc
+    ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
+          ((CenteredBounded.box p.n Bh).card : ENNReal)
+        = Dist.prob d (acceptBoxSet p cfg.localBound) := by
+            simpa using hbox.symm
+    _ ≤ Dist.prob d (acceptSet (S := latticeScheme (p := p) hb) cfg) := hmono

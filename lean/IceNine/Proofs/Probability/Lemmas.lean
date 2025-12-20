@@ -102,6 +102,33 @@ theorem prob_mono (d : Dist α) {s t : Set α} (h : s ⊆ t) :
     Dist.prob d s ≤ Dist.prob d t := by
   simpa [prob_eq_toOuterMeasure] using (d.toPMF.toOuterMeasure.mono h)
 
+theorem prob_add_prob_compl (d : Dist α) (s : Set α) :
+    Dist.prob d s + Dist.prob d sᶜ = 1 := by
+  classical
+  -- Expand into `tsum` of indicators and use pointwise `indicator + indicatorᶜ = pmf`.
+  unfold Dist.prob
+  calc
+    (∑' a, s.indicator d.toPMF a) + (∑' a, sᶜ.indicator d.toPMF a)
+        = ∑' a, (s.indicator d.toPMF a + sᶜ.indicator d.toPMF a) := by
+            simpa using
+              (ENNReal.tsum_add (f := fun a => s.indicator d.toPMF a)
+                (g := fun a => sᶜ.indicator d.toPMF a)).symm
+    _ = ∑' a, d.toPMF a := by
+          refine tsum_congr (fun a => ?_)
+          by_cases ha : a ∈ s <;> simp [Set.indicator, ha]
+    _ = 1 := by
+          exact d.toPMF.tsum_coe
+
+theorem prob_compl (d : Dist α) (s : Set α) :
+    Dist.prob d sᶜ = 1 - Dist.prob d s := by
+  have hsum : Dist.prob d s + Dist.prob d sᶜ = 1 := prob_add_prob_compl (d := d) (s := s)
+  have htop : Dist.prob d s ≠ ⊤ := prob_ne_top (d := d) (s := s)
+  have hsum' : (1 : ENNReal) = Dist.prob d sᶜ + Dist.prob d s := by
+    simpa [add_comm, add_left_comm, add_assoc] using hsum.symm
+  have : (1 : ENNReal) - Dist.prob d s = Dist.prob d sᶜ :=
+    ENNReal.sub_eq_of_eq_add (hb := htop) hsum'
+  simpa using this.symm
+
 
 theorem exists_mem_support_of_prob_ne_zero (d : Dist α) (A : Set α)
     (hA : Dist.prob d A ≠ 0) :

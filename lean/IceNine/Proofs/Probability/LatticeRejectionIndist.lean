@@ -51,7 +51,7 @@ def candidateShiftError (p : LatticeParams) (B : Nat → Nat) (c : Int)
     (((Finset.univ.sum fun i : Fin p.n => Int.natAbs ((c • sk₂ - c • sk₁) i) : Nat) : ENNReal) /
       (2 * B κ + 1 : ENNReal))
 
-private theorem candidateResponseDist_eq_bind
+theorem candidateResponseDist_eq_bind
     (p : LatticeParams) (hb : HashBinding) (B : Nat → Nat)
     (bindingNonceDist : DistFamily (Fin p.n → Int))
     (bindingFactor : Int) (c : Int) (sk : Fin p.n → Int) (κ : Nat) :

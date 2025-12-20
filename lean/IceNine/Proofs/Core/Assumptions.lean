@@ -251,6 +251,73 @@ theorem AcceptanceRateBound.failureProb_repeatOption_none_le
     h.2 bindingFactor c s κ
   simpa [Dist.prob_repeatOption_none] using (ENNReal.pow_le_pow_left hrej (n := n))
 
+/-- Turn a uniform acceptance lower bound into an `AcceptanceRateBound`.
+
+If every candidate response is accepted with probability at least `1/expectedIterations`, then
+the rejection probability is at most `(expectedIterations - 1) / expectedIterations`.
+-/
+theorem AcceptanceRateBound.of_accept_prob_ge_one_div
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (hpos : expectedIterations > 0)
+    (hacc :
+      ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
+        (1 : ENNReal) / (expectedIterations : ENNReal) ≤
+          Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S cfg)) :
+    AcceptanceRateBound S cfg nonceDist expectedIterations := by
+  refine ⟨hpos, ?_⟩
+  intro bindingFactor c s κ
+  -- Shorthand for the candidate distribution at security parameter `κ`.
+  set d : Probability.Dist S.Secret := candidateResponseDist S nonceDist bindingFactor c s κ
+
+  have hrej : Dist.prob d (acceptSet S cfg)ᶜ = (1 : ENNReal) - Dist.prob d (acceptSet S cfg) := by
+    simpa [d] using (Dist.prob_compl (d := d) (s := acceptSet S cfg))
+
+  have htsub : (1 : ENNReal) - Dist.prob d (acceptSet S cfg) ≤
+      (1 : ENNReal) - (1 : ENNReal) / (expectedIterations : ENNReal) := by
+    exact tsub_le_tsub_left (hacc bindingFactor c s κ) 1
+
+  have hE0 : (expectedIterations : ENNReal) ≠ 0 := by
+    exact_mod_cast (Nat.ne_of_gt hpos)
+
+  have hbTop : (1 : ENNReal) / (expectedIterations : ENNReal) ≠ (⊤ : ENNReal) := by
+    -- `1 / E` is finite when `E ≠ 0`.
+    exact ENNReal.div_ne_top (h1 := by simp) (h2 := hE0)
+
+  have hcast : (expectedIterations : ENNReal) - 1 + 1 = (expectedIterations : ENNReal) := by
+    have hle : (1 : ENNReal) ≤ (expectedIterations : ENNReal) := by
+      have : 1 ≤ expectedIterations := Nat.succ_le_of_lt hpos
+      exact_mod_cast this
+    exact tsub_add_cancel_of_le hle
+
+  have hone : (1 : ENNReal) - (1 : ENNReal) / (expectedIterations : ENNReal) =
+      ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal) := by
+    have hsum :
+        ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal) +
+            (1 : ENNReal) / (expectedIterations : ENNReal) = 1 := by
+      calc
+        ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal) +
+            (1 : ENNReal) / (expectedIterations : ENNReal)
+            = (((expectedIterations - 1 : Nat) : ENNReal) + 1) / (expectedIterations : ENNReal) := by
+                exact (ENNReal.div_add_div_same
+                  (a := ((expectedIterations - 1 : Nat) : ENNReal))
+                  (b := (1 : ENNReal))
+                  (c := (expectedIterations : ENNReal)))
+        _ = (expectedIterations : ENNReal) / (expectedIterations : ENNReal) := by
+              simp [hcast]
+        _ = 1 := by
+              exact ENNReal.div_self hE0 (ENNReal.natCast_ne_top expectedIterations)
+    exact ENNReal.sub_eq_of_eq_add (hb := hbTop) hsum.symm
+
+  -- Conclude: `Pr[reject] = 1 - Pr[accept] ≤ 1 - 1/E = (E-1)/E`.
+  calc
+    Dist.prob d (acceptSet S cfg)ᶜ
+        = (1 : ENNReal) - Dist.prob d (acceptSet S cfg) := hrej
+    _ ≤ (1 : ENNReal) - (1 : ENNReal) / (expectedIterations : ENNReal) := htsub
+    _ = ((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal) := hone
+
 /-- Acceptance probability bound for rejection sampling.
     Guarantees signing terminates in expected O(κ) attempts.
 
@@ -267,6 +334,28 @@ structure AcceptanceProbability (S : Scheme) [NormBounded S.Secret] where
   bound_valid : expectedIterations > 0
   /-- Rejection probability bound for honest parties with short secrets. -/
   acceptance_rate : AcceptanceRateBound S cfg nonceDist expectedIterations
+
+/-- Build an `AcceptanceProbability` record from a uniform `1/expectedIterations` acceptance lower bound. -/
+def AcceptanceProbability.of_accept_prob_ge_one_div
+    {S : Scheme} [NormBounded S.Secret]
+    (cfg : ThresholdConfig)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (expectedIterations : Nat)
+    (hpos : expectedIterations > 0)
+    (hacc :
+      ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
+        (1 : ENNReal) / (expectedIterations : ENNReal) ≤
+          Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S cfg)) :
+    AcceptanceProbability S :=
+  { cfg := cfg
+    nonceDist := nonceDist
+    expectedIterations := expectedIterations
+    bound_valid := hpos
+    acceptance_rate :=
+      AcceptanceRateBound.of_accept_prob_ge_one_div
+        (S := S) (cfg := cfg) (nonceDist := nonceDist)
+        (expectedIterations := expectedIterations)
+        hpos hacc }
 
 /-- Response independence assumptions for rejection sampling.
 
