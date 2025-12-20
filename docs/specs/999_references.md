@@ -1,61 +1,63 @@
-# Threshold & Distributed CRYSTALS-Dilithium Signature Schemes
+# References
 
-## 1. Two-Party / Threshold Variants of Dilithium
+Ice Nine adapts the FROST threshold signature pattern to the lattice setting. The protocol introduces local rejection sampling to eliminate distributed coordination for norm bounds. This section places Ice Nine in context with related work and identifies its novel contributions.
 
-### **DiLizium: A Two-Party Lattice-Based Signature Scheme**
+## Relationship to FROST
 
-* **Authors:** Jelizaveta Vakarjuk et al. (2021)
-* **Description:** A two-party lattice signature protocol based on a variant of CRYSTALS-Dilithium. Offers post-quantum security under Module-LWE/SIS and uses Fiat–Shamir with aborts.
-* **Type:** 2-party threshold signature
-* **Link:** [https://www.mdpi.com/1099-4300/23/8/989](https://www.mdpi.com/1099-4300/23/8/989) ([cyber.ee][1])
+Ice Nine follows the FROST protocol structure closely. FROST is a two-round Schnorr threshold signature scheme that uses dual nonces and binding factors to prevent adaptive attacks. Ice Nine preserves these mechanisms while adapting them to Dilithium's algebraic structure.
 
-## 2. Two-Party / Practical Threshold Protocol
+The direct adaptations include the commit-reveal round structure, dual nonces for hiding and binding, per-signer binding factors, domain-separated hash functions, and proof of knowledge during DKG. The core insight transfers directly because Dilithium's response equation z = y + c·s has the same linear form as Schnorr.
 
-### **TOPCOAT: Towards Practical Two-Party CRYSTALS-Dilithium**
+## Novel Contributions
 
-* **Authors:** Snetkov, Vakarjuk, Laud (2024)
-* **Description:** Practical 2-party threshold protocol built on CRYSTALS-Dilithium with public key compression and improved rejection sampling handling.
-* **Type:** Efficient 2-party threshold signature
-* **Link (Springer):** [https://link.springer.com/article/10.1007/s10791-024-09449-2](https://link.springer.com/article/10.1007/s10791-024-09449-2) ([Springer][2])
-* **Alternate PDF:** [https://www.researchsquare.com/article/rs-4383446/v1.pdf](https://www.researchsquare.com/article/rs-4383446/v1.pdf) ([Research Square][3])
+Ice Nine introduces several innovations beyond the FROST-to-lattice adaptation.
 
-## 3. Distributed Threshold Schemes for n-of-n (Full Threshold)
+Local rejection sampling with triangle inequality guarantee is the primary innovation. Prior threshold Dilithium work faces exponential retry complexity as the number of participants increases. Ice Nine solves this by having each signer enforce a local bound. By setting the local bound to the global bound divided by the signer count, the triangle inequality guarantees the aggregate satisfies the global bound. No distributed retries are needed.
 
-### **Damgård et al. (Distributed Dilithium-G Threshold Signatures)**
+Ice Nine has a BFT-friendly design. The protocol validates each partial signature independently during aggregation. Invalid shares are discarded without affecting valid ones. With honest majority, sufficient valid partials always exist. Malicious parties cannot force distributed restarts.
 
-* **Scope:** Distributed threshold signatures for n-out-n setting using homomorphic commitments.
-* **Note:** Cited as “the first core n-party threshold protocol for Dilithium-G”.
-* **Reference discussed in TOPCOAT related work.** ([Springer][2])
+CRDT-based protocol state enables conflict-free merging of divergent execution traces. Protocol state forms join-semilattices. This handles out-of-order messages and network partitions without additional coordination.
 
-## 4. Compact Threshold Signatures (General Lattice)
+Compile-time nonce safety uses session types to make nonce reuse a compile-time error. Private constructors and consumption proofs enforce linear usage at the type level.
 
-### **Finally! A Compact Lattice-Based Threshold Signature**
+Formal verification in Lean 4 provides machine-checked proofs of correctness and security properties. Proofs include aggregation correctness, security reductions to SIS and MLWE, and CRDT safety via monotonicity of state transitions.
 
-* **Authors:** Guilhem Niot & Rafael del Pino (2025)
-* **Description:** Novel threshold scheme achieving signature size near a single Dilithium signature, for small thresholds (T ≤ 8).
-* **Highlights:** Efficient signing, signature size close to base Dilithium.
-* **Link:** [https://pqshield.com/publications/finally-a-compact-lattice-based-threshold-signature/](https://pqshield.com/publications/finally-a-compact-lattice-based-threshold-signature/) ([PQShield][4])
+## Comparison with Related Work
 
-## 5. Related Work & Context
+| Scheme | Parties | Rejection Handling | BFT Design |
+|--------|---------|-------------------|------------|
+| DiLizium | 2 | Global retry | No |
+| TOPCOAT | 2 | Cross-instance | No |
+| PQShield compact | T ≤ 8 | Parallel instances | No |
+| Ice Nine | Arbitrary t-of-n | Local bounds | Yes |
 
-### **NIST Analysis: Threshold Conversion Challenges**
+DiLizium and TOPCOAT are limited to two parties. The PQShield compact scheme supports small thresholds but runs T parallel Dilithium executions. Ice Nine supports arbitrary threshold configurations with local rejection sampling.
 
-* **Cozzo & Smart — “Sharing the LUOV: Threshold Post-Quantum Signatures”**
-* **Context:** Examines converting PQC schemes (including Dilithium) to threshold forms with generic MPC; notes structural challenges in Dilithium.
-* **Link:** [https://csrc.nist.rip/CSRC/media/Events/Second-PQC-Standardization-Conference/documents/accepted-papers/cozzo-luov-paper.pdf](https://csrc.nist.rip/CSRC/media/Events/Second-PQC-Standardization-Conference/documents/accepted-papers/cozzo-luov-paper.pdf) ([NIST Computer Security Resource Center][5])
+*Note: This comparison is based on a cursory literature search, there may be information missing from this review.*
 
-## 6. Implementation & Prototypes
+## References
 
-### **Implementation of a Threshold Post-Quantum Signature (Master’s Theses)**
+### FROST
 
-* Focused on implementing threshold Dilithium using MPC libraries.
-* **University of Bern Thesis:** Implementation on real MPC frameworks.
-* **Link:** [https://crypto.unibe.ch/theses/2022-post-quandum-threshold-signature/](https://crypto.unibe.ch/theses/2022-post-quandum-threshold-signature/) ([Cryptology and Data Security][6])
+- Komlo, Goldberg. FROST: Flexible Round-Optimized Schnorr Threshold Signatures. SAC 2020. [ePrint 2020/852](https://eprint.iacr.org/2020/852)
 
-## 7. Broader Survey
+### Threshold Dilithium
 
-### **Survey: A Survey on Threshold Digital Signature Schemes**
+- Vakarjuk et al. DiLizium: A Two-Party Lattice-Based Signature Scheme. Entropy 2021. [MDPI](https://www.mdpi.com/1099-4300/23/8/989)
+- Snetkov, Vakarjuk, Laud. TOPCOAT: Towards Practical Two-Party CRYSTALS-Dilithium. 2024. [Springer](https://link.springer.com/article/10.1007/s10791-024-09449-2)
+- Niot, del Pino. Finally! A Compact Lattice-Based Threshold Signature. PKC 2025. [PQShield](https://pqshield.com/publications/finally-a-compact-lattice-based-threshold-signature/)
 
-* **Year:** 2025 (published 2026)
-* **Scope:** Comprehensive overview of threshold signature schemes (post-quantum included). Useful for contextual understanding.
-* **Link:** [https://link.springer.com/article/10.1007/s11704-025-41297-1](https://link.springer.com/article/10.1007/s11704-025-41297-1) ([Springer][7])
+### Lattice Cryptography
+
+- Lyubashevsky. Fiat-Shamir with Aborts. ASIACRYPT 2009.
+- Ducas et al. CRYSTALS-Dilithium. NIST PQC Round 3.
+- NIST FIPS 204. ML-DSA (Dilithium) Standard. 2024. [NIST](https://csrc.nist.gov/pubs/fips/204/final)
+
+### Byzantine Fault Tolerance
+
+- Cachin et al. Byzantine Fault-Tolerant Aggregate Signatures. ASIACCS 2024. [ACM](https://dl.acm.org/doi/10.1145/3634737.3657020)
+
+### Surveys
+
+- Cozzo, Smart. Sharing the LUOV: Threshold Post-Quantum Signatures. NIST PQC 2019. [NIST](https://csrc.nist.gov/CSRC/media/Events/Second-PQC-Standardization-Conference/documents/accepted-papers/cozzo-luov-paper.pdf)
+- University of Bern. Implementation of a Threshold Post-Quantum Signature. Thesis 2022. [Bern](https://crypto.unibe.ch/theses/2022-post-quandum-threshold-signature/)
