@@ -49,6 +49,113 @@ def nonceDistCenteredBounded (p : LatticeParams) (Bh Bb : Nat → Nat) :
     DistFamily ((Fin p.n → Int) × (Fin p.n → Int)) :=
   nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ))
 
+
+/-- If `Bh` grows super-polynomially and the *gap* `Bh κ - localBound κ` is polynomially bounded,
+then the inverse acceptance lower bound is polynomially bounded.
+
+This discharges the `accept_inv_poly` requirement used to justify conditioning in
+`ResponseIndependence.independence`. -/
+theorem acceptInvPoly_of_superpoly_gapPoly
+    (p : LatticeParams)
+    (cfg : Nat → ThresholdConfig)
+    (Bh : Nat → Nat)
+    (hBh : SuperpolyGrowth Bh)
+    (hGap :
+      ∃ d0 : Nat, ∀ᶠ κ in Filter.atTop,
+        (Bh κ - (cfg κ).localBound) ≤ κ ^ d0) :
+    ∃ d : Nat, ∀ᶠ κ in Filter.atTop,
+      (((CenteredBounded.box p.n (Bh κ)).card : ENNReal) /
+          ((CenteredBounded.box p.n (cfg κ).localBound).card : ENNReal))
+        ≤ (κ : ENNReal) ^ d := by
+  classical
+  rcases hGap with ⟨d0, hGap⟩
+
+  have hBh_le_two_local :
+      ∀ᶠ κ in Filter.atTop, Bh κ ≤ 2 * (cfg κ).localBound := by
+    have hSuper := hBh d0
+    filter_upwards [hGap, hSuper, (Filter.eventually_ge_atTop 2)] with κ hGapκ hSuperκ hκ2
+
+    have h2pow : 2 * κ ^ d0 ≤ κ ^ (d0 + 1) := by
+      calc
+        2 * κ ^ d0 = κ ^ d0 * 2 := by
+          simp [Nat.mul_comm]
+        _ ≤ κ ^ d0 * κ := Nat.mul_le_mul_left _ hκ2
+        _ = κ ^ (d0 + 1) := by
+          simp [pow_succ]
+
+    have h2k : 2 * κ ^ d0 ≤ Bh κ := le_trans h2pow hSuperκ
+    have h2gap : 2 * (Bh κ - (cfg κ).localBound) ≤ Bh κ := by
+      have : 2 * (Bh κ - (cfg κ).localBound) ≤ 2 * κ ^ d0 :=
+        Nat.mul_le_mul_left 2 hGapκ
+      exact le_trans this h2k
+
+    by_cases hle : (cfg κ).localBound ≤ Bh κ
+    · have hsub : Bh κ - (cfg κ).localBound + (cfg κ).localBound = Bh κ :=
+        Nat.sub_add_cancel hle
+      have hsum :
+          2 * (Bh κ - (cfg κ).localBound) + 2 * (cfg κ).localBound ≤
+            Bh κ + 2 * (cfg κ).localBound :=
+        Nat.add_le_add_right h2gap (2 * (cfg κ).localBound)
+      have hleft : 2 * (Bh κ - (cfg κ).localBound) + 2 * (cfg κ).localBound = 2 * Bh κ := by
+        calc
+          2 * (Bh κ - (cfg κ).localBound) + 2 * (cfg κ).localBound
+              = 2 * ((Bh κ - (cfg κ).localBound) + (cfg κ).localBound) := by
+                  simp [Nat.mul_add]
+          _ = 2 * Bh κ := by
+                  simp [hsub]
+      have h2Bh : 2 * Bh κ ≤ Bh κ + 2 * (cfg κ).localBound := by
+        simpa [hleft] using hsum
+      have h2Bh' : Bh κ + Bh κ ≤ Bh κ + 2 * (cfg κ).localBound := by
+        simpa [two_mul] using h2Bh
+      exact (Nat.add_le_add_iff_left).1 h2Bh'
+    · have hlt : Bh κ < (cfg κ).localBound := Nat.lt_of_not_ge hle
+      have hle' : Bh κ ≤ (cfg κ).localBound := Nat.le_of_lt hlt
+      exact hle'.trans (Nat.le_mul_of_pos_left _ Nat.zero_lt_two)
+
+  have hRatioConst :
+      ∀ᶠ κ in Filter.atTop,
+        (((CenteredBounded.box p.n (Bh κ)).card : ENNReal) /
+            ((CenteredBounded.box p.n (cfg κ).localBound).card : ENNReal))
+          ≤ ((2 ^ p.n : Nat) : ENNReal) := by
+    filter_upwards [hBh_le_two_local] with κ hle
+    have hNat :
+        (CenteredBounded.box p.n (Bh κ)).card ≤
+          (2 ^ p.n) * (CenteredBounded.box p.n (cfg κ).localBound).card := by
+      simp [CenteredBounded.box_card]
+      have hbase : 2 * Bh κ + 1 ≤ 2 * (2 * (cfg κ).localBound + 1) := by
+        calc
+          2 * Bh κ + 1 ≤ 2 * (2 * (cfg κ).localBound) + 1 := by
+            exact Nat.add_le_add_right (Nat.mul_le_mul_left 2 hle) 1
+          _ ≤ 2 * (2 * (cfg κ).localBound) + 2 := by
+            omega
+          _ = 2 * (2 * (cfg κ).localBound + 1) := by
+            simp [Nat.mul_add]
+
+      have hpow :
+          (2 * Bh κ + 1) ^ p.n ≤ (2 * (2 * (cfg κ).localBound + 1)) ^ p.n :=
+        Nat.pow_le_pow_left hbase _
+      simpa [Nat.mul_pow, Nat.mul_assoc, Nat.mul_left_comm, Nat.mul_comm] using hpow
+
+    have hENN :
+        ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) ≤
+          ((CenteredBounded.box p.n (cfg κ).localBound).card : ENNReal) *
+            ((2 ^ p.n : Nat) : ENNReal) := by
+      have : ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) ≤
+          (((2 ^ p.n) * (CenteredBounded.box p.n (cfg κ).localBound).card : Nat) : ENNReal) := by
+        exact_mod_cast hNat
+      simpa [Nat.cast_mul, mul_comm, mul_left_comm, mul_assoc] using this
+
+    refine ENNReal.div_le_of_le_mul' ?_
+    simpa [mul_comm, mul_left_comm, mul_assoc] using hENN
+
+  refine ⟨1, ?_⟩
+  filter_upwards [hRatioConst, (Filter.eventually_ge_atTop (2 ^ p.n))] with κ hratio hκ
+  have hconst : ((2 ^ p.n : Nat) : ENNReal) ≤ (κ : ENNReal) := by
+    exact_mod_cast hκ
+  have : ((2 ^ p.n : Nat) : ENNReal) ≤ (κ : ENNReal) ^ 1 := by
+    simpa [pow_one] using hconst
+  exact le_trans hratio this
+
 /-- Construct `ResponseIndependence` for the lattice demo scheme from explicit bounds.
 
 This packages:
@@ -57,7 +164,7 @@ This packages:
 
 For the statistical part we assume:
 - `SuperpolyGrowth Bh` to make the explicit shift error negligible, and
-- an inverse-polynomial bound on the acceptance lower bound (so conditioning preserves negligibility).
+- a polynomial bound on the gap `Bh κ - (cfg κ).localBound` so conditioning preserves negligibility.
 -/
 def responseIndependence_centeredBounded
     (p : LatticeParams) (hb : HashBinding)
@@ -65,11 +172,9 @@ def responseIndependence_centeredBounded
     (Bh Bb : Nat → Nat)
     (skBound : Nat)
     (hBh : SuperpolyGrowth Bh)
-    (hAccInvPoly :
-      ∃ d : Nat, ∀ᶠ κ in Filter.atTop,
-        (((CenteredBounded.box p.n (Bh κ)).card : ENNReal) /
-            ((CenteredBounded.box p.n (cfg κ).localBound).card : ENNReal))
-          ≤ (κ : ENNReal) ^ d) :
+    (hGapPoly :
+      ∃ d0 : Nat, ∀ᶠ κ in Filter.atTop,
+        (Bh κ - (cfg κ).localBound) ≤ κ ^ d0) :
     ResponseIndependence (S := latticeScheme (p := p) hb) := by
   classical
 
@@ -103,7 +208,9 @@ def responseIndependence_centeredBounded
     have : accept_lb κ ≠ 0 := (ENNReal.div_ne_zero).2 ⟨hnum0, hdenTop⟩
     simpa [accept_lb] using this
 
-  · -- Turn the provided bound into the shape required by `ResponseIndependence`.
+  · -- Derive the required polynomial bound from the gap-growth hypotheses.
+    have hAccInvPoly :=
+      acceptInvPoly_of_superpoly_gapPoly (p := p) (cfg := cfg) (Bh := Bh) hBh hGapPoly
     rcases hAccInvPoly with ⟨d, hd⟩
     refine ⟨d, ?_⟩
     filter_upwards [hd] with κ hκ
@@ -160,6 +267,81 @@ def responseIndependence_centeredBounded
         (bindingFactor := bindingFactor) (c := c)
         (sk₁ := s₁) (sk₂ := s₂)
         hNeg)
+
+
+
+
+
+/-- Parameter bundle for constructing response independence for the lattice demo scheme
+under the centered-bounded nonce model.
+
+This avoids threading several functions/hypotheses (`cfg`, `Bh`, `Bb`, bounds, growth) through every call site. -/
+structure CenteredBoundedRIParams (p : LatticeParams) where
+  cfg : Nat → ThresholdConfig
+  Bh : Nat → Nat
+  Bb : Nat → Nat
+  skBound : Nat
+  Bh_superpoly : SuperpolyGrowth Bh
+  gap_poly :
+    ∃ d0 : Nat, ∀ᶠ κ in Filter.atTop,
+      (Bh κ - (cfg κ).localBound) ≤ κ ^ d0
+
+/-- Build `ResponseIndependence` from a `CenteredBoundedRIParams` bundle. -/
+def CenteredBoundedRIParams.responseIndependence
+    (p : LatticeParams) (hb : HashBinding)
+    (P : CenteredBoundedRIParams p) :
+    ResponseIndependence (S := latticeScheme (p := p) hb) :=
+  responseIndependence_centeredBounded
+    (p := p) (hb := hb)
+    (cfg := P.cfg)
+    (Bh := P.Bh) (Bb := P.Bb)
+    (skBound := P.skBound)
+    (hBh := P.Bh_superpoly)
+    (hGapPoly := P.gap_poly)
+
+namespace Example
+
+/-- A super-polynomially growing hiding bound: `Bh κ = κ^κ`. -/
+def Bh : Nat → Nat := fun κ => κ ^ κ
+
+/-- `Bh` dominates every fixed polynomial. -/
+theorem Bh_superpoly : SuperpolyGrowth Bh := by
+  intro n
+  filter_upwards [Filter.eventually_ge_atTop (n + 1)] with κ hκ
+  have hkpos : 0 < κ := Nat.lt_of_lt_of_le (Nat.succ_pos n) hκ
+  -- For `κ ≥ n+1`, monotonicity in the exponent gives `κ^(n+1) ≤ κ^κ`.
+  exact Nat.pow_le_pow_right hkpos hκ
+
+/-- A toy `ThresholdConfig` family whose local bound is `Bh κ - κ`.
+
+We keep `maxSigners = 1` so `localBound = globalBound` definitionally. -/
+def cfg : Nat → ThresholdConfig := fun κ =>
+  ThresholdConfig.create 1 (Bh κ - κ) (t := 1) (maxSigners := 1)
+
+/-- The gap `Bh κ - (cfg κ).localBound` is polynomially bounded (in fact, ≤ κ). -/
+theorem gap_poly :
+    ∃ d0 : Nat, ∀ᶠ κ in Filter.atTop,
+      (Bh κ - (cfg κ).localBound) ≤ κ ^ d0 := by
+  refine ⟨1, ?_⟩
+  refine (Filter.Eventually.of_forall ?_)
+  intro κ
+  -- `localBound = Bh κ - κ` for our toy config.
+  have hlocal : (cfg κ).localBound = Bh κ - κ := by
+    simp [cfg, ThresholdConfig.create]
+  -- Use `a - (a - b) ≤ b` (via `sub_le_iff_le_add`) with `b = κ`.
+  -- First show `Bh κ ≤ (Bh κ - κ) + κ`.
+  have hle : Bh κ ≤ (Bh κ - κ) + κ := by
+    -- `a - b + b = max a b ≥ a`.
+    simp [Nat.sub_add_eq_max]
+  -- Turn it into the desired subtraction inequality.
+  have hsub : Bh κ - (Bh κ - κ) ≤ κ := (Nat.sub_le_iff_le_add').2 hle
+  -- Finish.
+  simpa [hlocal, pow_one] using hsub
+
+/-- A simple binding-nonce bound (linear in `κ`). -/
+def Bb : Nat → Nat := fun κ => κ
+
+end Example
 
 end Lattice
 
