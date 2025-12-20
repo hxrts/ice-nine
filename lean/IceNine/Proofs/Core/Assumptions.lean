@@ -270,6 +270,115 @@ noncomputable def localRejectionDist (S : Scheme)
     (acceptSet S cfg)
     cfg.maxLocalAttempts
 
+/-- Distribution semantics for the bounded local rejection loop with a κ-indexed attempt budget.
+
+This generalizes `localRejectionDist` by allowing the maximum number of local
+rejection attempts to grow with the security parameter.
+-/
+noncomputable def localRejectionDistBudget (S : Scheme)
+    [NormBounded S.Secret]
+    (cfg : ThresholdConfig)
+    (maxAttempts : Nat → Nat)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (bindingFactor : S.Scalar)
+    (c : S.Challenge)
+    (s : S.Secret)
+    (κ : Nat) : Probability.Dist (Option S.Secret) :=
+  Dist.repeatOption
+    (candidateResponseDist S nonceDist bindingFactor c s κ)
+    (acceptSet S cfg)
+    (maxAttempts κ)
+
+/-- Abort probability bound for the κ-indexed attempt-budget loop, derived from `AcceptanceRateBound`. -/
+theorem AcceptanceRateBound.failureProb_localRejectionDistBudget_none_le
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (h : AcceptanceRateBound S cfg nonceDist expectedIterations)
+    (maxAttempts : Nat → Nat)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat) :
+    Dist.prob (localRejectionDistBudget S cfg maxAttempts nonceDist bindingFactor c s κ) {none}
+      ≤ (((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal)) ^ (maxAttempts κ) := by
+  simpa [localRejectionDistBudget] using
+    (AcceptanceRateBound.failureProb_repeatOption_none_le
+      (S := S) (cfg := cfg) (nonceDist := nonceDist) (expectedIterations := expectedIterations)
+      h bindingFactor c s κ (maxAttempts κ))
+
+/-- If the attempt budget grows polynomially in `κ`, then the abort probability is negligible. -/
+theorem AcceptanceRateBound.negligible_failureProb_localRejectionDistBudget_none
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (h : AcceptanceRateBound S cfg nonceDist expectedIterations)
+    (maxAttempts : Nat → Nat) {d : Nat} (hd : 0 < d)
+    (hAttempts : ∀ᶠ κ in Filter.atTop, κ ^ d ≤ maxAttempts κ)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) :
+    Negligible (fun κ =>
+      Dist.prob (localRejectionDistBudget S cfg maxAttempts nonceDist bindingFactor c s κ) {none}) := by
+  -- Let `r` be the single-attempt failure probability upper bound.
+  set r : ENNReal :=
+    (((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal))
+
+  have hr : r < 1 := by
+    have hpos : expectedIterations > 0 := h.1
+    cases expectedIterations with
+    | zero => cases (Nat.lt_irrefl 0 hpos)
+    | succ n =>
+        have h0 : ((Nat.succ n : ENNReal) ≠ 0) := by simp
+        have ht : ((Nat.succ n : ENNReal) ≠ (⊤ : ENNReal)) := by simp
+        have h0' : ((Nat.succ n : ENNReal) ≠ 0) ∨ ((n : ENNReal) ≠ 0) := Or.inl h0
+        have ht' : ((Nat.succ n : ENNReal) ≠ ⊤) ∨ ((n : ENNReal) ≠ ⊤) := Or.inl ht
+        have hnlt : (n : ENNReal) < (Nat.succ n : ENNReal) := by
+          exact_mod_cast (Nat.lt_succ_self n)
+        have : (n : ENNReal) / (Nat.succ n : ENNReal) < 1 := by
+          have hdiv := ENNReal.div_lt_iff (a := (1 : ENNReal)) (b := (Nat.succ n : ENNReal))
+              (c := (n : ENNReal)) h0' ht'
+          have : (n : ENNReal) < (1 : ENNReal) * (Nat.succ n : ENNReal) := by simpa using hnlt
+          exact hdiv.mpr this
+        simpa [r] using this
+
+  have hgeo : Negligible (fun κ : Nat => r ^ (κ ^ d)) :=
+    Negligible.pow_poly (r := r) hr hd
+
+  unfold Negligible at hgeo ⊢
+  intro n
+  have htend :
+      Filter.Tendsto (fun κ : Nat => ((κ : ENNReal) ^ n) * (r ^ (κ ^ d))) Filter.atTop
+        (nhds 0) := hgeo n
+
+  have hle :
+      (fun κ : Nat =>
+          ((κ : ENNReal) ^ n) *
+            Dist.prob (localRejectionDistBudget S cfg maxAttempts nonceDist bindingFactor c s κ)
+              {none})
+        ≤ᶠ[Filter.atTop] fun κ : Nat => ((κ : ENNReal) ^ n) * (r ^ (κ ^ d)) := by
+    filter_upwards [hAttempts] with κ hk
+    have habort :
+        Dist.prob (localRejectionDistBudget S cfg maxAttempts nonceDist bindingFactor c s κ) {none}
+          ≤ r ^ (maxAttempts κ) := by
+      -- Apply the explicit abort bound from `AcceptanceRateBound`.
+      simpa [r] using
+        (AcceptanceRateBound.failureProb_localRejectionDistBudget_none_le
+          (S := S) (cfg := cfg) (nonceDist := nonceDist) (expectedIterations := expectedIterations)
+          h maxAttempts bindingFactor c s κ)
+    have hrle1 : r ≤ (1 : ENNReal) := le_of_lt hr
+    have hpow : r ^ (maxAttempts κ) ≤ r ^ (κ ^ d) := by
+      -- For `r ≤ 1`, larger exponents yield smaller powers.
+      simpa using (pow_le_pow_of_le_one (ha₀ := by simp) (ha₁ := hrle1) hk)
+    have hprob :
+        Dist.prob (localRejectionDistBudget S cfg maxAttempts nonceDist bindingFactor c s κ) {none}
+          ≤ r ^ (κ ^ d) := le_trans habort hpow
+    -- Multiply by the polynomial factor.
+    exact mul_le_mul_right hprob ((κ : ENNReal) ^ n)
+
+  have h0 : Filter.Tendsto (fun _ : Nat => (0 : ENNReal)) Filter.atTop (nhds 0) :=
+    tendsto_const_nhds
+
+  refine tendsto_of_tendsto_of_tendsto_of_le_of_le' h0 htend ?_ hle
+  exact Filter.Eventually.of_forall (fun κ => by simp)
+
 /-- Abort probability bound for the bounded local rejection loop, derived from `AcceptanceRateBound`. -/
 theorem AcceptanceRateBound.failureProb_localRejectionDist_none_le
     {S : Scheme} [NormBounded S.Secret]
