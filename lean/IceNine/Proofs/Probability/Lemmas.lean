@@ -353,6 +353,62 @@ theorem filter {p q : Dist α} {ε α0 : ENNReal} (h : StatClose p q ε)
   simpa [absSubENNReal, max_le_iff] using (show max (pU / pA - qU / qA) (qU / qA - pU / pA) ≤ 2 * ε / α0 from
     (max_le_iff).2 ⟨hleft, hright⟩)
 
+
+/-- Mixtures preserve statistical closeness: if each branch is close with error `ε`, then
+combining them with a fixed outer distribution preserves the same error. -/
+theorem bind {p : Dist α} {f g : α → Dist β} {ε : ENNReal}
+    (h : ∀ a, StatClose (f a) (g a) ε) :
+    StatClose (Dist.bind p f) (Dist.bind p g) ε := by
+  intro s
+  have hle : Dist.prob (Dist.bind p f) s ≤ Dist.prob (Dist.bind p g) s + ε := by
+    have hpoint : ∀ a, Dist.prob (f a) s ≤ Dist.prob (g a) s + ε := by
+      intro a
+      have hmax : max (Dist.prob (f a) s - Dist.prob (g a) s)
+          (Dist.prob (g a) s - Dist.prob (f a) s) ≤ ε := by
+        simpa [absSubENNReal] using h a s
+      have : Dist.prob (f a) s - Dist.prob (g a) s ≤ ε := le_trans (le_max_left _ _) hmax
+      exact (tsub_le_iff_left).1 this
+    calc
+      Dist.prob (Dist.bind p f) s = ∑' a, p.toPMF a * Dist.prob (f a) s := by
+        simp [Dist.prob_bind]
+      _ ≤ ∑' a, p.toPMF a * (Dist.prob (g a) s + ε) := by
+        refine ENNReal.tsum_le_tsum ?_
+        intro a
+        exact mul_le_mul_right (hpoint a) (p.toPMF a)
+      _ = ∑' a, (p.toPMF a * Dist.prob (g a) s + p.toPMF a * ε) := by
+        simp [mul_add]
+      _ = (∑' a, p.toPMF a * Dist.prob (g a) s) + ∑' a, p.toPMF a * ε := by
+        simp [ENNReal.tsum_add]
+      _ = Dist.prob (Dist.bind p g) s + ε := by
+        simp [Dist.prob_bind, ENNReal.tsum_mul_right]
+  have hge : Dist.prob (Dist.bind p g) s ≤ Dist.prob (Dist.bind p f) s + ε := by
+    have hpoint : ∀ a, Dist.prob (g a) s ≤ Dist.prob (f a) s + ε := by
+      intro a
+      have hmax : max (Dist.prob (f a) s - Dist.prob (g a) s)
+          (Dist.prob (g a) s - Dist.prob (f a) s) ≤ ε := by
+        simpa [absSubENNReal] using h a s
+      have : Dist.prob (g a) s - Dist.prob (f a) s ≤ ε := le_trans (le_max_right _ _) hmax
+      exact (tsub_le_iff_left).1 this
+    calc
+      Dist.prob (Dist.bind p g) s = ∑' a, p.toPMF a * Dist.prob (g a) s := by
+        simp [Dist.prob_bind]
+      _ ≤ ∑' a, p.toPMF a * (Dist.prob (f a) s + ε) := by
+        refine ENNReal.tsum_le_tsum ?_
+        intro a
+        exact mul_le_mul_right (hpoint a) (p.toPMF a)
+      _ = ∑' a, (p.toPMF a * Dist.prob (f a) s + p.toPMF a * ε) := by
+        simp [mul_add]
+      _ = (∑' a, p.toPMF a * Dist.prob (f a) s) + ∑' a, p.toPMF a * ε := by
+        simp [ENNReal.tsum_add]
+      _ = Dist.prob (Dist.bind p f) s + ε := by
+        simp [Dist.prob_bind, ENNReal.tsum_mul_right]
+  have hsub : Dist.prob (Dist.bind p f) s - Dist.prob (Dist.bind p g) s ≤ ε :=
+    (tsub_le_iff_left).2 hle
+  have hsub' : Dist.prob (Dist.bind p g) s - Dist.prob (Dist.bind p f) s ≤ ε :=
+    (tsub_le_iff_left).2 hge
+  -- Wrap into `absSubENNReal`.
+  simpa [absSubENNReal, max_le_iff] using And.intro hsub hsub'
+
 /-- Data processing for statistical closeness: pushforward along a function preserves bounds. -/
 theorem map {p q : Dist α} {ε : ENNReal} (h : StatClose p q ε) (f : α → β) :
     StatClose (Dist.map f p) (Dist.map f q) ε := by

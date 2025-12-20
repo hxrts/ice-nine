@@ -282,11 +282,6 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
   cfg : ThresholdConfig
   /-- Distribution of fresh nonce pairs `(y_hiding, y_binding)`. -/
   nonceDist : DistFamily (S.Secret × S.Secret)
-  /-- Acceptance must have nonzero probability mass (needed to condition). -/
-  accept_nonempty :
-    ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
-      ∃ z ∈ acceptSet S cfg,
-        z ∈ (candidateResponseDist S nonceDist bindingFactor c s κ).toPMF.support
   /-- A uniform lower bound on acceptance probability. -/
   accept_lb : ENNReal
   /-- The lower bound is nonzero. -/
@@ -302,6 +297,25 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
       Indistinguishable
         (candidateResponseDist S nonceDist bindingFactor c s₁)
         (candidateResponseDist S nonceDist bindingFactor c s₂)
+
+theorem ResponseIndependence.accept_nonempty
+    {S : Scheme} [NormBounded S.Secret]
+    (h : ResponseIndependence S)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) :
+    ∀ κ,
+      ∃ z ∈ acceptSet S h.cfg,
+        z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s κ).toPMF.support := by
+  intro κ
+  have hpos_lb : 0 < h.accept_lb := by
+    simpa [pos_iff_ne_zero] using h.accept_lb_ne_zero
+  have hpos : 0 <
+      Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s κ) (acceptSet S h.cfg) :=
+    lt_of_lt_of_le hpos_lb (h.accept_prob_ge bindingFactor c s κ)
+  exact
+    Dist.exists_mem_support_of_prob_ne_zero
+      (d := candidateResponseDist S h.nonceDist bindingFactor c s κ)
+      (A := acceptSet S h.cfg)
+      (ne_of_gt hpos)
 
 theorem ResponseIndependence.independence
     {S : Scheme} [NormBounded S.Secret]

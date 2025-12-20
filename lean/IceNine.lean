@@ -48,6 +48,7 @@ import IceNine.Samples
 import IceNine.Proofs.Probability.CenteredBounded
 import IceNine.Proofs.Probability.IntervalShift
 import IceNine.Proofs.Probability.Lattice
+import IceNine.Proofs.Probability.LatticeRejectionIndist
 import IceNine.Proofs.Probability.Lemmas
 import IceNine.Proofs.Probability.RepeatUntil
 -- Proofs/Core
