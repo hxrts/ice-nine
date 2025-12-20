@@ -45,6 +45,18 @@ theorem mul_const {ε : Nat → ENNReal} (h : Negligible ε) (c : ENNReal) (hc :
     ENNReal.Tendsto.mul_const h0 (Or.inr hc)
   simpa [Negligible, mul_assoc, mul_left_comm, mul_comm] using hmul
 
+
+
+theorem mul_pow {ε : Nat → ENNReal} (h : Negligible ε) (d : Nat) :
+    Negligible (fun κ => ((κ : ENNReal) ^ d) * ε κ) := by
+  -- This is just a shift in the exponent in the definition.
+  unfold Negligible at h ⊢
+  intro n
+  -- Use `h (n + d)` and rewrite `κ^(n+d)` as `κ^n * κ^d`.
+  have hnd := h (n + d)
+  -- Rearrange products.
+  simpa [pow_add, mul_assoc, mul_left_comm, mul_comm] using hnd
+
 end Negligible
 
 

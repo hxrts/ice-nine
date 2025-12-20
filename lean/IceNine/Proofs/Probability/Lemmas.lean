@@ -13,6 +13,7 @@ set_option autoImplicit false
 namespace IceNine.Proofs.Probability
 
 open scoped BigOperators
+open Filter
 
 noncomputable section
 
@@ -490,6 +491,73 @@ theorem filter_const (D₁ D₂ : DistFamily α) (A : Set α) (α0 : ENNReal)
     exact StatClose.filter (h := hεclose κ) (A := A) (hpA := hA₁ κ) (hqA := hA₂ κ)
       (hαp := hprob₁ κ) (hαq := hprob₂ κ) (hα0 := hα0)
 
+
+/-- Conditioning with a κ-dependent lower bound preserves indistinguishability,
+provided the inverse lower bound is polynomially bounded.
+
+This is the form needed for asymptotic rejection sampling, where `Pr[accept]` may vary with
+the security parameter but remains at least inverse-polynomial.
+-/
+theorem filter_poly (D₁ D₂ : DistFamily α) (A : Nat → Set α) (α0 : Nat → ENNReal)
+    (h : Indistinguishable D₁ D₂)
+    (hA₁ : ∀ κ, ∃ a ∈ A κ, a ∈ (D₁ κ).toPMF.support)
+    (hA₂ : ∀ κ, ∃ a ∈ A κ, a ∈ (D₂ κ).toPMF.support)
+    (hα0 : ∀ κ, α0 κ ≠ 0)
+    (hprob₁ : ∀ κ, α0 κ ≤ Dist.prob (D₁ κ) (A κ))
+    (hprob₂ : ∀ κ, α0 κ ≤ Dist.prob (D₂ κ) (A κ))
+    (hinvpoly : ∃ d : Nat, ∀ᶠ κ in atTop, (α0 κ)⁻¹ ≤ (κ : ENNReal) ^ d) :
+    Indistinguishable (fun κ => Dist.filter (D₁ κ) (A κ) (hA₁ κ))
+      (fun κ => Dist.filter (D₂ κ) (A κ) (hA₂ κ)) := by
+  rcases h with ⟨ε, hεneg, hεclose⟩
+  refine ⟨fun κ => 2 * ε κ / α0 κ, ?_, ?_⟩
+
+  · -- Negligible scaling by an inverse-polynomial factor.
+    rcases hinvpoly with ⟨d, hpoly⟩
+    -- First, show `κ ↦ (κ^d) * ε κ` is negligible.
+    have hpow : Negligible (fun κ => ((κ : ENNReal) ^ d) * ε κ) :=
+      Negligible.mul_pow hεneg d
+    -- We use a squeeze: `2*ε/α0 ≤ 2*(κ^d*ε)` eventually.
+    unfold Negligible at hpow ⊢
+    intro n
+    have htend := hpow n
+    -- Set up the pointwise bound.
+    have hle' :
+        (fun κ : Nat => ((κ : ENNReal) ^ n) * (2 * ε κ / α0 κ))
+          ≤ᶠ[atTop] fun κ : Nat => ((κ : ENNReal) ^ n) * (2 * (((κ : ENNReal) ^ d) * ε κ)) := by
+      filter_upwards [hpoly] with κ hκ
+      -- Rewrite divisions as multiplication by inverses.
+      have hinv : (2 * ε κ / α0 κ) ≤ 2 * (((κ : ENNReal) ^ d) * ε κ) := by
+        -- `1/α0 ≤ κ^d` gives the desired bound.
+        have : (ε κ) * (α0 κ)⁻¹ ≤ (ε κ) * ((κ : ENNReal) ^ d) := by
+          exact mul_le_mul_right hκ (ε κ)
+        -- Multiply by 2 and rearrange.
+        calc
+          2 * ε κ / α0 κ = 2 * (ε κ * (α0 κ)⁻¹) := by
+            simp [div_eq_mul_inv, mul_assoc]
+          _ ≤ 2 * (ε κ * ((κ : ENNReal) ^ d)) := by
+            exact mul_le_mul_right this 2
+          _ = 2 * (((κ : ENNReal) ^ d) * ε κ) := by
+            simp [mul_assoc, mul_comm]
+      -- Multiply by `κ^n` (monotone).
+      exact mul_le_mul_right hinv ((κ : ENNReal) ^ n)
+
+    -- Squeeze between 0 and an expression that tends to 0.
+    have h0 : Tendsto (fun _ : Nat => (0 : ENNReal)) atTop (nhds 0) := tendsto_const_nhds
+    have h2 : Tendsto (fun κ : Nat => ((κ : ENNReal) ^ n) * (2 * (((κ : ENNReal) ^ d) * ε κ))) atTop (nhds 0) := by
+      -- Pull out the constant 2.
+      have hc : (2 : ENNReal) ≠ (⊤ : ENNReal) := ENNReal.natCast_ne_top 2
+      have : Tendsto (fun κ : Nat => ((κ : ENNReal) ^ n) * (((κ : ENNReal) ^ d) * ε κ)) atTop (nhds 0) := by
+        simpa [mul_assoc, mul_left_comm, mul_comm] using htend
+      -- Multiply by constant 2.
+      have hmul := ENNReal.Tendsto.mul_const this (Or.inr hc)
+      simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+    refine tendsto_of_tendsto_of_tendsto_of_le_of_le' h0 h2 ?_ hle'
+    exact Eventually.of_forall (fun _ => by simp)
+
+  · intro κ
+    -- Pointwise conditioning bound.
+    exact StatClose.filter (h := hεclose κ) (A := A κ) (hpA := hA₁ κ) (hqA := hA₂ κ)
+      (hαp := hprob₁ κ) (hαq := hprob₂ κ) (hα0 := hα0 κ)
 end Indistinguishable
 
 end

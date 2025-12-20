@@ -81,20 +81,20 @@ theorem candidateResponseDist_shift
 /-- Accepted response distribution: condition the candidate distribution on `acceptSet`. -/
 def acceptedResponseDist (S : Scheme)
     [NormBounded S.Secret]
-    (cfg : ThresholdConfig)
+    (cfg : Nat → ThresholdConfig)
     (nonceDist : DistFamily (S.Secret × S.Secret))
     (bindingFactor : S.Scalar)
     (challenge : S.Challenge)
     (sk : S.Secret)
     (hAccept :
       ∀ κ,
-        ∃ z ∈ acceptSet S cfg,
+        ∃ z ∈ acceptSet S (cfg κ),
           z ∈ (candidateResponseDist S nonceDist bindingFactor challenge sk κ).toPMF.support) :
     DistFamily S.Secret :=
   fun κ =>
     Dist.filter
       (candidateResponseDist S nonceDist bindingFactor challenge sk κ)
-      (acceptSet S cfg)
+      (acceptSet S (cfg κ))
       (hAccept κ)
 
 end

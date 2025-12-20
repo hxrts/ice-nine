@@ -360,31 +360,37 @@ def AcceptanceProbability.of_accept_prob_ge_one_div
 /-- Response independence assumptions for rejection sampling.
 
 The protocol’s accepted response distribution is the candidate response
-conditioned on the local acceptance predicate (`acceptSet`).
+conditioned on the local acceptance predicate (`acceptSet`), which may depend on
+`κ` via the configuration `cfg κ`.
 
 We keep the hard part (candidate responses are statistically close across
 secrets) as an explicit assumption (`candidate_indist`), and derive the usual
-accepted-response independence claim via a general conditioning lemma, assuming
-a uniform nonzero lower bound on acceptance probability (`accept_lb`). -/
+accepted-response independence claim via a general conditioning lemma, assuming:
+
+- a κ-indexed nonzero lower bound `accept_lb κ` on acceptance probability, and
+- an inverse-polynomial bound on `(accept_lb κ)⁻¹` (`accept_inv_poly`).
+-/
 structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
-  /-- Public threshold configuration (drives the local acceptance predicate). -/
-  cfg : ThresholdConfig
+  /-- Public threshold configuration family (drives the local acceptance predicate). -/
+  cfg : Nat → ThresholdConfig
   /-- Distribution of fresh nonce pairs `(y_hiding, y_binding)`. -/
   nonceDist : DistFamily (S.Secret × S.Secret)
   /-- Secrets for which we claim response independence (typically, “short” secrets). -/
   secretOK : Set S.Secret := Set.univ
   /-- Admissible public parameters (e.g. bounded challenges / binding factors). -/
   publicOK : S.Scalar → S.Challenge → Prop := fun _ _ => True
-  /-- A uniform lower bound on acceptance probability. -/
-  accept_lb : ENNReal
-  /-- The lower bound is nonzero. -/
-  accept_lb_ne_zero : accept_lb ≠ 0
-  /-- Acceptance probability is bounded below by `accept_lb` for admissible parameters and secrets. -/
+  /-- A κ-indexed lower bound on acceptance probability. -/
+  accept_lb : Nat → ENNReal
+  /-- The lower bound is nonzero for every `κ`. -/
+  accept_lb_ne_zero : ∀ κ, accept_lb κ ≠ 0
+  /-- The inverse lower bound is polynomially bounded (so conditioning preserves negligibility). -/
+  accept_inv_poly : ∃ d : Nat, ∀ᶠ κ in Filter.atTop, (accept_lb κ)⁻¹ ≤ (κ : ENNReal) ^ d
+  /-- Acceptance probability is bounded below by `accept_lb κ` for admissible parameters and secrets. -/
   accept_prob_ge :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
       publicOK bindingFactor c → s ∈ secretOK →
-        accept_lb ≤
-          Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S cfg)
+        accept_lb κ ≤
+          Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S (cfg κ))
   /-- Candidate responses are indistinguishable across secret keys (statistical, first). -/
   candidate_indist :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret),
@@ -400,18 +406,19 @@ theorem ResponseIndependence.accept_nonempty
     (hpub : h.publicOK bindingFactor c)
     (hs : s ∈ h.secretOK) :
     ∀ κ,
-      ∃ z ∈ acceptSet S h.cfg,
+      ∃ z ∈ acceptSet S (h.cfg κ),
         z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s κ).toPMF.support := by
   intro κ
-  have hpos_lb : 0 < h.accept_lb := by
-    simpa [pos_iff_ne_zero] using h.accept_lb_ne_zero
+  have hpos_lb : 0 < h.accept_lb κ := by
+    have : h.accept_lb κ ≠ 0 := h.accept_lb_ne_zero κ
+    simpa [pos_iff_ne_zero] using this
   have hpos : 0 <
-      Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s κ) (acceptSet S h.cfg) :=
+      Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s κ) (acceptSet S (h.cfg κ)) :=
     lt_of_lt_of_le hpos_lb (h.accept_prob_ge bindingFactor c s κ hpub hs)
   exact
     Dist.exists_mem_support_of_prob_ne_zero
       (d := candidateResponseDist S h.nonceDist bindingFactor c s κ)
-      (A := acceptSet S h.cfg)
+      (A := acceptSet S (h.cfg κ))
       (ne_of_gt hpos)
 
 theorem ResponseIndependence.independence
@@ -427,17 +434,18 @@ theorem ResponseIndependence.independence
       (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂
         (fun κ => h.accept_nonempty bindingFactor c s₂ hpub hs₂ κ)) := by
   simpa [acceptedResponseDist] using
-    (Indistinguishable.filter_const
+    (Indistinguishable.filter_poly
       (D₁ := candidateResponseDist S h.nonceDist bindingFactor c s₁)
       (D₂ := candidateResponseDist S h.nonceDist bindingFactor c s₂)
-      (A := acceptSet S h.cfg)
+      (A := fun κ => acceptSet S (h.cfg κ))
       (α0 := h.accept_lb)
       (h := h.candidate_indist bindingFactor c s₁ s₂ hpub hs₁ hs₂)
       (hA₁ := fun κ => h.accept_nonempty bindingFactor c s₁ hpub hs₁ κ)
       (hA₂ := fun κ => h.accept_nonempty bindingFactor c s₂ hpub hs₂ κ)
       (hα0 := h.accept_lb_ne_zero)
       (hprob₁ := fun κ => h.accept_prob_ge bindingFactor c s₁ κ hpub hs₁)
-      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ hpub hs₂))
+      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ hpub hs₂)
+      (hinvpoly := h.accept_inv_poly))
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
 def dilithiumAcceptance (S : Scheme) [NormBounded S.Secret]

@@ -89,49 +89,50 @@ The margin condition is stated using a *worst-case* bound `skBound` on secret co
 theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
     (p : LatticeParams) (hb : HashBinding)
     (cfg : ThresholdConfig)
-    (Bh Bb skBound : Nat)
+    (Bh Bb : Nat → Nat)
+    (skBound : Nat)
     (bindingFactor c : Int)
     (sk : Fin p.n → Int)
     (κ : Nat)
-    (hB : cfg.localBound ≤ Bh)
+    (hB : cfg.localBound ≤ Bh κ)
     (hsk : ∀ i, Int.natAbs (sk i) ≤ skBound)
-    (hshift : Int.natAbs bindingFactor * Bb + Int.natAbs c * skBound ≤ Bh - cfg.localBound) :
+    (hshift : Int.natAbs bindingFactor * (Bb κ) + Int.natAbs c * skBound ≤ (Bh κ) - cfg.localBound) :
     Dist.prob
         (candidateResponseDist (S := latticeScheme (p := p) hb)
-          (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+          (nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ)))
           bindingFactor c sk κ)
         (acceptBoxSet p cfg.localBound)
       =
       ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-        ((CenteredBounded.box p.n Bh).card : ENNReal) := by
+        ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) := by
   classical
   -- Expand the candidate distribution as a `bind` over the binding nonce.
   have hbind :=
-    candidateResponseDist_eq_bind (p := p) (hb := hb) (B := fun _ => Bh)
-      (bindingNonceDist := fun _ => CenteredBounded.vec p.n Bb)
+    candidateResponseDist_eq_bind (p := p) (hb := hb) (B := Bh)
+      (bindingNonceDist := fun κ => CenteredBounded.vec p.n (Bb κ))
       (bindingFactor := bindingFactor) (c := c) (sk := sk) (κ := κ)
   -- Abbreviations.
   let A : Set (Fin p.n → Int) := acceptBoxSet p cfg.localBound
   let α : ENNReal := ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-    ((CenteredBounded.box p.n Bh).card : ENNReal)
+    ((CenteredBounded.box p.n (Bh κ)).card : ENNReal)
 
   -- Start from the bind law.
   have hprob_bind :
       Dist.prob
           (candidateResponseDist (S := latticeScheme (p := p) hb)
-            (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+            (nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ)))
             bindingFactor c sk κ)
           A
         =
         ∑' yb,
-          (CenteredBounded.vec p.n Bb).toPMF yb *
+          (CenteredBounded.vec p.n (Bb κ)).toPMF yb *
             Dist.prob
               (Dist.map
                 (fun yh =>
                   IceNine.Protocol.LocalRejection.RejectionOp.computeZ
                     (S := latticeScheme (p := p) hb)
                     sk c yh yb bindingFactor)
-                (CenteredBounded.vec p.n Bh))
+                (CenteredBounded.vec p.n (Bh κ)))
               A := by
     -- Rewrite using `hbind` and unfold `Dist.prob_bind`.
     simp [hbind, hidingNonceDist, A, Dist.prob_bind]
@@ -139,42 +140,42 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
   -- Show each term is `pmf yb * α` (outside support the pmf is 0).
   have hterm :
       ∀ yb,
-        (CenteredBounded.vec p.n Bb).toPMF yb *
+        (CenteredBounded.vec p.n (Bb κ)).toPMF yb *
             Dist.prob
               (Dist.map
                 (fun yh =>
                   IceNine.Protocol.LocalRejection.RejectionOp.computeZ
                     (S := latticeScheme (p := p) hb)
                     sk c yh yb bindingFactor)
-                (CenteredBounded.vec p.n Bh))
+                (CenteredBounded.vec p.n (Bh κ)))
               A
-          = (CenteredBounded.vec p.n Bb).toPMF yb * α := by
+          = (CenteredBounded.vec p.n (Bb κ)).toPMF yb * α := by
     intro yb
-    by_cases hyb : yb ∈ (CenteredBounded.vec p.n Bb).toPMF.support
+    by_cases hyb : yb ∈ (CenteredBounded.vec p.n (Bb κ)).toPMF.support
     · -- Inside support: `yb ∈ box`, so the shift is bounded coordinatewise.
-      have hybBox : yb ∈ CenteredBounded.box p.n Bb := by
+      have hybBox : yb ∈ CenteredBounded.box p.n (Bb κ) := by
         -- Support of the uniform-on-box sampler is exactly that box.
         simpa [CenteredBounded.vec, CenteredBounded.box, Dist.uniformFinset]
-          using (PMF.mem_support_uniformOfFinset_iff (s := CenteredBounded.box p.n Bb)
-            (hs := (CenteredBounded.box_nonempty p.n Bb)) yb) |>.1 hyb
+          using (PMF.mem_support_uniformOfFinset_iff (s := CenteredBounded.box p.n (Bb κ))
+            (hs := (CenteredBounded.box_nonempty p.n (Bb κ))) yb) |>.1 hyb
 
-      have hybCoeff : ∀ i, Int.natAbs (yb i) ≤ Bb :=
-        natAbs_le_of_mem_box (n := p.n) (B := Bb) (x := yb) hybBox
+      have hybCoeff : ∀ i, Int.natAbs (yb i) ≤ Bb κ :=
+        natAbs_le_of_mem_box (n := p.n) (B := Bb κ) (x := yb) hybBox
 
       have hδ : ∀ i : Fin p.n,
-          Int.natAbs ((bindingFactor • yb + c • sk) i) ≤ Bh - cfg.localBound := by
+          Int.natAbs ((bindingFactor • yb + c • sk) i) ≤ (Bh κ) - cfg.localBound := by
         intro i
         -- Bound the coordinatewise shift by triangle inequality and the global margin.
         have hadd :
             Int.natAbs ((bindingFactor * yb i) + (c * sk i)) ≤
               Int.natAbs (bindingFactor * yb i) + Int.natAbs (c * sk i) :=
           Int.natAbs_add_le _ _
-        have hmul1 : Int.natAbs (bindingFactor * yb i) ≤ Int.natAbs bindingFactor * Bb := by
+        have hmul1 : Int.natAbs (bindingFactor * yb i) ≤ Int.natAbs bindingFactor * (Bb κ) := by
           calc
             Int.natAbs (bindingFactor * yb i)
                 = Int.natAbs bindingFactor * Int.natAbs (yb i) := by
                     simp [Int.natAbs_mul]
-            _ ≤ Int.natAbs bindingFactor * Bb := by
+            _ ≤ Int.natAbs bindingFactor * (Bb κ) := by
                     exact Nat.mul_le_mul_left _ (hybCoeff i)
         have hmul2 : Int.natAbs (c * sk i) ≤ Int.natAbs c * skBound := by
           calc
@@ -184,11 +185,11 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
             _ ≤ Int.natAbs c * skBound := by
                     exact Nat.mul_le_mul_left _ (hsk i)
         have : Int.natAbs ((bindingFactor * yb i) + (c * sk i)) ≤
-            Int.natAbs bindingFactor * Bb + Int.natAbs c * skBound := by
+            Int.natAbs bindingFactor * (Bb κ) + Int.natAbs c * skBound := by
           calc
             Int.natAbs ((bindingFactor * yb i) + (c * sk i))
                 ≤ Int.natAbs (bindingFactor * yb i) + Int.natAbs (c * sk i) := hadd
-            _ ≤ Int.natAbs bindingFactor * Bb + Int.natAbs c * skBound := by
+            _ ≤ Int.natAbs bindingFactor * (Bb κ) + Int.natAbs c * skBound := by
                   exact Nat.add_le_add hmul1 hmul2
         -- Finish with the assumed margin.
         exact le_trans this hshift
@@ -200,7 +201,7 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
                   IceNine.Protocol.LocalRejection.RejectionOp.computeZ
                     (S := latticeScheme (p := p) hb)
                     sk c yh yb bindingFactor)
-                (CenteredBounded.vec p.n Bh))
+                (CenteredBounded.vec p.n (Bh κ)))
               A
             = α := by
         -- Rewrite `computeZ` into an explicit coordinatewise `+ δ` map.
@@ -209,19 +210,19 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
                 (Dist.map
                   (fun yh : Fin p.n → Int =>
                     fun i => yh i + (bindingFactor • yb + c • sk) i)
-                  (CenteredBounded.vec p.n Bh))
+                  (CenteredBounded.vec p.n (Bh κ)))
                 (CenteredBounded.box p.n cfg.localBound : Set (Fin p.n → Int))
               = ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-                  ((CenteredBounded.box p.n Bh).card : ENNReal) :=
+                  ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) :=
           CenteredBounded.prob_map_add_vec_mem_box_of_shift_le
-            (n := p.n) (Bacc := cfg.localBound) (Bhide := Bh) (δ := bindingFactor • yb + c • sk)
+            (n := p.n) (Bacc := cfg.localBound) (Bhide := Bh κ) (δ := bindingFactor • yb + c • sk)
             (hB := hB) (hδ := hδ)
         simpa [A, acceptBoxSet, α, IceNine.Protocol.LocalRejection.RejectionOp.computeZ, add_assoc]
           using this
 
-      simpa using congrArg (fun t => (CenteredBounded.vec p.n Bb).toPMF yb * t) hbranch
+      simpa using congrArg (fun t => (CenteredBounded.vec p.n (Bb κ)).toPMF yb * t) hbranch
     · -- Outside support: mass is 0.
-      have hmass0 : (CenteredBounded.vec p.n Bb).toPMF yb = 0 := by
+      have hmass0 : (CenteredBounded.vec p.n (Bb κ)).toPMF yb = 0 := by
         simpa [PMF.support] using hyb
       simp [hmass0]
 
@@ -229,57 +230,58 @@ theorem prob_candidateResponseDist_acceptBoxSet_centeredBounded
   calc
     Dist.prob
         (candidateResponseDist (S := latticeScheme (p := p) hb)
-          (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+          (nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ)))
           bindingFactor c sk κ)
         A
         = ∑' yb,
-            (CenteredBounded.vec p.n Bb).toPMF yb *
+            (CenteredBounded.vec p.n (Bb κ)).toPMF yb *
               Dist.prob
                 (Dist.map
                   (fun yh =>
                     IceNine.Protocol.LocalRejection.RejectionOp.computeZ
                       (S := latticeScheme (p := p) hb)
                       sk c yh yb bindingFactor)
-                  (CenteredBounded.vec p.n Bh))
+                  (CenteredBounded.vec p.n (Bh κ)))
                 A := hprob_bind
-    _ = ∑' yb, (CenteredBounded.vec p.n Bb).toPMF yb * α := by
+    _ = ∑' yb, (CenteredBounded.vec p.n (Bb κ)).toPMF yb * α := by
           refine tsum_congr ?_
           intro yb
           simp [hterm yb]
     _ = α := by
-          simp [ENNReal.tsum_mul_right, (CenteredBounded.vec p.n Bb).toPMF.tsum_coe]
+          simp [ENNReal.tsum_mul_right, (CenteredBounded.vec p.n (Bb κ)).toPMF.tsum_coe]
     _ = ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-          ((CenteredBounded.box p.n Bh).card : ENNReal) := rfl
+          ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) := rfl
 
 
 /-- Lower bound on acceptance probability for the full `acceptSet`, via the centered-box event. -/
 theorem prob_candidateResponseDist_acceptSet_ge_centeredBounded
     (p : LatticeParams) (hb : HashBinding)
     (cfg : ThresholdConfig)
-    (Bh Bb skBound : Nat)
+    (Bh Bb : Nat → Nat)
+    (skBound : Nat)
     (bindingFactor c : Int)
     (sk : Fin p.n → Int)
     (κ : Nat)
-    (hB : cfg.localBound ≤ Bh)
+    (hB : cfg.localBound ≤ Bh κ)
     (hsk : ∀ i, Int.natAbs (sk i) ≤ skBound)
-    (hshift : Int.natAbs bindingFactor * Bb + Int.natAbs c * skBound ≤ Bh - cfg.localBound) :
+    (hshift : Int.natAbs bindingFactor * (Bb κ) + Int.natAbs c * skBound ≤ (Bh κ) - cfg.localBound) :
     ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-        ((CenteredBounded.box p.n Bh).card : ENNReal)
+        ((CenteredBounded.box p.n (Bh κ)).card : ENNReal)
       ≤
       Dist.prob
         (candidateResponseDist (S := latticeScheme (p := p) hb)
-          (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+          (nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ)))
           bindingFactor c sk κ)
         (acceptSet (S := latticeScheme (p := p) hb) cfg) := by
   let d : Dist (Fin p.n → Int) :=
     candidateResponseDist (S := latticeScheme (p := p) hb)
-      (nonceDistSwapProd p (fun _ => Bh) (fun _ => CenteredBounded.vec p.n Bb))
+      (nonceDistSwapProd p Bh (fun κ => CenteredBounded.vec p.n (Bb κ)))
       bindingFactor c sk κ
 
   have hbox :
       Dist.prob d (acceptBoxSet p cfg.localBound) =
         ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-          ((CenteredBounded.box p.n Bh).card : ENNReal) := by
+          ((CenteredBounded.box p.n (Bh κ)).card : ENNReal) := by
     simpa [d] using
       (prob_candidateResponseDist_acceptBoxSet_centeredBounded
         (p := p) (hb := hb) (cfg := cfg)
@@ -294,7 +296,7 @@ theorem prob_candidateResponseDist_acceptSet_ge_centeredBounded
 
   calc
     ((CenteredBounded.box p.n cfg.localBound).card : ENNReal) /
-          ((CenteredBounded.box p.n Bh).card : ENNReal)
+          ((CenteredBounded.box p.n (Bh κ)).card : ENNReal)
         = Dist.prob d (acceptBoxSet p cfg.localBound) := by
             simpa using hbox.symm
     _ ≤ Dist.prob d (acceptSet (S := latticeScheme (p := p) hb) cfg) := hmono

@@ -28,6 +28,7 @@ noncomputable section
 
 open IceNine.Instances
 open IceNine.Protocol
+open Filter
 
 namespace Lattice
 
@@ -50,6 +51,103 @@ def candidateShiftError (p : LatticeParams) (B : Nat → Nat) (c : Int)
   fun κ =>
     (((Finset.univ.sum fun i : Fin p.n => Int.natAbs ((c • sk₂ - c • sk₁) i) : Nat) : ENNReal) /
       (2 * B κ + 1 : ENNReal))
+
+/-- Explicit super-polynomial growth for a Nat-valued bound function.
+
+This is the usual crypto-style assumption that `B κ` eventually dominates every polynomial
+in the security parameter `κ`.
+-/
+def SuperpolyGrowth (B : Nat → Nat) : Prop :=
+  ∀ n : Nat, ∀ᶠ κ in atTop, κ ^ (n + 1) ≤ B κ
+
+/-- If `B` grows super-polynomially, then the explicit shift error is negligible. -/
+theorem negligible_candidateShiftError_of_superpoly
+    (p : LatticeParams) (B : Nat → Nat) (c : Int)
+    (sk₁ sk₂ : Fin p.n → Int)
+    (hB : SuperpolyGrowth B) :
+    Negligible (candidateShiftError p B c sk₁ sk₂) := by
+  -- Unfold `Negligible` and use a `1/κ` squeeze.
+  unfold Negligible
+  intro n
+  -- Constant numerator (as `ℝ≥0∞`).
+  set NNat : Nat :=
+    Finset.univ.sum fun i : Fin p.n => Int.natAbs ((c • sk₂ - c • sk₁) i)
+  set N : ENNReal := (NNat : ENNReal)
+  have hNtop : N ≠ (⊤ : ENNReal) := by
+    dsimp [N]
+    exact ENNReal.natCast_ne_top NNat
+
+  have h1 : Tendsto (fun κ : Nat => (N : ENNReal) / (κ : ENNReal)) atTop (nhds 0) := by
+    have hinv : Tendsto (fun κ : Nat => (κ : ENNReal)⁻¹) atTop (nhds 0) :=
+      ENNReal.tendsto_inv_nat_nhds_zero
+    have hmul : Tendsto (fun κ : Nat => (κ : ENNReal)⁻¹ * N) atTop (nhds (0 * N)) := by
+      exact ENNReal.Tendsto.mul_const hinv (Or.inr hNtop)
+    simpa [div_eq_mul_inv, mul_comm, mul_left_comm, mul_assoc] using hmul
+
+  have hle :
+      (fun κ : Nat => ((κ : ENNReal) ^ n) * candidateShiftError p B c sk₁ sk₂ κ)
+        ≤ᶠ[atTop] fun κ : Nat => (N : ENNReal) / (κ : ENNReal) := by
+    filter_upwards [hB n, (Filter.eventually_ge_atTop 1)] with κ hκB hκ1
+
+    -- Strengthen `κ^(n+1) ≤ B κ` to `κ^(n+1) ≤ 2*B κ + 1`.
+    have hB_le : B κ ≤ 2 * B κ + 1 := by
+      -- `B κ ≤ 2*B κ ≤ 2*B κ + 1`.
+      have hB2 : B κ ≤ 2 * B κ := Nat.le_mul_of_pos_left _ Nat.zero_lt_two
+      exact hB2.trans (Nat.le_add_right (2 * B κ) 1)
+    have hκB' : κ ^ (n + 1) ≤ 2 * B κ + 1 := Nat.le_trans hκB hB_le
+    have hden : ((κ : ENNReal) ^ (n + 1)) ≤ (2 * B κ + 1 : ENNReal) := by
+      exact_mod_cast hκB'
+
+    have hdiv : (N : ENNReal) / (2 * B κ + 1 : ENNReal) ≤ (N : ENNReal) / ((κ : ENNReal) ^ (n + 1)) := by
+      exact ENNReal.div_le_div_left (h := hden) (c := N)
+
+    have hmul_div :
+        ((κ : ENNReal) ^ n) * ((N : ENNReal) / (2 * B κ + 1 : ENNReal))
+          ≤ ((κ : ENNReal) ^ n) * ((N : ENNReal) / ((κ : ENNReal) ^ (n + 1))) :=
+      mul_le_mul_right hdiv ((κ : ENNReal) ^ n)
+
+    have hk0 : (κ : ENNReal) ≠ 0 := by
+      have hk : κ ≠ 0 := Nat.ne_of_gt (Nat.lt_of_lt_of_le (Nat.succ_pos 0) hκ1)
+      exact_mod_cast hk
+    have hpow0 : ((κ : ENNReal) ^ n) ≠ 0 := pow_ne_zero _ hk0
+    have hpowTop : ((κ : ENNReal) ^ n) ≠ (⊤ : ENNReal) := by
+      have hcast : ((κ : ENNReal) ^ n) = ((κ ^ n : Nat) : ENNReal) := by
+        exact (Nat.cast_pow (α := ENNReal) κ n).symm
+      have hnat : ((κ ^ n : Nat) : ENNReal) ≠ (⊤ : ENNReal) :=
+        ENNReal.natCast_ne_top (κ ^ n)
+      intro htop
+      apply hnat
+      -- Rewrite the goal using `hcast`.
+      exact hcast ▸ htop
+
+    have hsimp :
+        ((κ : ENNReal) ^ n) * ((N : ENNReal) / ((κ : ENNReal) ^ (n + 1))) = (N : ENNReal) / (κ : ENNReal) := by
+      calc
+        ((κ : ENNReal) ^ n) * (N / ((κ : ENNReal) ^ (n + 1)))
+            = ((κ : ENNReal) ^ n) * (N / (((κ : ENNReal) ^ n) * (κ : ENNReal))) := by
+                simp [pow_succ]
+        _ = ((κ : ENNReal) ^ n * N) / (((κ : ENNReal) ^ n) * (κ : ENNReal)) := by
+                simp [mul_div_assoc]
+        _ = (N : ENNReal) / (κ : ENNReal) := by
+                -- Cancel the common `κ^n` factor.
+                simpa [mul_comm, mul_left_comm, mul_assoc] using
+                  (ENNReal.mul_div_mul_left (a := N) (b := (κ : ENNReal)) (c := ((κ : ENNReal) ^ n))
+                    hpow0 hpowTop)
+
+    -- Rewrite `candidateShiftError` using `N` and combine the inequalities.
+    have hdef : candidateShiftError p B c sk₁ sk₂ κ = (N : ENNReal) / (2 * B κ + 1 : ENNReal) := by
+      simp [candidateShiftError, N, NNat]
+
+    calc
+      ((κ : ENNReal) ^ n) * candidateShiftError p B c sk₁ sk₂ κ
+          = ((κ : ENNReal) ^ n) * ((N : ENNReal) / (2 * B κ + 1 : ENNReal)) := by
+              simp [hdef]
+      _ ≤ ((κ : ENNReal) ^ n) * ((N : ENNReal) / ((κ : ENNReal) ^ (n + 1))) := hmul_div
+      _ = (N : ENNReal) / (κ : ENNReal) := hsimp
+
+  have h0 : Tendsto (fun _ : Nat => (0 : ENNReal)) atTop (nhds 0) := tendsto_const_nhds
+  refine tendsto_of_tendsto_of_tendsto_of_le_of_le' h0 h1 ?_ hle
+  exact Eventually.of_forall (fun _ => by simp)
 
 theorem candidateResponseDist_eq_bind
     (p : LatticeParams) (hb : HashBinding) (B : Nat → Nat)
