@@ -251,6 +251,40 @@ theorem AcceptanceRateBound.failureProb_repeatOption_none_le
     h.2 bindingFactor c s κ
   simpa [Dist.prob_repeatOption_none] using (ENNReal.pow_le_pow_left hrej (n := n))
 
+
+/-- Distribution semantics for the bounded local rejection loop.
+
+We model “try up to `cfg.maxLocalAttempts` times” as `Dist.repeatOption` on the
+candidate-response distribution.
+-/
+noncomputable def localRejectionDist (S : Scheme)
+    [NormBounded S.Secret]
+    (cfg : ThresholdConfig)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (bindingFactor : S.Scalar)
+    (c : S.Challenge)
+    (s : S.Secret)
+    (κ : Nat) : Probability.Dist (Option S.Secret) :=
+  Dist.repeatOption
+    (candidateResponseDist S nonceDist bindingFactor c s κ)
+    (acceptSet S cfg)
+    cfg.maxLocalAttempts
+
+/-- Abort probability bound for the bounded local rejection loop, derived from `AcceptanceRateBound`. -/
+theorem AcceptanceRateBound.failureProb_localRejectionDist_none_le
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (h : AcceptanceRateBound S cfg nonceDist expectedIterations)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat) :
+    Dist.prob (localRejectionDist S cfg nonceDist bindingFactor c s κ) {none}
+      ≤ (((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal)) ^ cfg.maxLocalAttempts := by
+  simpa [localRejectionDist] using
+    (AcceptanceRateBound.failureProb_repeatOption_none_le
+      (S := S) (cfg := cfg) (nonceDist := nonceDist) (expectedIterations := expectedIterations)
+      h bindingFactor c s κ cfg.maxLocalAttempts)
+
 /-- Turn a uniform acceptance lower bound into an `AcceptanceRateBound`.
 
 If every candidate response is accepted with probability at least `1/expectedIterations`, then
@@ -434,11 +468,7 @@ theorem ResponseIndependence.independence
   · intro κ
     classical
     by_cases hpubκ : h.publicOK κ bindingFactor c
-    · -- Under admissible public parameters, acceptance has positive mass in both worlds.
-      have hpos_lb : 0 < h.accept_lb κ := by
-        have : h.accept_lb κ ≠ 0 := h.accept_lb_ne_zero κ
-        simpa [pos_iff_ne_zero] using this
-
+    · -- Under admissible public parameters, use the pointwise conditioning lemma.
       have hαp : h.accept_lb κ ≤
           Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
             (acceptSet S (h.cfg κ)) :=
@@ -449,63 +479,23 @@ theorem ResponseIndependence.independence
             (acceptSet S (h.cfg κ)) :=
         h.accept_prob_ge bindingFactor c s₂ κ hpubκ hs₂
 
-      have hpA0 :
-          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
-              (acceptSet S (h.cfg κ)) ≠ 0 := by
-        have hpos : 0 <
-            Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
-              (acceptSet S (h.cfg κ)) :=
-          lt_of_lt_of_le hpos_lb hαp
-        exact ne_of_gt hpos
-
-      have hqA0 :
-          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
-              (acceptSet S (h.cfg κ)) ≠ 0 := by
-        have hpos : 0 <
-            Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
-              (acceptSet S (h.cfg κ)) :=
-          lt_of_lt_of_le hpos_lb hαq
-        exact ne_of_gt hpos
-
-      let hpA :
-          ∃ z ∈ acceptSet S (h.cfg κ),
-            z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ).toPMF.support :=
-        Dist.exists_mem_support_of_prob_ne_zero
-          (d := candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
-          (A := acceptSet S (h.cfg κ))
-          hpA0
-      
-      let hqA :
-          ∃ z ∈ acceptSet S (h.cfg κ),
-            z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ).toPMF.support :=
-        Dist.exists_mem_support_of_prob_ne_zero
-          (d := candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
-          (A := acceptSet S (h.cfg κ))
-          hqA0
-      
-      -- Apply the pointwise conditioning bound.
       have hcond : StatClose
-          (Dist.filter
-            (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
-            (acceptSet S (h.cfg κ)) hpA)
-          (Dist.filter
-            (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
-            (acceptSet S (h.cfg κ)) hqA)
-          (εcond κ) :=
-        StatClose.filter (h := hεclose κ)
-          (A := acceptSet S (h.cfg κ))
-          (hpA := hpA) (hqA := hqA)
-          (hαp := hαp) (hαq := hαq)
-          (hα0 := h.accept_lb_ne_zero κ)
-      
-      -- Unfold `acceptedResponseDist` (conditioning branch).
-      have : StatClose
           (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ)
           (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ)
-          (if h.publicOK κ bindingFactor c then εcond κ else 1) := by
-        -- In this branch, both `if`s take the conditioning path.
-        simpa [acceptedResponseDist, hpA0, hqA0, hpubκ] using hcond
-      exact this
+          (εcond κ) :=
+        StatClose.acceptedResponseDist_of_prob_ge
+          (S := S)
+          (cfg := h.cfg)
+          (nonceDist := h.nonceDist)
+          (bindingFactor := bindingFactor)
+          (challenge := c)
+          (sk₁ := s₁) (sk₂ := s₂) (κ := κ)
+          (hclose := hεclose κ)
+          (hα0 := h.accept_lb_ne_zero κ)
+          (hprob₁ := hαp)
+          (hprob₂ := hαq)
+
+      simpa [hpubκ] using hcond
 
     · -- Outside `publicOK`, use the trivial bound `≤ 1`.
       intro s
@@ -751,9 +741,24 @@ def thresholdUFcma (S : Scheme) (A : Assumptions S) : Prop :=
 def keySecrecy (S : Scheme) (A : LatticeAssumptions S) : Prop :=
   MLWEHard A.mlweInst
 
-/-- Liveness: honest parties either complete signing or detect abort.
-    No silent failures - either succeed or return error. -/
-axiom livenessOrAbort (S : Scheme) (A : Assumptions S) : Prop
+/-- Liveness for bounded local rejection sampling: the abort probability after
+`cfg.maxLocalAttempts` attempts is explicitly bounded.
+
+This is a purely probabilistic statement about the idealized loop model (`localRejectionDist`).
+Connecting it to the `IO` implementation is deferred.
+-/
+theorem livenessOrAbort
+    {S : Scheme} [NormBounded S.Secret]
+    {cfg : ThresholdConfig}
+    {nonceDist : DistFamily (S.Secret × S.Secret)}
+    {expectedIterations : Nat}
+    (h : AcceptanceRateBound S cfg nonceDist expectedIterations)
+    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat) :
+    Dist.prob (localRejectionDist S cfg nonceDist bindingFactor c s κ) {none}
+      ≤ (((expectedIterations - 1 : Nat) : ENNReal) / (expectedIterations : ENNReal)) ^ cfg.maxLocalAttempts := by
+  simpa using (AcceptanceRateBound.failureProb_localRejectionDist_none_le
+    (S := S) (cfg := cfg) (nonceDist := nonceDist) (expectedIterations := expectedIterations)
+    h bindingFactor c s κ)
 
 /-!
 ## Parameter Validation

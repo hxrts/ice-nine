@@ -102,6 +102,67 @@ def acceptedResponseDist (S : Scheme)
     else
       Dist.filter cand A
         (Dist.exists_mem_support_of_prob_ne_zero (d := cand) (A := A) h0)
+
+namespace StatClose
+
+universe u
+
+variable {S : Scheme} [NormBounded S.Secret]
+
+/-- Statistical closeness of accepted-response distributions from a closeness bound on the
+candidate-response distributions, assuming a uniform lower bound on acceptance probability.
+
+This is the pointwise (fixed `κ`) conditioning lemma specialized to `acceptedResponseDist`. -/
+theorem acceptedResponseDist_of_prob_ge
+    (cfg : Nat → ThresholdConfig)
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (bindingFactor : S.Scalar)
+    (challenge : S.Challenge)
+    (sk₁ sk₂ : S.Secret) (κ : Nat)
+    {ε α0 : ENNReal}
+    (hclose : StatClose
+      (candidateResponseDist S nonceDist bindingFactor challenge sk₁ κ)
+      (candidateResponseDist S nonceDist bindingFactor challenge sk₂ κ) ε)
+    (hα0 : α0 ≠ 0)
+    (hprob₁ : α0 ≤
+      Dist.prob (candidateResponseDist S nonceDist bindingFactor challenge sk₁ κ)
+        (acceptSet S (cfg κ)))
+    (hprob₂ : α0 ≤
+      Dist.prob (candidateResponseDist S nonceDist bindingFactor challenge sk₂ κ)
+        (acceptSet S (cfg κ))) :
+    StatClose
+      (acceptedResponseDist S cfg nonceDist bindingFactor challenge sk₁ κ)
+      (acceptedResponseDist S cfg nonceDist bindingFactor challenge sk₂ κ)
+      (2 * ε / α0) := by
+  classical
+  set p : Dist S.Secret := candidateResponseDist S nonceDist bindingFactor challenge sk₁ κ
+  set q : Dist S.Secret := candidateResponseDist S nonceDist bindingFactor challenge sk₂ κ
+  set A : Set S.Secret := acceptSet S (cfg κ)
+
+  have hpos : 0 < α0 := by
+    simpa [pos_iff_ne_zero] using hα0
+  have hpA0 : Dist.prob p A ≠ 0 := by
+    have : 0 < Dist.prob p A := lt_of_lt_of_le hpos (by simpa [p, A] using hprob₁)
+    exact ne_of_gt this
+  have hqA0 : Dist.prob q A ≠ 0 := by
+    have : 0 < Dist.prob q A := lt_of_lt_of_le hpos (by simpa [q, A] using hprob₂)
+    exact ne_of_gt this
+
+  let hpA : ∃ z ∈ A, z ∈ p.toPMF.support :=
+    Dist.exists_mem_support_of_prob_ne_zero (d := p) (A := A) (by simpa [p, A] using hpA0)
+  let hqA : ∃ z ∈ A, z ∈ q.toPMF.support :=
+    Dist.exists_mem_support_of_prob_ne_zero (d := q) (A := A) (by simpa [q, A] using hqA0)
+
+  have hcond : StatClose (Dist.filter p A hpA) (Dist.filter q A hqA) (2 * ε / α0) := by
+    exact StatClose.filter (h := by simpa [p, q] using hclose)
+      (A := A) (hpA := hpA) (hqA := hqA)
+      (hαp := by simpa [p, A] using hprob₁)
+      (hαq := by simpa [q, A] using hprob₂)
+      (hα0 := hα0)
+
+  simpa [acceptedResponseDist, p, q, A, hpA0, hqA0] using hcond
+
+end StatClose
 end
 
 end IceNine.Proofs.Probability

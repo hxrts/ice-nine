@@ -17,6 +17,7 @@ distance when the supremum exists).
 
 import IceNine.Proofs.Probability.Dist
 import Mathlib.Analysis.Asymptotics.SuperpolynomialDecay
+import Mathlib.Analysis.SpecificLimits.Normed
 import Mathlib.Topology.Instances.ENNReal.Lemmas
 
 set_option autoImplicit false
@@ -122,6 +123,60 @@ theorem mul_invpoly {ε α0 : Nat → ENNReal} (hε : Negligible ε)
     simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
   refine tendsto_of_tendsto_of_tendsto_of_le_of_le' h0 h2 ?_ hle'
   exact Eventually.of_forall (fun _ => by simp)
+
+/-- Exponential decay is negligible: if `r < 1` then `κ ↦ r^κ` is negligible. -/
+theorem pow_const {r : ENNReal} (hr : r < 1) :
+    Negligible (fun κ : Nat => r ^ κ) := by
+  unfold Negligible
+  intro n
+  -- Reduce to a real limit using `toReal` (all values are finite when `r < 1`).
+  have hrTop : r ≠ (⊤ : ENNReal) := ne_of_lt (lt_trans hr (by simp))
+  have hf : ∀ κ : Nat, ((κ : ENNReal) ^ n * r ^ κ) ≠ (⊤ : ENNReal) := by
+    intro κ
+    have hκ : ((κ : ENNReal) ^ n) ≠ (⊤ : ENNReal) :=
+      ENNReal.pow_ne_top (ENNReal.natCast_ne_top κ)
+    have hrκ : (r ^ κ) ≠ (⊤ : ENNReal) := ENNReal.pow_ne_top hrTop
+    exact ENNReal.mul_ne_top hκ hrκ
+
+  have hrReal : r.toReal < (1 : ℝ) := by
+    have h1Top : (1 : ENNReal) ≠ (⊤ : ENNReal) := by simp
+    have : r.toReal < (1 : ENNReal).toReal := (ENNReal.toReal_lt_toReal hrTop h1Top).2 hr
+    simpa using this
+
+  have htoReal :
+      Tendsto (fun κ : Nat => (((κ : ENNReal) ^ n * r ^ κ).toReal)) atTop (nhds 0) := by
+    have hEq :
+        (fun κ : Nat => (((κ : ENNReal) ^ n * r ^ κ).toReal)) =
+          fun κ : Nat => (κ : ℝ) ^ n * (r.toReal) ^ κ := by
+      funext κ
+      simp [ENNReal.toReal_mul, ENNReal.toReal_pow, ENNReal.toReal_natCast]
+    simpa [hEq] using
+      (tendsto_pow_const_mul_const_pow_of_lt_one n (hr := ENNReal.toReal_nonneg) (h'r := hrReal))
+
+  exact (ENNReal.tendsto_toReal_zero_iff (f := fun κ : Nat => ((κ : ENNReal) ^ n * r ^ κ)) (hf := hf)).1 htoReal
+
+/-- Polynomially many trials make a geometric failure probability negligible.
+
+For `0 < d`, the exponent `κ^d` dominates `κ`, so `r^(κ^d)` is bounded above by `r^κ`. -/
+theorem pow_poly {r : ENNReal} (hr : r < 1) {d : Nat} (hd : 0 < d) :
+    Negligible (fun κ : Nat => r ^ (κ ^ d)) := by
+  -- Compare to the simpler negligible function `κ ↦ r^κ`.
+  have hbase : Negligible (fun κ : Nat => r ^ κ) := pow_const (r := r) hr
+  unfold Negligible at hbase ⊢
+  intro n
+  have htend : Tendsto (fun κ : Nat => ((κ : ENNReal) ^ n) * (r ^ κ)) atTop (nhds 0) := hbase n
+  have hle : ∀ κ : Nat, ((κ : ENNReal) ^ n) * (r ^ (κ ^ d)) ≤ ((κ : ENNReal) ^ n) * (r ^ κ) := by
+    intro κ
+    have hrle1 : r ≤ (1 : ENNReal) := le_of_lt hr
+    have hk : κ ≤ κ ^ d := Nat.le_pow (a := κ) (b := d) hd
+    have hpow : r ^ (κ ^ d) ≤ r ^ κ := by
+      simpa using (pow_le_pow_of_le_one (ha₀ := by simp) (ha₁ := hrle1) hk)
+    exact mul_le_mul_right hpow ((κ : ENNReal) ^ n)
+  -- Squeeze between 0 and the simpler tail.
+  have h0 : Tendsto (fun _ : Nat => (0 : ENNReal)) atTop (nhds 0) := tendsto_const_nhds
+  refine tendsto_of_tendsto_of_tendsto_of_le_of_le' h0 htend ?_ ?_
+  · exact Eventually.of_forall (fun κ => by simp)
+  · exact Eventually.of_forall hle
 end Negligible
 
 /-- Absolute difference on `ℝ≥0∞`, expressed via truncated subtraction. -/
@@ -136,14 +191,59 @@ def StatClose {α : Type u} (p q : Dist α) (ε : ENNReal) : Prop :=
 def Indistinguishable {α : Type u} (D₁ D₂ : DistFamily α) : Prop :=
   ∃ ε : Nat → ENNReal, Negligible ε ∧ ∀ κ, StatClose (D₁ κ) (D₂ κ) (ε κ)
 
+/-- A (possibly inefficient) distinguisher for distributions over `α`.
+
+This is a *placeholder* interface: later we can restrict to PPT distinguishers. -/
+abbrev Distinguisher (α : Type u) : Type u :=
+  α → Bool
+
 /-- Computational indistinguishability placeholder.
 
-Currently, this is aliased to statistical indistinguishability.
+For now this is a *statistical* notion phrased via distinguishers: every boolean
+test has negligible distinguishing advantage.
 
-A future version should quantify over (PPT) distinguishers and bound the resulting
-advantage by a negligible function. -/
+A future version should restrict to (PPT) distinguishers to obtain true
+computational indistinguishability. -/
 def CompIndistinguishable {α : Type u} (D₁ D₂ : DistFamily α) : Prop :=
-  Indistinguishable D₁ D₂
+  ∃ ε : Nat → ENNReal, Negligible ε ∧
+    ∀ κ, ∀ A : Distinguisher α,
+      absSubENNReal (Dist.prob (D₁ κ) (A ⁻¹' {true})) (Dist.prob (D₂ κ) (A ⁻¹' {true})) ≤ ε κ
+
+namespace Indistinguishable
+
+
+variable {α : Type u}
+
+/-- Statistical indistinguishability implies distinguisher-based indistinguishability. -/
+theorem comp {D₁ D₂ : DistFamily α} (h : Indistinguishable D₁ D₂) : CompIndistinguishable D₁ D₂ := by
+  rcases h with ⟨ε, hεneg, hεclose⟩
+  refine ⟨ε, hεneg, ?_⟩
+  intro κ A
+  exact hεclose κ (A ⁻¹' {true})
+
+end Indistinguishable
+
+namespace CompIndistinguishable
+
+
+variable {α : Type u}
+
+/-- Distinguisher-based indistinguishability implies statistical indistinguishability.
+
+This uses classical choice to turn an arbitrary event `s : Set α` into the boolean test
+`x ↦ decide (x ∈ s)`. -/
+theorem stat {D₁ D₂ : DistFamily α} (h : CompIndistinguishable D₁ D₂) : Indistinguishable D₁ D₂ := by
+  classical
+  rcases h with ⟨ε, hεneg, hεclose⟩
+  refine ⟨ε, hεneg, ?_⟩
+  intro κ s
+  let A : Distinguisher α := fun x => decide (x ∈ s)
+  have hpre : A ⁻¹' {true} = s := by
+    ext x
+    simp [A]
+  simpa [hpre] using hεclose κ A
+
+end CompIndistinguishable
 
 end
 
