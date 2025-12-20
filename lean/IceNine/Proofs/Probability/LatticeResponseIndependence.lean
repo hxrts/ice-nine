@@ -31,12 +31,11 @@ def secretOK (p : LatticeParams) (skBound : Nat) : Set (Fin p.n → Int) :=
 We phrase the margin conditions uniformly in `κ` so that a single `publicOK` hypothesis can be
 used in the `ResponseIndependence` interface, which quantifies over all `κ`.
 -/
-def publicOK (cfg : Nat → ThresholdConfig) (Bh Bb : Nat → Nat) (skBound : Nat) : Int → Int → Prop :=
-  fun bindingFactor c =>
-    (∀ κ, (cfg κ).localBound ≤ Bh κ) ∧
-      (∀ κ,
-        Int.natAbs bindingFactor * Bb κ + Int.natAbs c * skBound ≤
-          Bh κ - (cfg κ).localBound)
+def publicOK (cfg : Nat → ThresholdConfig) (Bh Bb : Nat → Nat) (skBound : Nat) : Nat → Int → Int → Prop :=
+  fun κ bindingFactor c =>
+    (cfg κ).localBound ≤ Bh κ ∧
+      Int.natAbs bindingFactor * Bb κ + Int.natAbs c * skBound ≤
+        Bh κ - (cfg κ).localBound
 
 /-- A centered-bounded nonce distribution family for the lattice demo scheme.
 
@@ -243,10 +242,10 @@ def responseIndependence_centeredBounded
     simpa [hinv] using hκ
 
   · intro bindingFactor c s κ hpub hs
-    have hB : (cfg κ).localBound ≤ Bh κ := (hpub.1 κ)
+    have hB : (cfg κ).localBound ≤ Bh κ := hpub.1
     have hshift :
         Int.natAbs bindingFactor * Bb κ + Int.natAbs c * skBound ≤
-          Bh κ - (cfg κ).localBound := (hpub.2 κ)
+          Bh κ - (cfg κ).localBound := hpub.2
     have hsk : ∀ i, Int.natAbs (s i) ≤ skBound := hs
     -- Use the acceptance lower bound lemma.
     simpa [accept_lb, nonceDist, nonceDistCenteredBounded] using
@@ -267,10 +266,6 @@ def responseIndependence_centeredBounded
         (bindingFactor := bindingFactor) (c := c)
         (sk₁ := s₁) (sk₂ := s₂)
         hNeg)
-
-
-
-
 
 /-- Parameter bundle for constructing response independence for the lattice demo scheme
 under the centered-bounded nonce model.
@@ -340,6 +335,20 @@ theorem gap_poly :
 
 /-- A simple binding-nonce bound (linear in `κ`). -/
 def Bb : Nat → Nat := fun κ => κ
+
+/-- Package the example bounds into `CenteredBoundedRIParams`. -/
+def params (p : LatticeParams) (skBound : Nat) : CenteredBoundedRIParams p :=
+  { cfg := cfg
+    Bh := Bh
+    Bb := Bb
+    skBound := skBound
+    Bh_superpoly := Bh_superpoly
+    gap_poly := gap_poly }
+
+/-- A concrete `ResponseIndependence` instance obtained from the example parameter family. -/
+def responseIndependence (p : LatticeParams) (hb : HashBinding) (skBound : Nat) :
+    ResponseIndependence (S := latticeScheme (p := p) hb) :=
+  (CenteredBoundedRIParams.responseIndependence (p := p) (hb := hb) (P := params p skBound))
 
 end Example
 

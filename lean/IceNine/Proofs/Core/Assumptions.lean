@@ -378,7 +378,7 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
   /-- Secrets for which we claim response independence (typically, “short” secrets). -/
   secretOK : Set S.Secret := Set.univ
   /-- Admissible public parameters (e.g. bounded challenges / binding factors). -/
-  publicOK : S.Scalar → S.Challenge → Prop := fun _ _ => True
+  publicOK : Nat → S.Scalar → S.Challenge → Prop := fun _ _ _ => True
   /-- A κ-indexed lower bound on acceptance probability. -/
   accept_lb : Nat → ENNReal
   /-- The lower bound is nonzero for every `κ`. -/
@@ -388,13 +388,13 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
   /-- Acceptance probability is bounded below by `accept_lb κ` for admissible parameters and secrets. -/
   accept_prob_ge :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret) (κ : Nat),
-      publicOK bindingFactor c → s ∈ secretOK →
+      publicOK κ bindingFactor c → s ∈ secretOK →
         accept_lb κ ≤
           Dist.prob (candidateResponseDist S nonceDist bindingFactor c s κ) (acceptSet S (cfg κ))
   /-- Candidate responses are indistinguishable across secret keys (statistical, first). -/
   candidate_indist :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret),
-      publicOK bindingFactor c → s₁ ∈ secretOK → s₂ ∈ secretOK →
+      (∀ κ, publicOK κ bindingFactor c) → s₁ ∈ secretOK → s₂ ∈ secretOK →
         Indistinguishable
           (candidateResponseDist S nonceDist bindingFactor c s₁)
           (candidateResponseDist S nonceDist bindingFactor c s₂)
@@ -403,7 +403,7 @@ theorem ResponseIndependence.accept_nonempty
     {S : Scheme} [NormBounded S.Secret]
     (h : ResponseIndependence S)
     (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret)
-    (hpub : h.publicOK bindingFactor c)
+    (hpub : ∀ κ, h.publicOK κ bindingFactor c)
     (hs : s ∈ h.secretOK) :
     ∀ κ,
       ∃ z ∈ acceptSet S (h.cfg κ),
@@ -414,7 +414,7 @@ theorem ResponseIndependence.accept_nonempty
     simpa [pos_iff_ne_zero] using this
   have hpos : 0 <
       Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s κ) (acceptSet S (h.cfg κ)) :=
-    lt_of_lt_of_le hpos_lb (h.accept_prob_ge bindingFactor c s κ hpub hs)
+    lt_of_lt_of_le hpos_lb (h.accept_prob_ge bindingFactor c s κ (hpub κ) hs)
   exact
     Dist.exists_mem_support_of_prob_ne_zero
       (d := candidateResponseDist S h.nonceDist bindingFactor c s κ)
@@ -425,7 +425,7 @@ theorem ResponseIndependence.independence
     {S : Scheme} [NormBounded S.Secret]
     (h : ResponseIndependence S)
     (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret)
-    (hpub : h.publicOK bindingFactor c)
+    (hpub : ∀ κ, h.publicOK κ bindingFactor c)
     (hs₁ : s₁ ∈ h.secretOK)
     (hs₂ : s₂ ∈ h.secretOK) :
     Indistinguishable
@@ -443,8 +443,8 @@ theorem ResponseIndependence.independence
       (hA₁ := fun κ => h.accept_nonempty bindingFactor c s₁ hpub hs₁ κ)
       (hA₂ := fun κ => h.accept_nonempty bindingFactor c s₂ hpub hs₂ κ)
       (hα0 := h.accept_lb_ne_zero)
-      (hprob₁ := fun κ => h.accept_prob_ge bindingFactor c s₁ κ hpub hs₁)
-      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ hpub hs₂)
+      (hprob₁ := fun κ => h.accept_prob_ge bindingFactor c s₁ κ (hpub κ) hs₁)
+      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ (hpub κ) hs₂)
       (hinvpoly := h.accept_inv_poly))
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
