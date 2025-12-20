@@ -15,6 +15,7 @@ We model that conditional distribution using `PMF.filter`, wrapped as `Dist.filt
 
 import IceNine.Protocol.Sign.LocalRejection
 import IceNine.Proofs.Probability.Dist
+import IceNine.Proofs.Probability.Lemmas
 
 set_option autoImplicit false
 
@@ -78,25 +79,29 @@ theorem candidateResponseDist_shift
       apply hz
       exact h.trans hshift.symm
     simp [hz]
-/-- Accepted response distribution: condition the candidate distribution on `acceptSet`. -/
+/-- Accepted response distribution.
+
+We interpret the unbounded rejection loop as conditioning the candidate distribution on `acceptSet`.
+If acceptance has zero probability mass (so conditioning is undefined), we fall back to the
+candidate distribution.
+
+This makes the definition total, which is convenient when `publicOK κ` only holds eventually. -/
 def acceptedResponseDist (S : Scheme)
     [NormBounded S.Secret]
     (cfg : Nat → ThresholdConfig)
     (nonceDist : DistFamily (S.Secret × S.Secret))
     (bindingFactor : S.Scalar)
     (challenge : S.Challenge)
-    (sk : S.Secret)
-    (hAccept :
-      ∀ κ,
-        ∃ z ∈ acceptSet S (cfg κ),
-          z ∈ (candidateResponseDist S nonceDist bindingFactor challenge sk κ).toPMF.support) :
+    (sk : S.Secret) :
     DistFamily S.Secret :=
   fun κ =>
-    Dist.filter
-      (candidateResponseDist S nonceDist bindingFactor challenge sk κ)
-      (acceptSet S (cfg κ))
-      (hAccept κ)
-
+    let cand := candidateResponseDist S nonceDist bindingFactor challenge sk κ
+    let A : Set S.Secret := acceptSet S (cfg κ)
+    if h0 : Dist.prob cand A = 0 then
+      cand
+    else
+      Dist.filter cand A
+        (Dist.exists_mem_support_of_prob_ne_zero (d := cand) (A := A) h0)
 end
 
 end IceNine.Proofs.Probability

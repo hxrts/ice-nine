@@ -394,58 +394,152 @@ structure ResponseIndependence (S : Scheme) [NormBounded S.Secret] where
   /-- Candidate responses are indistinguishable across secret keys (statistical, first). -/
   candidate_indist :
     ∀ (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret),
-      (∀ κ, publicOK κ bindingFactor c) → s₁ ∈ secretOK → s₂ ∈ secretOK →
-        Indistinguishable
-          (candidateResponseDist S nonceDist bindingFactor c s₁)
-          (candidateResponseDist S nonceDist bindingFactor c s₂)
-
-theorem ResponseIndependence.accept_nonempty
-    {S : Scheme} [NormBounded S.Secret]
-    (h : ResponseIndependence S)
-    (bindingFactor : S.Scalar) (c : S.Challenge) (s : S.Secret)
-    (hpub : ∀ κ, h.publicOK κ bindingFactor c)
-    (hs : s ∈ h.secretOK) :
-    ∀ κ,
-      ∃ z ∈ acceptSet S (h.cfg κ),
-        z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s κ).toPMF.support := by
-  intro κ
-  have hpos_lb : 0 < h.accept_lb κ := by
-    have : h.accept_lb κ ≠ 0 := h.accept_lb_ne_zero κ
-    simpa [pos_iff_ne_zero] using this
-  have hpos : 0 <
-      Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s κ) (acceptSet S (h.cfg κ)) :=
-    lt_of_lt_of_le hpos_lb (h.accept_prob_ge bindingFactor c s κ (hpub κ) hs)
-  exact
-    Dist.exists_mem_support_of_prob_ne_zero
-      (d := candidateResponseDist S h.nonceDist bindingFactor c s κ)
-      (A := acceptSet S (h.cfg κ))
-      (ne_of_gt hpos)
+      (∀ᶠ κ in Filter.atTop, publicOK κ bindingFactor c) →
+        s₁ ∈ secretOK → s₂ ∈ secretOK →
+          Indistinguishable
+            (candidateResponseDist S nonceDist bindingFactor c s₁)
+            (candidateResponseDist S nonceDist bindingFactor c s₂)
 
 theorem ResponseIndependence.independence
     {S : Scheme} [NormBounded S.Secret]
     (h : ResponseIndependence S)
     (bindingFactor : S.Scalar) (c : S.Challenge) (s₁ s₂ : S.Secret)
-    (hpub : ∀ κ, h.publicOK κ bindingFactor c)
+    (hpub : ∀ᶠ κ in Filter.atTop, h.publicOK κ bindingFactor c)
     (hs₁ : s₁ ∈ h.secretOK)
     (hs₂ : s₂ ∈ h.secretOK) :
     Indistinguishable
-      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁
-        (fun κ => h.accept_nonempty bindingFactor c s₁ hpub hs₁ κ))
-      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂
-        (fun κ => h.accept_nonempty bindingFactor c s₂ hpub hs₂ κ)) := by
-  simpa [acceptedResponseDist] using
-    (Indistinguishable.filter_poly
-      (D₁ := candidateResponseDist S h.nonceDist bindingFactor c s₁)
-      (D₂ := candidateResponseDist S h.nonceDist bindingFactor c s₂)
-      (A := fun κ => acceptSet S (h.cfg κ))
-      (α0 := h.accept_lb)
-      (h := h.candidate_indist bindingFactor c s₁ s₂ hpub hs₁ hs₂)
-      (hA₁ := fun κ => h.accept_nonempty bindingFactor c s₁ hpub hs₁ κ)
-      (hA₂ := fun κ => h.accept_nonempty bindingFactor c s₂ hpub hs₂ κ)
-      (hα0 := h.accept_lb_ne_zero)
-      (hprob₁ := fun κ => h.accept_prob_ge bindingFactor c s₁ κ (hpub κ) hs₁)
-      (hprob₂ := fun κ => h.accept_prob_ge bindingFactor c s₂ κ (hpub κ) hs₂)
-      (hinvpoly := h.accept_inv_poly))
+      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁)
+      (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂) := by
+  classical
+  -- Start from candidate indistinguishability.
+  rcases h.candidate_indist bindingFactor c s₁ s₂ hpub hs₁ hs₂ with ⟨ε, hεneg, hεclose⟩
+
+  -- Conditioning blowup (when `publicOK κ` holds).
+  let εcond : Nat → ENNReal := fun κ => 2 * ε κ / h.accept_lb κ
+  have hεcond : Negligible εcond :=
+    Negligible.mul_invpoly (ε := ε) (α0 := h.accept_lb) hεneg h.accept_inv_poly
+
+  refine
+    ⟨fun κ => if h.publicOK κ bindingFactor c then εcond κ else 1,
+      ?_, ?_⟩
+
+  · -- Negligible: eventually `publicOK κ` holds.
+    have hEq :
+        (fun κ => if h.publicOK κ bindingFactor c then εcond κ else 1)
+          =ᶠ[Filter.atTop] εcond := by
+      filter_upwards [hpub] with κ hpubκ
+      simp [hpubκ]
+    exact Negligible.eventually_eq (h := hεcond) hEq
+
+  · intro κ
+    classical
+    by_cases hpubκ : h.publicOK κ bindingFactor c
+    · -- Under admissible public parameters, acceptance has positive mass in both worlds.
+      have hpos_lb : 0 < h.accept_lb κ := by
+        have : h.accept_lb κ ≠ 0 := h.accept_lb_ne_zero κ
+        simpa [pos_iff_ne_zero] using this
+
+      have hαp : h.accept_lb κ ≤
+          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
+            (acceptSet S (h.cfg κ)) :=
+        h.accept_prob_ge bindingFactor c s₁ κ hpubκ hs₁
+
+      have hαq : h.accept_lb κ ≤
+          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
+            (acceptSet S (h.cfg κ)) :=
+        h.accept_prob_ge bindingFactor c s₂ κ hpubκ hs₂
+
+      have hpA0 :
+          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
+              (acceptSet S (h.cfg κ)) ≠ 0 := by
+        have hpos : 0 <
+            Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
+              (acceptSet S (h.cfg κ)) :=
+          lt_of_lt_of_le hpos_lb hαp
+        exact ne_of_gt hpos
+
+      have hqA0 :
+          Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
+              (acceptSet S (h.cfg κ)) ≠ 0 := by
+        have hpos : 0 <
+            Dist.prob (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
+              (acceptSet S (h.cfg κ)) :=
+          lt_of_lt_of_le hpos_lb hαq
+        exact ne_of_gt hpos
+
+      let hpA :
+          ∃ z ∈ acceptSet S (h.cfg κ),
+            z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ).toPMF.support :=
+        Dist.exists_mem_support_of_prob_ne_zero
+          (d := candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
+          (A := acceptSet S (h.cfg κ))
+          hpA0
+      
+      let hqA :
+          ∃ z ∈ acceptSet S (h.cfg κ),
+            z ∈ (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ).toPMF.support :=
+        Dist.exists_mem_support_of_prob_ne_zero
+          (d := candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
+          (A := acceptSet S (h.cfg κ))
+          hqA0
+      
+      -- Apply the pointwise conditioning bound.
+      have hcond : StatClose
+          (Dist.filter
+            (candidateResponseDist S h.nonceDist bindingFactor c s₁ κ)
+            (acceptSet S (h.cfg κ)) hpA)
+          (Dist.filter
+            (candidateResponseDist S h.nonceDist bindingFactor c s₂ κ)
+            (acceptSet S (h.cfg κ)) hqA)
+          (εcond κ) :=
+        StatClose.filter (h := hεclose κ)
+          (A := acceptSet S (h.cfg κ))
+          (hpA := hpA) (hqA := hqA)
+          (hαp := hαp) (hαq := hαq)
+          (hα0 := h.accept_lb_ne_zero κ)
+      
+      -- Unfold `acceptedResponseDist` (conditioning branch).
+      have : StatClose
+          (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ)
+          (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ)
+          (if h.publicOK κ bindingFactor c then εcond κ else 1) := by
+        -- In this branch, both `if`s take the conditioning path.
+        simpa [acceptedResponseDist, hpA0, hqA0, hpubκ] using hcond
+      exact this
+
+    · -- Outside `publicOK`, use the trivial bound `≤ 1`.
+      intro s
+      have hp1 :
+          Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ) s ≤ 1 := by
+        have hmono := Dist.prob_mono
+          (d := acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ)
+          (s := s) (t := Set.univ) (by intro _ hx; trivial)
+        have huniv :
+            Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ) (Set.univ : Set S.Secret) = 1 := by
+          classical
+          simp [Dist.prob]
+        simpa [huniv] using hmono
+      have hq1 :
+          Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ) s ≤ 1 := by
+        have hmono := Dist.prob_mono
+          (d := acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ)
+          (s := s) (t := Set.univ) (by intro _ hx; trivial)
+        have huniv :
+            Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ) (Set.univ : Set S.Secret) = 1 := by
+          classical
+          simp [Dist.prob]
+        simpa [huniv] using hmono
+      have habs : absSubENNReal
+          (Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₁ κ) s)
+          (Dist.prob (acceptedResponseDist S h.cfg h.nonceDist bindingFactor c s₂ κ) s) ≤ 1 := by
+        -- `a - b ≤ a ≤ 1` and `b - a ≤ b ≤ 1`.
+        unfold absSubENNReal
+        refine max_le ?_ ?_
+        · exact (tsub_le_self).trans hp1
+        · exact (tsub_le_self).trans hq1
+
+      simpa [hpubκ] using habs
+
 
 /-- Standard Dilithium acceptance probability (≈ 1/4, so expect 4 iterations) -/
 def dilithiumAcceptance (S : Scheme) [NormBounded S.Secret]
@@ -544,7 +638,7 @@ structure HidingAssumption (S : Scheme) where
   /-- Commitments reveal nothing about the committed value (ROM / crypto assumption). -/
   isHiding :
     ∀ x₁ x₂ : S.Public,
-      Indistinguishable (commitDist S openingDist x₁) (commitDist S openingDist x₂)
+      CompIndistinguishable (commitDist S openingDist x₁) (commitDist S openingDist x₂)
 
 /-!
 ## Assumption Bundle

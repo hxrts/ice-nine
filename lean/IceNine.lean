@@ -52,6 +52,7 @@ import IceNine.Proofs.Probability.LatticeRejectionAccept
 import IceNine.Proofs.Probability.Lattice
 import IceNine.Proofs.Probability.LatticeRejectionIndist
 import IceNine.Proofs.Probability.LatticeResponseIndependence
+import IceNine.Proofs.Probability.LatticeResponseIndependenceExamples
 import IceNine.Proofs.Probability.Lemmas
 import IceNine.Proofs.Probability.RepeatUntil
 -- Proofs/Core
