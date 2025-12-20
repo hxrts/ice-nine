@@ -212,6 +212,14 @@ def latticeScheme (p : LatticeParams := {}) (hb : HashBinding) : Scheme :=
   , hashCollisionResistant := True
 }
 
+/-- `NormBounded` instance for the lattice scheme secret type.
+
+Typeclass search does not unfold `latticeScheme` projections by default, so we
+provide this instance explicitly to make `acceptSet`/rejection proofs usable. -/
+instance (p : LatticeParams) (hb : HashBinding) : NormBounded (latticeScheme (p := p) hb).Secret := by
+  change NormBounded (Fin p.n → Int)
+  infer_instance
+
 -- Type aliases for the lattice scheme
 -- These are convenience definitions for use with the default LatticeParams
 -- Note: defaultLatticeScheme removed due to universe level metavariables;

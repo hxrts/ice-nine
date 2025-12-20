@@ -610,6 +610,113 @@ theorem map_add_vec_eq_uniformFinset_shiftedBox (n B : Nat) (δ : Fin n → Int)
       exact hx (hxmem.1 h)
     simp [hmap, hbase, hshift, hx, hx']
 
+
+/-- If `|δ| ≤ Bhide - Bacc`, then shifting `[-Bacc,Bacc]` by `δ` stays within `[-Bhide,Bhide]`. -/
+theorem shiftedInterval_subset_interval_of_natAbs_le
+    (Bacc Bhide : Nat) (δ : Int)
+    (hB : Bacc ≤ Bhide)
+    (hδ : Int.natAbs δ ≤ Bhide - Bacc) :
+    shiftedInterval Bacc δ ⊆ interval Bhide := by
+  intro x hx
+  have hxI : (-(Bacc : Int) + δ) ≤ x ∧ x ≤ (Bacc : Int) + δ := by
+    simpa [shiftedInterval, Finset.mem_Icc] using hx
+  have habs : |δ| ≤ (Bhide - Bacc : Int) := by
+    have : (δ.natAbs : Int) ≤ (Bhide - Bacc : Int) := by
+      exact_mod_cast hδ
+    simpa [Int.natCast_natAbs] using this
+  have hNat : Bacc + (Bhide - Bacc) = Bhide := Nat.add_sub_of_le hB
+  have hNatInt : (Bhide : Int) = (Bacc : Int) + (Bhide - Bacc : Int) := by
+    exact_mod_cast hNat.symm
+  have hx_upper : x ≤ (Bhide : Int) := by
+    calc
+      x ≤ (Bacc : Int) + δ := hxI.2
+      _ ≤ (Bacc : Int) + |δ| := add_le_add_right (le_abs_self δ) (Bacc : Int)
+      _ ≤ (Bacc : Int) + (Bhide - Bacc : Int) := add_le_add_right habs (Bacc : Int)
+      _ = (Bhide : Int) := by
+            exact_mod_cast hNat
+  have hx_lower : (-(Bhide : Int)) ≤ x := by
+    have hδlower : -(Bhide - Bacc : Int) ≤ δ := (abs_le.mp habs).1
+    have hstep : (-(Bacc : Int)) - (Bhide - Bacc : Int) ≤ (-(Bacc : Int)) + δ :=
+      add_le_add_right hδlower (-(Bacc : Int))
+    have hrewrite : (-(Bhide : Int)) = (-(Bacc : Int)) - (Bhide - Bacc : Int) := by
+      calc
+        (-(Bhide : Int)) = -((Bacc : Int) + (Bhide - Bacc : Int)) :=
+            congrArg (fun z : Int => -z) hNatInt
+        _ = (-(Bacc : Int)) - (Bhide - Bacc : Int) := by
+            simp [sub_eq_add_neg]
+    have : (-(Bhide : Int)) ≤ (-(Bacc : Int)) + δ := by
+      simpa [hrewrite] using hstep
+    exact le_trans this hxI.1
+  simpa [interval, Finset.mem_Icc] using And.intro hx_lower hx_upper
+
+/-- If every coordinate shift is small, a shifted centered box stays within a larger centered box. -/
+theorem shiftedBox_subset_box_of_natAbs_le
+    (n Bacc Bhide : Nat) (δ : Fin n → Int)
+    (hB : Bacc ≤ Bhide)
+    (hδ : ∀ i : Fin n, Int.natAbs (δ i) ≤ Bhide - Bacc) :
+    shiftedBox n Bacc δ ⊆ box n Bhide := by
+  intro x hx
+  apply (mem_box_iff (n := n) (B := Bhide) (x := x)).2
+  intro i
+  have hx' : x i ∈ shiftedInterval Bacc (δ i) :=
+    (mem_shiftedBox_iff (n := n) (B := Bacc) (δ := δ) (x := x)).1 hx i
+  exact shiftedInterval_subset_interval_of_natAbs_le (Bacc := Bacc) (Bhide := Bhide) (δ := δ i)
+    hB (hδ i) hx'
+
+/-- Acceptance probability for a shifted centered-bounded vector sampler, when the shift stays within a margin.
+
+If `y` is uniform on `[-Bhide,Bhide]^n` and `|δ i| ≤ Bhide - Bacc` for all `i`, then
+`y + δ ∈ [-Bacc,Bacc]^n` with probability `|box Bacc| / |box Bhide|`. -/
+theorem prob_map_add_vec_mem_box_of_shift_le
+    (n Bacc Bhide : Nat) (δ : Fin n → Int)
+    (hB : Bacc ≤ Bhide)
+    (hδ : ∀ i : Fin n, Int.natAbs (δ i) ≤ Bhide - Bacc) :
+    Dist.prob
+        (Dist.map (fun y : Fin n → Int => fun i => y i + δ i) (vec n Bhide))
+        (box n Bacc : Set (Fin n → Int)) =
+      ((box n Bacc).card : ENNReal) / ((box n Bhide).card : ENNReal) := by
+  classical
+  let shift : (Fin n → Int) → (Fin n → Int) := fun y i => y i + δ i
+  have hpre :
+      shift ⁻¹' (box n Bacc : Set (Fin n → Int)) =
+        (shiftedBox n Bacc (fun i => -δ i) : Set (Fin n → Int)) := by
+    ext y
+    simpa [shift, Set.preimage, sub_eq_add_neg, add_assoc, add_comm, add_left_comm] using
+      (mem_shiftedBox_iff_sub_mem_box (n := n) (B := Bacc) (δ := fun i => -δ i) (x := y)).symm
+
+  have hsub :
+      shiftedBox n Bacc (fun i => -δ i) ⊆ box n Bhide := by
+    refine shiftedBox_subset_box_of_natAbs_le (n := n) (Bacc := Bacc) (Bhide := Bhide)
+      (δ := fun i => -δ i) hB ?_
+    intro i
+    simpa using (hδ i)
+
+  have hprob :
+      Dist.prob (vec n Bhide) (shiftedBox n Bacc (fun i => -δ i) : Set (Fin n → Int)) =
+        ((shiftedBox n Bacc (fun i => -δ i)).card : ENNReal) / ((box n Bhide).card : ENNReal) := by
+    have hsub' : shiftedBox n Bacc (fun i => -δ i) ⊆ Fintype.piFinset (fun _ : Fin n => interval Bhide) := by
+      simpa [box] using hsub
+    have hinter :
+        (Fintype.piFinset (fun _ : Fin n => interval Bhide) ∩ shiftedBox n Bacc (fun i => -δ i)) =
+          shiftedBox n Bacc (fun i => -δ i) :=
+      Finset.inter_eq_right.2 hsub'
+    simp [vec, box, Dist.prob_uniformFinset, Finset.filter_mem_eq_inter, hinter]
+
+  have hcard : (shiftedBox n Bacc (fun i => -δ i)).card = (box n Bacc).card := by
+    simp [shiftedBox_card, box_card]
+
+  calc
+    Dist.prob (Dist.map shift (vec n Bhide)) (box n Bacc : Set (Fin n → Int)) =
+        Dist.prob (vec n Bhide) (shift ⁻¹' (box n Bacc : Set (Fin n → Int))) := by
+          simpa using
+            (Dist.prob_map_preimage (d := vec n Bhide) (f := shift)
+              (s := (box n Bacc : Set (Fin n → Int))))
+    _ = Dist.prob (vec n Bhide) (shiftedBox n Bacc (fun i => -δ i) : Set (Fin n → Int)) := by
+          simp [hpre]
+    _ = ((shiftedBox n Bacc (fun i => -δ i)).card : ENNReal) / ((box n Bhide).card : ENNReal) := hprob
+    _ = ((box n Bacc).card : ENNReal) / ((box n Bhide).card : ENNReal) := by
+          simp [hcard]
+
 /-- Statistical closeness for 1D centered-bounded sampling under a shift.
 
 Error: `|δ| / (2B+1)`.
