@@ -45,6 +45,39 @@ def candidateResponseDist (S : Scheme)
           sk challenge hidingNonce bindingNonce bindingFactor)
       (nonceDist κ)
 
+
+/-- Candidate responses for two secrets differ by an additive shift.
+
+For fixed public parameters and nonce distribution, changing `sk` only shifts
+`computeZ` by the difference `challenge • sk₂ - challenge • sk₁`. -/
+theorem candidateResponseDist_shift
+    {S : Scheme}
+    (nonceDist : DistFamily (S.Secret × S.Secret))
+    (bindingFactor : S.Scalar)
+    (challenge : S.Challenge)
+    (sk₁ sk₂ : S.Secret) :
+    candidateResponseDist S nonceDist bindingFactor challenge sk₂ =
+      fun κ =>
+        Dist.map (fun z : S.Secret => z + (challenge • sk₂ - challenge • sk₁))
+          (candidateResponseDist S nonceDist bindingFactor challenge sk₁ κ) := by
+  funext κ
+  ext z
+  -- Reduce to a pointwise identity inside the `tsum` defining `PMF.map`.
+  simp [candidateResponseDist, Dist.map, PMF.map_comp, Function.comp,
+    IceNine.Protocol.LocalRejection.RejectionOp.computeZ]
+  refine tsum_congr fun a => ?_
+  have hshift : a.1 + bindingFactor • a.2 + challenge • sk₂ =
+      a.1 + bindingFactor • a.2 + challenge • sk₁ + (challenge • sk₂ - challenge • sk₁) := by
+    simp
+  by_cases hz : z = a.1 + bindingFactor • a.2 + challenge • sk₂
+  · have hz2 : z = a.1 + bindingFactor • a.2 + challenge • sk₁ + (challenge • sk₂ - challenge • sk₁) :=
+      hz.trans hshift
+    simp [hz]
+  · have hz2 : z ≠ a.1 + bindingFactor • a.2 + challenge • sk₁ + (challenge • sk₂ - challenge • sk₁) := by
+      intro h
+      apply hz
+      exact h.trans hshift.symm
+    simp [hz]
 /-- Accepted response distribution: condition the candidate distribution on `acceptSet`. -/
 def acceptedResponseDist (S : Scheme)
     [NormBounded S.Secret]
