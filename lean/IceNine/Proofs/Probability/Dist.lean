@@ -78,6 +78,45 @@ def map (f : α → β) (d : Dist α) : Dist β :=
 def bind (d : Dist α) (f : α → Dist β) : Dist β :=
   ⟨d.toPMF.bind (fun a => (f a).toPMF)⟩
 
+
+/-- `map` over `pure` is `pure`. -/
+theorem map_pure (f : α → β) (a : α) :
+    Dist.map f (Dist.pure a) = Dist.pure (f a) := by
+  classical
+  ext b
+  -- Reduce to the `PMF.map_apply` closed form.
+  simp [Dist.map, Dist.pure, PMF.map_apply, PMF.pure_apply]
+  by_cases hb : b = f a
+  · subst hb
+    have hfun :
+        (fun x : α => if f a = f x then if x = a then (1 : ENNReal) else 0 else 0) =
+          fun x : α => if x = a then (1 : ENNReal) else 0 := by
+      funext x
+      by_cases hx : x = a <;> simp [hx]
+    -- The remaining `tsum` is the singleton `a` term.
+    simp [hfun, tsum_ite_eq]
+  · -- Every summand vanishes (including the `x = a` term) because `b ≠ f a`.
+    have hbRhs : (if b = f a then (1 : ENNReal) else 0) = 0 := by
+      simp [hb]
+    rw [hbRhs]
+    refine (ENNReal.tsum_eq_zero).2 ?_
+    intro x
+    by_cases hx : x = a
+    · subst hx
+      simp [hb]
+    · simp [hx]
+/-- `map` commutes with `bind`. -/
+theorem map_bind {γ : Type _} (d : Dist α) (f : α → Dist β) (g : β → γ) :
+    Dist.map g (Dist.bind d f) = Dist.bind d (fun a => Dist.map g (f a)) := by
+  ext c
+  simp [Dist.map, Dist.bind, PMF.map_bind]
+
+/-- `bind` after `map` is `bind` with a composed continuation. -/
+theorem bind_map {γ : Type _} (d : Dist α) (f : α → β) (g : β → Dist γ) :
+    Dist.bind (Dist.map f d) g = Dist.bind d (g ∘ f) := by
+  ext c
+  simp [Dist.map, Dist.bind, PMF.bind_map]
+
 /-- Product of independent distributions. -/
 def prod (da : Dist α) (db : Dist β) : Dist (α × β) :=
   da.bind (fun a => db.map (fun b => (a, b)))
@@ -91,6 +130,13 @@ def filter (d : Dist α) (s : Set α) (h : ∃ a ∈ s, a ∈ d.toPMF.support) :
   ⟨d.toPMF.filter s h⟩
 
 end Dist
+
+
+/-! ### Instances -/
+
+instance : Monad Dist where
+  pure := fun a => Dist.pure a
+  bind := fun d f => Dist.bind d f
 
 /-- A security-parameter-indexed family of distributions. -/
 abbrev DistFamily (α : Type u) : Type u :=

@@ -219,22 +219,42 @@ end RejectionOp
 Baseline sequential rejection loop. Simple and correct.
 -/
 
-/-- Sequential local rejection loop.
+/-- Monadic local rejection loop.
 
-    Samples nonces one at a time until finding valid z_i.
-    This is the reference implementation; parallel variants are optimizations.
+    This factors the sequential loop out of `IO` so that we can reuse the same
+    control flow for pure simulations and probabilistic semantics.
 
-    **Inputs**:
-    - `cfg`: Threshold configuration (contains maxLocalAttempts)
-    - `sk_i`: Signer's secret share
-    - `challenge`: Fiat-Shamir challenge
-    - `bindingFactor`: Binding factor ρ_i
-    - `sampleNonce`: IO action to sample a fresh nonce pair
+    The parameter `maxAttempts` allows callers to override the attempt budget
+    (the `IO` wrapper uses `cfg.maxLocalAttempts`). -/
+def localRejectionLoopM (S : Scheme)
+    [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
+    [SMul S.Challenge S.Secret] [NormBounded S.Secret]
+    {m : Type → Type} [Monad m]
+    (cfg : ThresholdConfig)
+    (partyId : S.PartyId)
+    (sk_i : S.Secret)
+    (challenge : S.Challenge)
+    (bindingFactor : S.Scalar)
+    (maxAttempts : Nat)
+    (sampleNonce : m (S.Secret × S.Secret))
+    : m (LocalSignResult S) :=
+  go 0 maxAttempts
+where
+  go (attempt : Nat) : Nat → m (LocalSignResult S)
+    | 0 =>
+        pure (.failure (.maxAttemptsExceeded partyId maxAttempts cfg.localBound))
+    | n + 1 => do
+        let (hid, binding) ← sampleNonce
+        match RejectionOp.tryOnce cfg sk_i challenge hid binding bindingFactor with
+        | some z => return .success z hid binding (attempt + 1)
+        | none => go (attempt + 1) n
 
-    **Returns**: `LocalSignResult` with success or failure.
+/-- Sequential local rejection loop (IO wrapper).
 
-    **Linear guarantee**: Each call to `sampleNonce` produces fresh randomness.
-    The caller must ensure `sampleNonce` uses CSPRNG. -/
+    Samples nonces one at a time until finding valid `z_i`, or fails after
+    `cfg.maxLocalAttempts` attempts.
+
+    This is a thin wrapper around `localRejectionLoopM` specialized to `IO`. -/
 def localRejectionLoop (S : Scheme)
     [AddCommGroup S.Secret] [Module S.Scalar S.Secret]
     [SMul S.Challenge S.Secret] [NormBounded S.Secret]
@@ -244,14 +264,10 @@ def localRejectionLoop (S : Scheme)
     (challenge : S.Challenge)
     (bindingFactor : S.Scalar)
     (sampleNonce : IO (S.Secret × S.Secret))
-    : IO (LocalSignResult S) := do
-  let mut attempt : Nat := 0
-  while attempt < cfg.maxLocalAttempts do
-    let (hid, binding) ← sampleNonce
-    match RejectionOp.tryOnce cfg sk_i challenge hid binding bindingFactor with
-    | some z => return .success z hid binding (attempt + 1)
-    | none => attempt := attempt + 1
-  return .failure (.maxAttemptsExceeded partyId cfg.maxLocalAttempts cfg.localBound)
+    : IO (LocalSignResult S) :=
+  localRejectionLoopM (S := S) (cfg := cfg) (partyId := partyId) (sk_i := sk_i)
+    (challenge := challenge) (bindingFactor := bindingFactor)
+    (maxAttempts := cfg.maxLocalAttempts) sampleNonce
 
 /-!
 ## Parallel Loop (Batched)
